@@ -80,9 +80,20 @@ Fields reference data collected by agent modules using dotted notation:
 | `os_info.arch` | os_info | Architecture (`amd64`, `arm64`) |
 | `os_info.uptime_seconds` | os_info | System uptime |
 | `os_info.kernel_version` | os_info | Kernel version string |
+| `packages.packages` | packages | Array of installed package objects (see below) |
+| `network.interfaces` | network | Array of network interface objects (see below) |
+| `services.services` | services | Array of system service objects (see below) |
 
 Each disk partition contains: `device`, `mount_point`, `fs_type`, `total_bytes`,
 `used_bytes`, `free_bytes`, `pct_used`.
+
+Each package contains: `name`, `version`, `arch`, `source` (rpm, dpkg, or registry).
+
+Each network interface contains: `name`, `mac`, `mtu`, `flags` (array), `addresses`
+(array of `{addr, family}`). Loopback interfaces are filtered out.
+
+Each service contains: `name`, `display_name`, `state` (running, stopped, etc.),
+`start_type` (enabled, disabled, static, manual).
 
 ### FROM — target scope
 
@@ -186,6 +197,9 @@ dirq query "SELECT os_info.os, COUNT(os_info.hostname) FROM * GROUP BY os_info.o
 | `memory` | Total, available, used bytes; percent used; swap |
 | `disk` | Per-partition: device, mount point, filesystem type, total/used/free bytes, percent used |
 | `os_info` | Hostname, OS, version, arch, uptime, kernel version |
+| `packages` | Installed packages: name, version, arch, source (rpm/dpkg on Linux, registry on Windows) |
+| `network` | Network interfaces: name, MAC, MTU, flags, IP addresses with family (loopback filtered) |
+| `services` | System services: name, display name, state, start type (systemd on Linux, Windows Services) |
 
 ## Quick Start (Podman on Laptop)
 
@@ -255,6 +269,15 @@ go build -o bin/dirq ./cmd/dirq
 
 # Query with filtering
 ./bin/dirq query "SELECT hostname, disk.mount, disk.pct_used FROM * WHERE disk.pct_used > 50"
+
+# Query packages, network, services
+./bin/dirq query "SELECT os_info.hostname, packages.packages FROM *"
+./bin/dirq query "SELECT os_info.hostname, network.interfaces FROM *"
+./bin/dirq query "SELECT os_info.hostname, services.services FROM *"
+
+# Manage tags on a host
+./bin/dirq hosts tag <agent-id> env=prod role=webserver dc=us-east
+./bin/dirq hosts untag <agent-id> role dc
 ```
 
 ### 4. Ansible inventory
@@ -324,6 +347,9 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/hosts
 | `GET` | `/api/v1/hosts` | List registered hosts |
 | `GET` | `/api/v1/hosts/{id}` | Get host details |
 | `GET` | `/api/v1/hosts/{id}/facts` | Get cached facts for a host |
+| `PUT` | `/api/v1/hosts/{id}/tags` | Replace all tags on a host |
+| `PATCH` | `/api/v1/hosts/{id}/tags` | Merge tags (add/update without removing) |
+| `DELETE` | `/api/v1/hosts/{id}/tags/{key}` | Remove a single tag |
 | `GET` | `/api/v1/queries` | List recent queries |
 | `POST` | `/api/v1/tokens` | Create an API token |
 | `GET` | `/api/v1/tokens` | List tokens |
