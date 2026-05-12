@@ -13,6 +13,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -210,6 +211,11 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 	// For now, always connect to the server as a zone leader.
 	conn, err := grpc.NewClient(a.cfg.ServerAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                20 * time.Second, // ping server every 20s if idle
+			Timeout:             10 * time.Second, // wait 10s for pong
+			PermitWithoutStream: true,
+		}),
 	)
 	if err != nil {
 		return fmt.Errorf("connect upstream: %w", err)

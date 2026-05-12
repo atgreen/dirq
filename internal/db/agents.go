@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -124,6 +125,19 @@ func (db *DB) UpdateAgentHeartbeat(ctx context.Context, id string) error {
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+// MarkStaleAgentsOffline marks agents as offline if their last heartbeat was
+// longer ago than the given threshold. Returns the number of agents affected.
+func (db *DB) MarkStaleAgentsOffline(ctx context.Context, threshold time.Duration) (int64, error) {
+	tag, err := db.pool.Exec(ctx,
+		`UPDATE agents SET online = false WHERE online = true AND last_seen_at < now() - $1::interval`,
+		threshold.String(),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // SetAgentOffline marks an agent as offline.

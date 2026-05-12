@@ -7,8 +7,10 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/atgreen/dirq/internal/db"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
@@ -61,8 +63,17 @@ func New(cfg Config, database *db.DB, log *slog.Logger) *Server {
 
 // Start starts the gRPC and HTTP servers.
 func (s *Server) Start(ctx context.Context) error {
-	// gRPC server
-	s.grpcSv = grpc.NewServer()
+	// gRPC server with keepalive to detect dead connections.
+	s.grpcSv = grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    30 * time.Second, // ping clients every 30s if idle
+			Timeout: 10 * time.Second, // wait 10s for pong before closing
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second, // minimum time between client pings
+			PermitWithoutStream: true,             // allow pings even with no active streams
+		}),
+	)
 	pb.RegisterDirQServerServer(s.grpcSv, s)
 
 	grpcLis, err := net.Listen("tcp", s.cfg.GRPCAddr)
@@ -86,6 +97,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := s.db.RegisterServerPeer(ctx, s.cfg.PodID, s.cfg.GRPCAddr); err != nil {
 		s.log.Warn("failed to register server peer", "error", err)
 	}
+
+	// Start the stale-agent reaper.
+	go s.startReaper(ctx)
 
 	s.log.Info("DirQ server starting",
 		"grpc", s.cfg.GRPCAddr,

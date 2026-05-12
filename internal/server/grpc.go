@@ -87,7 +87,11 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 		s.mu.Lock()
 		delete(s.streams, agentID)
 		s.mu.Unlock()
-		s.log.Info("agent stream closed", "agent_id", agentID)
+		// Mark agent offline immediately when stream drops.
+		if err := s.db.SetAgentOffline(context.Background(), agentID); err != nil {
+			s.log.Error("failed to mark agent offline", "agent_id", agentID, "error", err)
+		}
+		s.log.Info("agent stream closed, marked offline", "agent_id", agentID)
 	}()
 
 	// Mark agent online
