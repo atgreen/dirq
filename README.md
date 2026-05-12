@@ -38,6 +38,34 @@ The relay mesh also serves as an **Ansible execution transport** — AAP can run
 
 All links in the mesh are **gRPC over mTLS**. Agents connect outbound — no inbound ports required on managed hosts. Only zone leaders connect directly to the server, keeping OpenShift router load low even at 100k nodes.
 
+### Scaling the Mesh
+
+The topology manager builds a 3-level tree. Capacity is controlled by two
+environment variables on the server:
+
+| Setting | Zone Leaders | Children/Node | Capacity | Server Connections |
+|---------|-------------|---------------|----------|--------------------|
+| Default | 50 | 50 | 125,000 | 50 |
+| 200k | 80 | 50 | 200,000 | 80 |
+| 500k | 100 | 70 | 490,000 | 100 |
+
+```bash
+# 200k deployment
+DIRQ_MAX_ZONE_LEADERS=80 DIRQ_MAX_CHILDREN=50
+
+# 500k deployment
+DIRQ_MAX_ZONE_LEADERS=100 DIRQ_MAX_CHILDREN=70
+```
+
+The tree fills bottom-up:
+1. New agents become **zone leaders** until `DIRQ_MAX_ZONE_LEADERS` is reached
+2. Then they become **relays** under zone leaders (up to `DIRQ_MAX_CHILDREN` each)
+3. Then **leafs** under relays (up to `DIRQ_MAX_CHILDREN` each)
+4. If the tree is completely full, extra zone leaders are added (soft limit)
+
+Max hops from any leaf to the server is always 3 regardless of fleet size.
+The server only holds zone leader connections — the mesh absorbs the rest.
+
 ## Query DSL
 
 DirQ has a SQL-like query language for ad-hoc fleet queries. Queries are parsed on
@@ -348,6 +376,8 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | `DIRQ_HTTP_ADDR` | `:8080` | HTTP/REST listen address |
 | `DIRQ_DB_URL` | `postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable` | PostgreSQL connection string |
 | `DIRQ_POD_ID` | hostname | Unique pod identifier (for multi-pod deployments) |
+| `DIRQ_MAX_ZONE_LEADERS` | `50` | Max agents connecting directly to the server |
+| `DIRQ_MAX_CHILDREN` | `50` | Max children per relay or zone leader node |
 
 ### Agent (environment variables)
 
