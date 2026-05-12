@@ -62,13 +62,23 @@ class Connection(ConnectionBase):
         if self._connected:
             return self
 
+        # Per-host vars (set by inventory) take priority for multi-DC routing.
+        host_vars = {}
+        try:
+            if hasattr(self._play_context, "vars") and self._play_context.vars:
+                host_vars = self._play_context.vars
+        except Exception:
+            pass
+
         self._server_url = (
-            os.environ.get("DIRQ_SERVER_URL")
+            host_vars.get("dirq_server_url")
+            or os.environ.get("DIRQ_SERVER_URL")
             or self.get_option("dirq_server_url")
             or "http://localhost:8080"
         )
         self._token = (
-            os.environ.get("DIRQ_TOKEN")
+            host_vars.get("dirq_token")
+            or os.environ.get("DIRQ_TOKEN")
             or self.get_option("dirq_token")
             or ""
         )

@@ -98,6 +98,11 @@ class InventoryModule(BaseInventoryPlugin):
             self.inventory.add_host(hostname)
             for k, v in vars_dict.items():
                 self.inventory.set_variable(hostname, k, v)
+            # Set dirq_server_url per host so the connection plugin knows
+            # which DirQ server to route through (critical for multi-DC).
+            self.inventory.set_variable(hostname, "dirq_server_url", server_url)
+            if token:
+                self.inventory.set_variable(hostname, "dirq_token", token)
 
         # Add groups from the inventory response.
         for group_name, group_data in inv.items():

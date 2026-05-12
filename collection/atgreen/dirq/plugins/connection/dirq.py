@@ -77,13 +77,20 @@ class Connection(ConnectionBase):
         if self._connected:
             return self
 
+        # Per-host dirq_server_url (set by inventory plugin) takes priority.
+        # This is how multi-DC works: each host knows which DirQ server owns it.
+        host = self._play_context.remote_addr
+        hostvars = self._get_hostvars(host)
+
         server_url = (
-            os.environ.get("DIRQ_SERVER_URL")
+            hostvars.get("dirq_server_url")
+            or os.environ.get("DIRQ_SERVER_URL")
             or self.get_option("dirq_server_url")
             or "http://localhost:8080"
         )
         token = (
-            os.environ.get("DIRQ_TOKEN")
+            hostvars.get("dirq_token")
+            or os.environ.get("DIRQ_TOKEN")
             or self.get_option("dirq_token")
             or ""
         )
@@ -91,7 +98,7 @@ class Connection(ConnectionBase):
         from ansible_collections.atgreen.dirq.plugins.module_utils.api import DirQClient
         self._client = DirQClient(server_url, token)
 
-        hostname = self._play_context.remote_addr
+        hostname = host
         self._agent_id = self._resolve_agent_id(hostname)
 
         if not self._agent_id:
@@ -244,3 +251,20 @@ class Connection(ConnectionBase):
 
     def close(self):
         self._connected = False
+
+    def _get_hostvars(self, host):
+        """Retrieve hostvars for the given host, if available."""
+        try:
+            # In Ansible, hostvars are accessible through the variable manager.
+            if hasattr(self, "_variable_manager") and self._variable_manager:
+                all_vars = self._variable_manager.get_vars(host=host)
+                return all_vars
+        except Exception:
+            pass
+        # Fallback: check play_context vars.
+        try:
+            if hasattr(self._play_context, "vars") and self._play_context.vars:
+                return self._play_context.vars
+        except Exception:
+            pass
+        return {}
