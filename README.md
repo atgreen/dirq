@@ -113,12 +113,41 @@ WHERE disk.pct_used > 80
 WHERE cpu.logical_cores >= 8 AND memory.pct_used > 50
 WHERE os_info.os = 'linux'
 WHERE os_info.kernel_version LIKE '7.0%'
+WHERE packages.name IN ('openssl', 'nginx', 'curl')
+WHERE services.name = 'sshd' AND services.state = 'stopped'
 ```
 
-**Operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`
+**Operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `IN`
 
 String values must be single-quoted. Numeric values are bare. `LIKE` supports
-`%` as a wildcard (leading, trailing, or both).
+`%` as a wildcard (leading, trailing, or both). `IN` takes a parenthesized list
+of single-quoted strings.
+
+### Array-aware filtering
+
+Modules that return arrays (packages, services, disk, network) support
+field-level filtering into the array elements. When a WHERE condition references
+a field inside an array module, the agent iterates the array and returns only
+matching entries.
+
+```sql
+-- Returns only the 3 requested packages, not all 2000 installed
+SELECT os_info.hostname, packages.name, packages.version
+FROM *
+WHERE packages.name IN ('openssl', 'nginx', 'curl')
+
+-- Returns only partitions over 80% full, not all partitions
+SELECT os_info.hostname, disk.mount_point, disk.pct_used
+FROM *
+WHERE disk.pct_used > 80
+
+-- Returns only the matching services
+SELECT os_info.hostname, services.name, services.state
+FROM *
+WHERE services.name = 'sshd' AND services.state = 'stopped'
+```
+
+This filtering happens agent-side, so only matching data crosses the network.
 
 ### GROUP BY — aggregation
 
@@ -144,11 +173,21 @@ ORDER BY memory.total_bytes    -- ascending (default)
 ### Examples
 
 ```sql
--- Find hosts with disks over 80% full
-SELECT hostname, disk.mount, disk.pct_used
+-- Find hosts with disks over 80% full (only matching partitions returned)
+SELECT os_info.hostname, disk.mount_point, disk.pct_used
 FROM tag:prod
 WHERE disk.pct_used > 80
 ORDER BY disk.pct_used DESC
+
+-- Check specific package versions across the fleet
+SELECT os_info.hostname, packages.name, packages.version
+FROM *
+WHERE packages.name IN ('openssl', 'nginx', 'curl')
+
+-- Find hosts where sshd is stopped
+SELECT os_info.hostname, services.name, services.state
+FROM *
+WHERE services.name = 'sshd' AND services.state = 'stopped'
 
 -- Count hosts and average RAM by OS
 SELECT os_info.os, COUNT(os_info.hostname), AVG(memory.total_bytes)
@@ -164,6 +203,11 @@ WHERE cpu.logical_cores >= 16 AND memory.total_bytes > 34000000000
 SELECT os_info.hostname, os_info.kernel_version
 FROM *
 WHERE os_info.os = 'linux' AND os_info.kernel_version LIKE '7.0%'
+
+-- Find packages matching a pattern
+SELECT os_info.hostname, packages.name, packages.version
+FROM *
+WHERE packages.name LIKE 'openssl%'
 
 -- Swap usage across the fleet
 SELECT os_info.hostname, memory.swap_used_bytes, memory.swap_total_bytes
