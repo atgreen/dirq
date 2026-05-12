@@ -66,10 +66,11 @@ func New(cfg Config, log *slog.Logger) *Agent {
 }
 
 // Run starts the agent: registers with server, opens stream, listens for peers.
+// If the upstream connection drops, Run reconnects with exponential backoff.
 func (a *Agent) Run(ctx context.Context) error {
-	// Step 1: Register with the server.
-	if err := a.register(ctx); err != nil {
-		return fmt.Errorf("registration failed: %w", err)
+	// Step 1: Register with the server (retry until success or context cancelled).
+	if err := a.registerWithRetry(ctx); err != nil {
+		return err
 	}
 	a.log.Info("registered", "agent_id", a.agentID, "role", a.role)
 
@@ -78,13 +79,94 @@ func (a *Agent) Run(ctx context.Context) error {
 		go a.startRelayServer(ctx)
 	}
 
-	// Step 3: Connect to the server (zone leader) or upstream peer.
-	if err := a.connectUpstream(ctx); err != nil {
-		return fmt.Errorf("upstream connection failed: %w", err)
-	}
+	// Step 3: Connect and run, reconnecting on failure.
+	return a.connectLoop(ctx)
+}
 
-	// Step 4: Main loop — heartbeat + process queries.
-	return a.mainLoop(ctx)
+// registerWithRetry attempts registration with exponential backoff.
+func (a *Agent) registerWithRetry(ctx context.Context) error {
+	backoff := 1 * time.Second
+	maxBackoff := 60 * time.Second
+
+	for {
+		err := a.register(ctx)
+		if err == nil {
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		a.log.Warn("registration failed, retrying", "error", err, "backoff", backoff)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		backoff = backoff * 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
+// connectLoop connects upstream and runs the main loop. If the connection
+// drops, it reconnects with exponential backoff. Runs until ctx is cancelled.
+func (a *Agent) connectLoop(ctx context.Context) error {
+	backoff := 1 * time.Second
+	maxBackoff := 60 * time.Second
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		err := a.connectUpstream(ctx)
+		if err != nil {
+			a.log.Warn("upstream connection failed, retrying", "error", err, "backoff", backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			backoff = backoff * 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		// Reset backoff on successful connect.
+		backoff = 1 * time.Second
+
+		a.log.Info("upstream connected", "server", a.cfg.ServerAddr)
+
+		// Run the main loop until the stream breaks.
+		err = a.mainLoop(ctx)
+
+		// Clean up the old connection.
+		if a.upstreamConn != nil {
+			a.upstreamConn.Close()
+			a.upstreamConn = nil
+		}
+		a.upstreamStream = nil
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		a.log.Warn("upstream connection lost, reconnecting", "error", err, "backoff", backoff)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		backoff = backoff * 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
 }
 
 func (a *Agent) register(ctx context.Context) error {
