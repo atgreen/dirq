@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Anthony Green <green@moxielogic.com>
+
 package modules
 
 // Module defines a system query module that collects information.

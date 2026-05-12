@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Anthony Green <green@moxielogic.com>
+
 """Simple DirQ inventory for local testing."""
 import json
 import os

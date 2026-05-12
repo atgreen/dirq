@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Anthony Green <green@moxielogic.com>
+
 # ── Build stage ──────────────────────────────────────────
 FROM docker.io/library/golang:1.26 AS builder
 

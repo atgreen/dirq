@@ -7,7 +7,7 @@ The relay mesh also serves as an **Ansible execution transport** — AAP can run
 ## Architecture
 
 ```
-  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐
+  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
   │  Agent   │   │  Agent   │   │  Agent   │   │  Agent   │
   │  (leaf)  │   │  (leaf)  │   │  (leaf)  │   │  (leaf)  │
   └────┬─────┘   └────┬─────┘   └────┬─────┘   └────┬─────┘
@@ -427,4 +427,4 @@ PRD.md                  Product requirements document
 
 ## License
 
-TBD
+MIT License. Copyright (c) 2026 Anthony Green. See [LICENSE](LICENSE) for details.
