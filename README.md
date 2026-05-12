@@ -40,7 +40,97 @@ All links in the mesh are **gRPC over mTLS**. Agents connect outbound — no inb
 
 ## Query DSL
 
-DirQ has a SQL-like query language for ad-hoc fleet queries:
+DirQ has a SQL-like query language for ad-hoc fleet queries. Queries are parsed on
+the server, pushed through the relay mesh to agents, filtered agent-side, and
+aggregated server-side. Results stream back in real time.
+
+### Syntax
+
+```
+SELECT <fields>
+[FROM <scope>]
+[WHERE <conditions>]
+[GROUP BY <field>]
+[ORDER BY <field> [DESC]]
+```
+
+Every clause except `SELECT` is optional. When `FROM` is omitted, all online hosts
+are targeted.
+
+### Fields
+
+Fields reference data collected by agent modules using dotted notation:
+
+| Field | Module | Description |
+|-------|--------|-------------|
+| `cpu.physical_cores` | cpu | Number of physical CPU cores |
+| `cpu.logical_cores` | cpu | Number of logical CPU cores (with hyperthreading) |
+| `cpu.model_name` | cpu | CPU model string |
+| `cpu.vendor` | cpu | CPU vendor (e.g. GenuineIntel, AuthenticAMD) |
+| `memory.total_bytes` | memory | Total physical RAM in bytes |
+| `memory.available_bytes` | memory | Available RAM in bytes |
+| `memory.used_bytes` | memory | Used RAM in bytes |
+| `memory.pct_used` | memory | Memory utilization percentage |
+| `memory.swap_total_bytes` | memory | Total swap in bytes |
+| `memory.swap_used_bytes` | memory | Used swap in bytes |
+| `disk.partitions` | disk | Array of partition objects (see below) |
+| `os_info.hostname` | os_info | System hostname |
+| `os_info.os` | os_info | Operating system (`linux` or `windows`) |
+| `os_info.os_version` | os_info | OS version string |
+| `os_info.arch` | os_info | Architecture (`amd64`, `arm64`) |
+| `os_info.uptime_seconds` | os_info | System uptime |
+| `os_info.kernel_version` | os_info | Kernel version string |
+
+Each disk partition contains: `device`, `mount_point`, `fs_type`, `total_bytes`,
+`used_bytes`, `free_bytes`, `pct_used`.
+
+### FROM — target scope
+
+```sql
+FROM *                  -- all online hosts (default if omitted)
+FROM tag:prod           -- hosts with tag key "prod"
+FROM group:webservers   -- hosts in group "webservers"
+```
+
+### WHERE — filtering
+
+Conditions are joined with `AND`. Filtering happens agent-side to minimize
+network traffic.
+
+```sql
+WHERE disk.pct_used > 80
+WHERE cpu.logical_cores >= 8 AND memory.pct_used > 50
+WHERE os_info.os = 'linux'
+WHERE os_info.kernel_version LIKE '7.0%'
+```
+
+**Operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`
+
+String values must be single-quoted. Numeric values are bare. `LIKE` supports
+`%` as a wildcard (leading, trailing, or both).
+
+### GROUP BY — aggregation
+
+When `GROUP BY` is present, select fields should be either the group key or
+aggregation functions. Aggregation runs server-side after collecting results
+from all agents.
+
+```sql
+SELECT os_info.os, COUNT(os_info.hostname), AVG(memory.total_bytes)
+FROM *
+GROUP BY os_info.os
+```
+
+**Aggregation functions:** `COUNT(field)`, `AVG(field)`, `SUM(field)`, `MIN(field)`, `MAX(field)`
+
+### ORDER BY — sorting
+
+```sql
+ORDER BY disk.pct_used DESC    -- descending (highest first)
+ORDER BY memory.total_bytes    -- ascending (default)
+```
+
+### Examples
 
 ```sql
 -- Find hosts with disks over 80% full
@@ -49,18 +139,34 @@ FROM tag:prod
 WHERE disk.pct_used > 80
 ORDER BY disk.pct_used DESC
 
--- Count hosts by OS
-SELECT os, COUNT(hostname), AVG(memory.total_bytes)
+-- Count hosts and average RAM by OS
+SELECT os_info.os, COUNT(os_info.hostname), AVG(memory.total_bytes)
 FROM *
-GROUP BY os
+GROUP BY os_info.os
 
--- List CPU info for a group
-SELECT hostname, cpu.cores, cpu.model_name
-FROM group:webservers
-WHERE cpu.cores >= 8
+-- Find beefy hosts
+SELECT os_info.hostname, cpu.logical_cores, memory.total_bytes
+FROM *
+WHERE cpu.logical_cores >= 16 AND memory.total_bytes > 34000000000
+
+-- Linux hosts running a specific kernel
+SELECT os_info.hostname, os_info.kernel_version
+FROM *
+WHERE os_info.os = 'linux' AND os_info.kernel_version LIKE '7.0%'
+
+-- Swap usage across the fleet
+SELECT os_info.hostname, memory.swap_used_bytes, memory.swap_total_bytes
+FROM *
+WHERE memory.swap_used_bytes > 0
 ```
 
-Queries are parsed on the server, pushed through the relay mesh to agents, filtered agent-side, and aggregated server-side. Results stream back in real time.
+### CLI usage
+
+```bash
+dirq query "SELECT os_info.hostname, cpu.logical_cores FROM *"
+dirq query "SELECT os_info.hostname, disk.pct_used FROM tag:prod WHERE disk.pct_used > 80" --timeout 30
+dirq query "SELECT os_info.os, COUNT(os_info.hostname) FROM * GROUP BY os_info.os" --json
+```
 
 ## Components
 
@@ -231,6 +337,65 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/hosts
 
 ## Ansible Integration
 
+### Inventory Groups
+
+The DirQ inventory plugin automatically creates a nested group hierarchy from
+agent metadata and tags. Set tags on agents with `DIRQ_TAGS=env=prod,role=webserver,dc=us-east`.
+
+```
+@all
+├── @os_linux
+├── @os_windows
+├── @arch_amd64
+├── @arch_arm64
+├── @exec_enabled           (hosts accepting remote execution)
+├── @tag_env                (parent group for all env=* tags)
+│   ├── @tag_env_prod
+│   ├── @tag_env_staging
+│   └── @tag_env_dev
+├── @tag_role
+│   ├── @tag_role_webserver
+│   └── @tag_role_database
+└── @tag_dc
+    ├── @tag_dc_us_east
+    └── @tag_dc_eu_west
+```
+
+Target hosts in playbooks using standard Ansible patterns:
+
+```yaml
+# All online hosts
+hosts: all
+
+# By operating system
+hosts: os_linux
+hosts: os_windows
+
+# By architecture
+hosts: arch_amd64
+
+# By tag value
+hosts: tag_env_prod
+hosts: tag_role_webserver
+hosts: tag_dc_us_east
+
+# By tag parent (all values for that key)
+hosts: tag_env
+
+# Only exec-capable hosts
+hosts: exec_enabled
+
+# Intersections
+hosts: tag_role_webserver:&os_linux       # linux webservers only
+hosts: tag_env_prod:&exec_enabled         # prod hosts that accept exec
+hosts: tag_dc_us_east:&tag_role_database  # databases in us-east
+
+# Specific host by name
+hosts: fedora
+```
+
+### Host Variables (Facts)
+
 DirQ exposes all collected data as Ansible facts under the `dirq_*` namespace:
 
 ```yaml
@@ -239,22 +404,37 @@ dirq_agent_id: "abc-123"
 dirq_os: "linux"
 dirq_os_version: "RHEL 9.2"
 dirq_arch: "amd64"
+dirq_exec_enabled: true
+dirq_role: "zone_leader"
+dirq_online: true
+dirq_last_seen: "2026-05-12T20:15:50Z"
 dirq_cpu:
   physical_cores: 8
   logical_cores: 16
   model_name: "Intel Xeon..."
+  vendor: "GenuineIntel"
 dirq_memory:
   total_bytes: 34359738368
-  pct_used: 42.5
+  available_bytes: 21710409728
+  used_bytes: 11384057856
+  pct_used: 34.4
+  swap_total_bytes: 8589930496
+  swap_used_bytes: 0
 dirq_disk:
   partitions:
-    - mount_point: "/"
+    - device: "/dev/sda1"
+      mount_point: "/"
+      fs_type: "ext4"
+      total_bytes: 107374182400
+      used_bytes: 72132345856
+      free_bytes: 35241836544
       pct_used: 67.3
 dirq_tag_env: "prod"
 dirq_tag_dc: "us-east"
+dirq_tag_role: "webserver"
 ```
 
-Use in playbooks:
+Use in playbook conditionals:
 
 ```yaml
 - name: Alert on high disk usage
@@ -263,6 +443,19 @@ Use in playbooks:
     - debug:
         msg: "Disk alert on {{ inventory_hostname }}"
       when: dirq_disk.partitions | selectattr('pct_used', '>', 80) | list | length > 0
+
+- name: Warn about low memory
+  hosts: os_linux
+  tasks:
+    - debug:
+        msg: "{{ inventory_hostname }} has {{ dirq_memory.available_bytes | human_readable }} free"
+      when: dirq_memory.pct_used > 90
+
+- name: Only run on exec-capable hosts
+  hosts: tag_env_prod:&exec_enabled
+  connection: dirq
+  tasks:
+    - command: systemctl status myapp
 ```
 
 ## Execution Transport
