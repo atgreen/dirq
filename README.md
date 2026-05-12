@@ -2,7 +2,7 @@
 
 DirQ is an agent-based platform for querying and managing large Windows/Linux fleets. Agents form a peer-to-peer relay mesh and report data back to a central server. The server acts as an Ansible Automation Platform (AAP) inventory source, exposing collected data as Ansible facts.
 
-In Phase 2, the relay mesh doubles as an **Ansible execution transport** — AAP can run playbooks against managed hosts through the DirQ mesh using `connection: dirq`, replacing SSH/WinRM entirely. No inbound ports required on managed hosts.
+The relay mesh also serves as an **Ansible execution transport** — AAP can run playbooks against managed hosts through the DirQ mesh using `connection: dirq`, replacing SSH/WinRM entirely. No inbound ports required on managed hosts.
 
 ## Architecture
 
@@ -133,7 +133,7 @@ sc stop DirQAgent
 .\bin\dirq-agent.exe uninstall
 ```
 
-When running as a Windows Service, the agent runs as the SYSTEM account, which has full administrative privileges. This is required for Phase 2 exec operations — SYSTEM can launch processes as any local user without password prompts.
+When running as a Windows Service, the agent runs as the SYSTEM account, which has full administrative privileges. This is required for remote execution — SYSTEM can launch processes as any local user without password prompts.
 
 ### 3. Build and use the CLI
 
@@ -183,7 +183,7 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | `DIRQ_SERVER` | `localhost:50051` | DirQ server gRPC address |
 | `DIRQ_LISTEN` | `:50052` | Address to listen on for downstream peers |
 | `DIRQ_TAGS` | | Comma-separated tags: `env=prod,dc=us-east` |
-| `DIRQ_EXEC_ENABLED` | `false` | Enable remote command execution (Phase 2) |
+| `DIRQ_EXEC_ENABLED` | `false` | Enable remote command execution |
 
 ### CLI (environment variables and flags)
 
@@ -223,10 +223,10 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/hosts
 | `GET` | `/api/v1/tokens` | List tokens |
 | `DELETE` | `/api/v1/tokens/{name}` | Delete a token |
 | `GET` | `/api/v1/inventory` | Ansible dynamic inventory (JSON) |
-| `POST` | `/api/v1/exec` | Execute a command on an agent (Phase 2) |
-| `POST` | `/api/v1/put_file` | Write a file to an agent (Phase 2) |
-| `POST` | `/api/v1/fetch_file` | Read a file from an agent (Phase 2) |
-| `GET` | `/api/v1/exec_log` | Query execution audit log (Phase 2) |
+| `POST` | `/api/v1/exec` | Execute a command on an agent |
+| `POST` | `/api/v1/put_file` | Write a file to an agent |
+| `POST` | `/api/v1/fetch_file` | Read a file from an agent |
+| `GET` | `/api/v1/exec_log` | Query execution audit log |
 | `GET` | `/healthz` | Health check |
 
 ## Ansible Integration
@@ -265,9 +265,9 @@ Use in playbooks:
       when: dirq_disk.partitions | selectattr('pct_used', '>', 80) | list | length > 0
 ```
 
-## Phase 2: Execution Transport
+## Execution Transport
 
-Phase 2 turns the DirQ relay mesh into an **Ansible connection transport**. AAP runs playbooks against managed hosts through the mesh — no SSH, no WinRM, no inbound firewall rules.
+The DirQ relay mesh doubles as an **Ansible connection transport**. AAP runs playbooks against managed hosts through the mesh — no SSH, no WinRM, no inbound firewall rules.
 
 ### How It Works
 
