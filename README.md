@@ -643,6 +643,191 @@ Each entry includes: operation type, command/path, become user, rc, success/erro
 - AAP's approval workflows and audit logging
 - Ansible's module system, playbook language, or roles
 
+## Multi-Datacenter Deployment
+
+DirQ supports multi-DC deployments where each datacenter has its own isolated
+mesh. Agent meshes never span DC boundaries — all P2P relay traffic stays local.
+
+### Architecture
+
+```
+  DC us-east                          DC eu-west
+  ┌──────────────────────┐            ┌──────────────────────┐
+  │ Agents ──► DirQ      │            │ Agents ──► DirQ      │
+  │            Server    │            │            Server    │
+  │            + PG      │            │            + PG      │
+  └──────────┬───────────┘            └──────────┬───────────┘
+             │                                   │
+             ▼                                   ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │                AAP Controller                            │
+  │                                                          │
+  │  Inventory Source 1 ──► dirq-us-east:8080                │
+  │  Inventory Source 2 ──► dirq-eu-west:8080                │
+  │  Inventory Source 3 ──► dirq-ap-south:8080               │
+  │  Inventory Source 4 ──► dirq-us-west:8080                │
+  │                                                          │
+  │  All sources merge into one inventory.                   │
+  │  Each host carries dirq_server_url pointing              │
+  │  to its DC's server.                                     │
+  └──────────────────────────────────────────────────────────┘
+```
+
+### Setup
+
+**1. Deploy one DirQ server per datacenter:**
+
+Each DC gets its own DirQ server and PostgreSQL instance. Agents in that DC
+connect to the local server. The meshes are completely independent.
+
+```
+DC us-east:  dirq-us-east.internal:8080   (server)  :50051 (gRPC)
+DC eu-west:  dirq-eu-west.internal:8080   (server)  :50051 (gRPC)
+DC ap-south: dirq-ap-south.internal:8080  (server)  :50051 (gRPC)
+DC us-west:  dirq-us-west.internal:8080   (server)  :50051 (gRPC)
+```
+
+Tag agents with their DC:
+
+```bash
+# On agents in us-east:
+DIRQ_SERVER=dirq-us-east.internal:50051 DIRQ_TAGS=dc=us-east,env=prod
+
+# On agents in eu-west:
+DIRQ_SERVER=dirq-eu-west.internal:50051 DIRQ_TAGS=dc=eu-west,env=prod
+```
+
+**2. Create one AAP inventory source per DC:**
+
+```yaml
+# dirq-us-east.yml
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-us-east.internal:8080
+token: us-east-token
+
+# dirq-eu-west.yml
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-eu-west.internal:8080
+token: eu-west-token
+```
+
+Add each as an Inventory Source in AAP. All sources merge into one inventory.
+
+**3. Routing happens automatically:**
+
+The inventory plugin sets `dirq_server_url` as a per-host variable on every host
+it discovers. When the connection plugin runs a task against a host, it reads that
+host's `dirq_server_url` and routes through the correct DC's server and mesh.
+
+```yaml
+# This playbook runs against hosts in all DCs.
+# The connection plugin routes each host through its own DC's mesh.
+- hosts: tag_env_prod
+  connection: atgreen.dirq.dirq
+  tasks:
+    - command: uptime
+
+# Target a specific DC
+- hosts: tag_dc_us_east:&tag_role_webserver
+  connection: atgreen.dirq.dirq
+  tasks:
+    - command: systemctl status nginx
+```
+
+No per-host connection configuration needed. A host from `us-east` routes through
+`dirq-us-east`, a host from `eu-west` routes through `dirq-eu-west` — even when
+they appear in the same play.
+
+**4. Queries are per-DC:**
+
+DirQ queries run against a single server (one mesh). Use the CLI `--server` flag
+or `DIRQ_SERVER_URL` to target a specific DC:
+
+```bash
+# Query us-east fleet
+dirq --server http://dirq-us-east:8080 query "SELECT os_info.hostname, cpu.logical_cores FROM *"
+
+# Query eu-west fleet
+dirq --server http://dirq-eu-west:8080 query "SELECT os_info.hostname, packages.name, packages.version FROM * WHERE packages.name = 'openssl'"
+```
+
+## AAP Integration
+
+### Ansible Collection
+
+DirQ ships as an Ansible collection (`atgreen.dirq`) for AAP compatibility:
+
+```bash
+# Build the collection
+cd collection/atgreen/dirq
+ansible-galaxy collection build
+
+# Install locally
+ansible-galaxy collection install atgreen-dirq-1.0.0.tar.gz
+```
+
+The collection includes:
+- `atgreen.dirq.dirq` inventory plugin (class-based, AAP-compatible)
+- `atgreen.dirq.dirq` connection plugin
+- Shared `module_utils` HTTP client
+
+### Custom Execution Environment
+
+Build an EE that includes the DirQ collection:
+
+```yaml
+# execution-environment.yml
+version: 3
+dependencies:
+  galaxy:
+    collections:
+      - name: atgreen.dirq
+        version: ">=1.0.0"
+```
+
+```bash
+ansible-builder build -t dirq-ee:latest -f execution-environment.yml
+```
+
+Push to your container registry and add as an EE in AAP.
+
+### Custom Credential Type
+
+Import the credential type from `collection/atgreen/dirq/docs/aap-credential-type.yml`,
+or create it manually in AAP under Administration > Credential Types:
+
+**Input Configuration:**
+```yaml
+fields:
+  - id: dirq_server_url
+    type: string
+    label: DirQ Server URL
+  - id: dirq_token
+    type: string
+    label: DirQ API Token
+    secret: true
+required:
+  - dirq_server_url
+  - dirq_token
+```
+
+**Injector Configuration:**
+```yaml
+env:
+  DIRQ_SERVER_URL: "{{ dirq_server_url }}"
+  DIRQ_TOKEN: "{{ dirq_token }}"
+```
+
+### AAP Setup Checklist
+
+1. Build and publish the `atgreen.dirq` collection to Automation Hub or Galaxy
+2. Build a custom EE with the collection and push to your registry
+3. Import the DirQ credential type in AAP
+4. Create DirQ credentials (one per DC server if multi-DC)
+5. Add inventory sources using `atgreen.dirq.dirq` plugin (one per DC)
+6. Create job templates with `connection: atgreen.dirq.dirq`
+7. Attach the appropriate DirQ credential to each job template
+
 ## Building
 
 ```bash
@@ -669,23 +854,25 @@ podman build --target agent  -t dirq-agent .
 
 ```
 cmd/
-  dirq-server/          Server entrypoint
-  dirq-agent/           Agent entrypoint
-  dirq/                 CLI entrypoint
-proto/dirq/v1/          Protobuf definitions (gRPC services + messages)
+  dirq-server/            Server entrypoint
+  dirq-agent/             Agent entrypoint
+  dirq/                   CLI entrypoint
+proto/dirq/v1/            Protobuf definitions (gRPC services + messages)
 internal/
-  server/               gRPC service, REST API, query dispatch, exec routing
-  agent/                Registration, relay mesh, query execution, remote exec
-  query/                DirQ DSL parser (participle) and evaluator
-  modules/              System data collectors (disk, cpu, memory, os_info)
-  db/                   PostgreSQL schema and data access layer (incl. exec audit)
-ansible/
-  dirq_inventory.py     Dynamic inventory plugin for AAP/awx
-  connection_plugins/
-    dirq.py             Ansible connection plugin (connection: dirq)
-Containerfile           Multi-stage container build
-podman-compose.yml      Dev environment (server + PostgreSQL)
-PRD.md                  Product requirements document
+  server/                 gRPC service, REST API, query dispatch, exec routing
+  agent/                  Registration, relay mesh, query execution, remote exec
+  query/                  DirQ DSL parser (participle) and evaluator
+  modules/                System data collectors (7 modules)
+  db/                     PostgreSQL schema and data access layer
+collection/atgreen/dirq/  Ansible collection (atgreen.dirq) for AAP
+  plugins/connection/     connection: atgreen.dirq.dirq
+  plugins/inventory/      inventory: atgreen.dirq.dirq
+  docs/                   AAP credential type definition
+ansible/                  Standalone plugins for CLI Ansible (non-AAP)
+execution-environment.yml EE definition for ansible-builder
+Containerfile             Multi-stage container build
+podman-compose.yml        Dev environment (server + PostgreSQL)
+PRD.md                    Product requirements document
 ```
 
 ## License
