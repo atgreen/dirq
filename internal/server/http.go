@@ -361,25 +361,48 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build Ansible dynamic inventory format.
-	inventory := map[string]any{
-		"_meta": map[string]any{
-			"hostvars": map[string]any{},
-		},
-	}
+	// Build Ansible dynamic inventory with nested group hierarchy.
+	//
+	// Group structure:
+	//   all
+	//   ├── os_linux          (hosts with os=linux)
+	//   ├── os_windows        (hosts with os=windows)
+	//   ├── arch_amd64        (hosts with arch=amd64)
+	//   ├── arch_arm64        (hosts with arch=arm64)
+	//   ├── exec_enabled      (hosts with exec_enabled=true)
+	//   ├── tag_env           (parent group for all env=* tags)
+	//   │   ├── tag_env_prod
+	//   │   └── tag_env_staging
+	//   ├── tag_dc
+	//   │   ├── tag_dc_us_east
+	//   │   └── tag_dc_eu_west
+	//   └── tag_role
+	//       ├── tag_role_webserver
+	//       └── tag_role_database
+	//
+	// Hosts are targetable as:
+	//   hosts: all                 (every online host)
+	//   hosts: os_linux            (all linux hosts)
+	//   hosts: tag_env_prod        (hosts tagged env=prod)
+	//   hosts: tag_role_webserver  (hosts tagged role=webserver)
+	//   hosts: exec_enabled        (hosts that accept remote exec)
+	//   hosts: fedora              (specific host by name)
 
-	allHosts := []string{}
-	hostvars := inventory["_meta"].(map[string]any)["hostvars"].(map[string]any)
+	hostvars := map[string]any{}
+
+	// groups maps group name -> list of hostnames.
 	groups := map[string][]string{}
+	// parentGroups maps parent group name -> list of child group names.
+	parentGroups := map[string][]string{}
 
 	for _, agent := range agents {
 		if !agent.Online {
 			continue
 		}
 
-		allHosts = append(allHosts, agent.Hostname)
+		hostname := agent.Hostname
 
-		// Get cached facts for this agent.
+		// Collect host vars.
 		facts, _ := s.db.GetFacts(ctx, agent.ID)
 		hostFacts := map[string]any{
 			"dirq_agent_id":      agent.ID,
@@ -387,42 +410,96 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 			"dirq_os_version":    agent.OSVersion,
 			"dirq_arch":          agent.Arch,
 			"dirq_agent_version": agent.AgentVersion,
+			"dirq_exec_enabled":  agent.ExecEnabled,
 			"dirq_online":        agent.Online,
 			"dirq_last_seen":     agent.LastSeenAt.Format(time.RFC3339),
+			"dirq_role":          agent.Role,
 		}
-
 		for _, f := range facts {
 			hostFacts["dirq_"+f.Module] = f.Data
 		}
-
-		// Tags become Ansible host vars too.
 		for k, v := range agent.Tags {
 			hostFacts["dirq_tag_"+k] = v
 		}
+		hostvars[hostname] = hostFacts
 
-		hostvars[agent.Hostname] = hostFacts
+		// Group by OS: os_linux, os_windows
+		osGroup := "os_" + agent.OS
+		groups[osGroup] = append(groups[osGroup], hostname)
 
-		// Group by OS.
-		groups[agent.OS] = append(groups[agent.OS], agent.Hostname)
+		// Group by arch: arch_amd64, arch_arm64
+		archGroup := "arch_" + agent.Arch
+		groups[archGroup] = append(groups[archGroup], hostname)
 
-		// Group by tags.
+		// Group by exec capability.
+		if agent.ExecEnabled {
+			groups["exec_enabled"] = append(groups["exec_enabled"], hostname)
+		}
+
+		// Group by tags with hierarchy.
+		// Tag env=prod creates:
+		//   - group "tag_env_prod" containing the host
+		//   - parent group "tag_env" containing child group "tag_env_prod"
 		for k, v := range agent.Tags {
-			groupName := k + "_" + v
-			groups[groupName] = append(groups[groupName], agent.Hostname)
+			childGroup := "tag_" + sanitizeGroupName(k) + "_" + sanitizeGroupName(v)
+			parentGroup := "tag_" + sanitizeGroupName(k)
+
+			groups[childGroup] = append(groups[childGroup], hostname)
+
+			// Track parent-child relationship (deduplicated later).
+			found := false
+			for _, existing := range parentGroups[parentGroup] {
+				if existing == childGroup {
+					found = true
+					break
+				}
+			}
+			if !found {
+				parentGroups[parentGroup] = append(parentGroups[parentGroup], childGroup)
+			}
 		}
 	}
 
-	inventory["all"] = map[string]any{
-		"hosts": allHosts,
+	// Build the inventory JSON.
+	inventory := map[string]any{
+		"_meta": map[string]any{
+			"hostvars": hostvars,
+		},
 	}
 
+	// Add leaf groups (groups with hosts).
 	for name, hosts := range groups {
 		inventory[name] = map[string]any{
 			"hosts": hosts,
 		}
 	}
 
+	// Add parent groups (groups containing child groups, not hosts directly).
+	for parent, children := range parentGroups {
+		entry, ok := inventory[parent].(map[string]any)
+		if !ok {
+			entry = map[string]any{}
+			inventory[parent] = entry
+		}
+		entry["children"] = children
+	}
+
 	jsonResponse(w, http.StatusOK, inventory)
+}
+
+// sanitizeGroupName replaces characters that aren't valid in Ansible group
+// names with underscores.
+func sanitizeGroupName(s string) string {
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			b = append(b, c)
+		} else {
+			b = append(b, '_')
+		}
+	}
+	return string(b)
 }
 
 // ─────────────────────────────────────────────────────────
