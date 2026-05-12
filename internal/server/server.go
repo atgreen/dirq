@@ -21,10 +21,12 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	GRPCAddr string // e.g. ":50051"
-	HTTPAddr string // e.g. ":8080"
-	DBURL    string // PostgreSQL connection string
-	PodID    string // unique identifier for this server pod
+	GRPCAddr           string // e.g. ":50051"
+	HTTPAddr           string // e.g. ":8080"
+	DBURL              string // PostgreSQL connection string
+	PodID              string // unique identifier for this server pod
+	MaxZoneLeaders     int    // topology: max zone leaders (default 50)
+	MaxChildrenPerNode int    // topology: max children per node (default 50)
 }
 
 // Server is the DirQ server.
@@ -56,9 +58,17 @@ type agentStream struct {
 
 // New creates a new DirQ server.
 func New(cfg Config, database *db.DB, log *slog.Logger) *Server {
+	topoCfg := DefaultTopologyConfig()
+	if cfg.MaxZoneLeaders > 0 {
+		topoCfg.MaxZoneLeaders = cfg.MaxZoneLeaders
+	}
+	if cfg.MaxChildrenPerNode > 0 {
+		topoCfg.MaxChildrenPerNode = cfg.MaxChildrenPerNode
+	}
+
 	return &Server{
 		cfg:          cfg,
-		topoCfg:      DefaultTopologyConfig(),
+		topoCfg:      topoCfg,
 		db:           database,
 		log:          log,
 		streams:      make(map[string]*agentStream),
@@ -106,10 +116,14 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start the stale-agent reaper.
 	go s.startReaper(ctx)
 
+	capacity := s.topoCfg.MaxZoneLeaders * s.topoCfg.MaxChildrenPerNode * s.topoCfg.MaxChildrenPerNode
 	s.log.Info("DirQ server starting",
 		"grpc", s.cfg.GRPCAddr,
 		"http", s.cfg.HTTPAddr,
 		"pod_id", s.cfg.PodID,
+		"max_zone_leaders", s.topoCfg.MaxZoneLeaders,
+		"max_children", s.topoCfg.MaxChildrenPerNode,
+		"max_capacity", capacity,
 	)
 
 	errCh := make(chan error, 2)

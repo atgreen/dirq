@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/atgreen/dirq/internal/db"
@@ -18,10 +19,12 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	cfg := server.Config{
-		GRPCAddr: envOr("DIRQ_GRPC_ADDR", ":50051"),
-		HTTPAddr: envOr("DIRQ_HTTP_ADDR", ":8080"),
-		DBURL:    envOr("DIRQ_DB_URL", "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"),
-		PodID:    envOr("DIRQ_POD_ID", mustHostname()),
+		GRPCAddr:           envOr("DIRQ_GRPC_ADDR", ":50051"),
+		HTTPAddr:           envOr("DIRQ_HTTP_ADDR", ":8080"),
+		DBURL:              envOr("DIRQ_DB_URL", "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"),
+		PodID:              envOr("DIRQ_POD_ID", mustHostname()),
+		MaxZoneLeaders:     envInt("DIRQ_MAX_ZONE_LEADERS", 0),
+		MaxChildrenPerNode: envInt("DIRQ_MAX_CHILDREN", 0),
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -48,6 +51,15 @@ func main() {
 		log.Error("server error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 func envOr(key, fallback string) string {
