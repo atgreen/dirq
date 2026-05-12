@@ -113,6 +113,28 @@ go build -o bin/dirq-agent ./cmd/dirq-agent
 
 The agent registers with the server and begins accepting queries. Run multiple agents to simulate a fleet.
 
+**Windows:**
+
+```powershell
+# Build
+$env:GOOS="windows"; $env:GOARCH="amd64"; go build -o bin\dirq-agent.exe .\cmd\dirq-agent
+
+# Run in foreground
+.\bin\dirq-agent.exe
+
+# Install as a Windows Service (runs as SYSTEM)
+.\bin\dirq-agent.exe install
+
+# Start/stop the service
+sc start DirQAgent
+sc stop DirQAgent
+
+# Uninstall the service
+.\bin\dirq-agent.exe uninstall
+```
+
+When running as a Windows Service, the agent runs as the SYSTEM account, which has full administrative privileges. This is required for Phase 2 exec operations — SYSTEM can launch processes as any local user without password prompts.
+
 ### 3. Build and use the CLI
 
 ```bash
@@ -323,6 +345,8 @@ Agents with `exec_enabled: false` reject all exec/file requests. The inventory p
 
 - **Exec requests are server-originated only.** The DirQ server's mTLS identity is required. Peer agents cannot send exec requests to each other — no lateral movement through the mesh.
 - **Opt-in per agent.** `exec_enabled` defaults to `false`. Admins explicitly enable it on hosts that should accept remote commands.
+- **Windows agents run as SYSTEM.** Installed as a Windows Service, the agent has full privileges. Become as a different user uses a PowerShell scheduled-task mechanism — no stored passwords needed.
+- **Linux agents use passwordless sudo.** The `sudo -n` (non-interactive) flag is used. The agent's service account must have NOPASSWD sudo configured for the required commands.
 - **Full audit trail.** Every exec operation is logged in PostgreSQL with: timestamp, AAP job ID, job template, target host, requesting user, command/path, and exit status. Agents also log locally to syslog / Windows Event Log.
 - **AAP retains orchestration authority.** DirQ does not decide what to execute. AAP's RBAC, credential vault, approval workflows, and job scheduling remain in control. DirQ is the data plane only.
 - **File transfer limits.** Put/fetch operations are capped at 100 MB by default.
@@ -366,6 +390,9 @@ go build -o bin/dirq         ./cmd/dirq
 
 # Cross-compile agent for Windows
 GOOS=windows GOARCH=amd64 go build -o bin/dirq-agent.exe ./cmd/dirq-agent
+
+# Cross-compile agent for Windows ARM64
+GOOS=windows GOARCH=arm64 go build -o bin/dirq-agent-arm64.exe ./cmd/dirq-agent
 
 # Run tests
 go test ./...
