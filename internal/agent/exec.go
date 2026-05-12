@@ -28,7 +28,6 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 		slog.Bool("become", req.GetBecome()),
 	)
 
-	// Check if exec is enabled.
 	if !a.cfg.ExecEnabled {
 		a.log.Warn("exec request rejected: exec not enabled", slog.String("request_id", req.GetRequestId()))
 		a.sendExecResponse(&pb.ExecResponse{
@@ -41,61 +40,19 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 		return
 	}
 
-	// Build the command.
-	cmdStr := req.GetCommand()
-
-	// Handle become (privilege escalation).
-	if req.GetBecome() {
-		becomeUser := req.GetBecomeUser()
-		if becomeUser == "" {
-			if runtime.GOOS == "windows" {
-				becomeUser = "Administrator"
-			} else {
-				becomeUser = "root"
-			}
-		}
-
-		if runtime.GOOS == "windows" {
-			// On Windows, wrap with runas.
-			cmdStr = fmt.Sprintf("runas /user:%s \"%s\"", becomeUser, cmdStr)
-		} else {
-			// On Linux/Unix, wrap with sudo -u <user>.
-			cmdStr = fmt.Sprintf("sudo -u %s -- sh -c %s", becomeUser, shellQuote(cmdStr))
-		}
+	// Set up timeout.
+	timeout := time.Duration(req.GetTimeoutSeconds()) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
 	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	// Build the os/exec command.
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", cmdStr)
-	} else {
-		cmd = exec.Command("sh", "-c", cmdStr)
-	}
+	cmd := buildCommand(execCtx, req.GetCommand(), req.GetBecome(), req.GetBecomeUser(), req.GetBecomeMethod())
 
 	// Set extra environment variables.
 	if len(req.GetEnvironment()) > 0 {
 		cmd.Env = os.Environ()
-		for k, v := range req.GetEnvironment() {
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-		}
-	}
-
-	// Set up timeout.
-	timeout := time.Duration(req.GetTimeoutSeconds()) * time.Second
-	if timeout <= 0 {
-		timeout = 60 * time.Second // default 60s
-	}
-	execCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	prevEnv := cmd.Env
-	cmd = exec.CommandContext(execCtx, cmd.Path, cmd.Args[1:]...)
-	cmd.Env = prevEnv
-
-	// Apply extra environment if set.
-	if len(req.GetEnvironment()) > 0 {
-		if cmd.Env == nil {
-			cmd.Env = os.Environ()
-		}
 		for k, v := range req.GetEnvironment() {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 		}
@@ -143,6 +100,76 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 	a.sendExecResponse(resp)
 }
 
+// buildCommand constructs the os/exec.Cmd for the current platform.
+func buildCommand(ctx context.Context, cmdStr string, become bool, becomeUser, becomeMethod string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return buildCommandWindows(ctx, cmdStr, become, becomeUser)
+	}
+	return buildCommandUnix(ctx, cmdStr, become, becomeUser, becomeMethod)
+}
+
+// buildCommandUnix builds a command for Linux/macOS.
+func buildCommandUnix(ctx context.Context, cmdStr string, become bool, becomeUser, becomeMethod string) *exec.Cmd {
+	if become {
+		if becomeUser == "" {
+			becomeUser = "root"
+		}
+		if becomeMethod == "" {
+			becomeMethod = "sudo"
+		}
+		switch becomeMethod {
+		case "sudo":
+			cmdStr = fmt.Sprintf("sudo -n -u %s -- sh -c %s", shellQuote(becomeUser), shellQuote(cmdStr))
+		case "su":
+			cmdStr = fmt.Sprintf("su - %s -c %s", shellQuote(becomeUser), shellQuote(cmdStr))
+		default:
+			// Fall back to sudo for unknown methods.
+			cmdStr = fmt.Sprintf("sudo -n -u %s -- sh -c %s", shellQuote(becomeUser), shellQuote(cmdStr))
+		}
+	}
+	return exec.CommandContext(ctx, "sh", "-c", cmdStr)
+}
+
+// buildCommandWindows builds a command for Windows.
+//
+// On Windows the agent is expected to run as the SYSTEM account (via Windows
+// Service) so it already has full administrative privileges. This means:
+//
+//   - become=false: run directly via cmd /c
+//   - become=true, no user specified: run directly (agent is already SYSTEM)
+//   - become=true, user specified: use PowerShell to run as that user
+//
+// Note: running as a different user on Windows without a password prompt
+// requires the agent to run as SYSTEM, which has the SeAssignPrimaryTokenPrivilege
+// needed to launch processes as other users. We use PowerShell's
+// scheduled-task trick to run as another user without storing passwords.
+func buildCommandWindows(ctx context.Context, cmdStr string, become bool, becomeUser string) *exec.Cmd {
+	if !become || becomeUser == "" || becomeUser == "Administrator" || becomeUser == "SYSTEM" {
+		// Run directly — the agent (running as SYSTEM) already has privileges.
+		return exec.CommandContext(ctx, "cmd", "/c", cmdStr)
+	}
+
+	// Run as a different user using a one-shot scheduled task.
+	// This avoids the interactive password prompt of runas.exe.
+	// The SYSTEM account can create and run tasks as any local user.
+	psScript := fmt.Sprintf(
+		`$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c %s > %%TEMP%%\dirq_out.txt 2>&1'`+"\n"+
+			`$principal = New-ScheduledTaskPrincipal -UserId '%s' -LogonType S4U -RunLevel Highest`+"\n"+
+			`$task = New-ScheduledTask -Action $action -Principal $principal`+"\n"+
+			`Register-ScheduledTask -TaskName 'DirQExec' -InputObject $task -Force | Out-Null`+"\n"+
+			`Start-ScheduledTask -TaskName 'DirQExec'`+"\n"+
+			// Wait for completion (up to timeout is handled by context).
+			`do { Start-Sleep -Milliseconds 250; $info = Get-ScheduledTaskInfo -TaskName 'DirQExec' } while ($info.LastTaskResult -eq 267009)`+"\n"+
+			`Unregister-ScheduledTask -TaskName 'DirQExec' -Confirm:$false`+"\n"+
+			`Get-Content %%TEMP%%\dirq_out.txt`+"\n"+
+			`Remove-Item %%TEMP%%\dirq_out.txt -Force -ErrorAction SilentlyContinue`,
+		escapePowerShellArg(cmdStr),
+		escapePowerShellArg(becomeUser),
+	)
+
+	return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+}
+
 // handlePutFile writes content to a file on the agent.
 func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 	hostname, _ := os.Hostname()
@@ -153,7 +180,6 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		slog.Int("content_size", len(req.GetContent())),
 	)
 
-	// Check if exec is enabled (file operations require exec).
 	if !a.cfg.ExecEnabled {
 		a.log.Warn("put_file request rejected: exec not enabled", slog.String("request_id", req.GetRequestId()))
 		a.sendFileChunk(&pb.FileChunk{
@@ -166,7 +192,6 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		return
 	}
 
-	// Validate dest_path is absolute.
 	if !filepath.IsAbs(req.GetDestPath()) {
 		a.sendFileChunk(&pb.FileChunk{
 			RequestId: req.GetRequestId(),
@@ -178,7 +203,6 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		return
 	}
 
-	// Max file size check.
 	if len(req.GetContent()) > maxFileSize {
 		a.sendFileChunk(&pb.FileChunk{
 			RequestId: req.GetRequestId(),
@@ -193,12 +217,12 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 	var writeErr error
 
 	if req.GetBecome() && runtime.GOOS != "windows" {
-		// Use sudo tee to write the file.
+		// Linux: use sudo tee to write as another user.
 		becomeUser := req.GetBecomeUser()
 		if becomeUser == "" {
 			becomeUser = "root"
 		}
-		cmdStr := fmt.Sprintf("sudo -u %s tee %s > /dev/null", becomeUser, shellQuote(req.GetDestPath()))
+		cmdStr := fmt.Sprintf("sudo -n -u %s tee %s > /dev/null", shellQuote(becomeUser), shellQuote(req.GetDestPath()))
 		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 		cmd.Stdin = bytes.NewReader(req.GetContent())
 		var stderrBuf bytes.Buffer
@@ -206,20 +230,25 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		if err := cmd.Run(); err != nil {
 			writeErr = fmt.Errorf("sudo tee failed: %s: %w", stderrBuf.String(), err)
 		} else if req.GetMode() != 0 {
-			// Set file mode via sudo chmod.
-			chmodCmd := fmt.Sprintf("sudo -u %s chmod %04o %s", becomeUser, req.GetMode(), shellQuote(req.GetDestPath()))
+			chmodCmd := fmt.Sprintf("sudo -n chmod %04o %s", req.GetMode(), shellQuote(req.GetDestPath()))
 			chCmd := exec.CommandContext(ctx, "sh", "-c", chmodCmd)
 			if err := chCmd.Run(); err != nil {
 				writeErr = fmt.Errorf("chmod failed: %w", err)
 			}
 		}
 	} else {
-		// Direct write.
+		// Direct write. On Windows the agent runs as SYSTEM so it can write anywhere.
 		mode := os.FileMode(0644)
 		if req.GetMode() != 0 && runtime.GOOS != "windows" {
 			mode = os.FileMode(req.GetMode())
 		}
-		writeErr = os.WriteFile(req.GetDestPath(), req.GetContent(), mode)
+		// Ensure parent directory exists.
+		dir := filepath.Dir(req.GetDestPath())
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			writeErr = fmt.Errorf("mkdir failed: %w", err)
+		} else {
+			writeErr = os.WriteFile(req.GetDestPath(), req.GetContent(), mode)
+		}
 	}
 
 	ack := &pb.FileChunk{
@@ -249,7 +278,6 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 		slog.String("src_path", req.GetSrcPath()),
 	)
 
-	// Check if exec is enabled.
 	if !a.cfg.ExecEnabled {
 		a.log.Warn("fetch_file request rejected: exec not enabled", slog.String("request_id", req.GetRequestId()))
 		a.sendFetchFileResponse(&pb.FetchFileResponse{
@@ -262,7 +290,6 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 		return
 	}
 
-	// Validate src_path is absolute.
 	if !filepath.IsAbs(req.GetSrcPath()) {
 		a.sendFetchFileResponse(&pb.FetchFileResponse{
 			RequestId: req.GetRequestId(),
@@ -280,12 +307,12 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 	var readErr error
 
 	if req.GetBecome() && runtime.GOOS != "windows" {
-		// Use sudo cat to read the file.
+		// Linux: use sudo cat.
 		becomeUser := req.GetBecomeUser()
 		if becomeUser == "" {
 			becomeUser = "root"
 		}
-		cmdStr := fmt.Sprintf("sudo -u %s cat %s", becomeUser, shellQuote(req.GetSrcPath()))
+		cmdStr := fmt.Sprintf("sudo -n -u %s cat %s", shellQuote(becomeUser), shellQuote(req.GetSrcPath()))
 		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 		var stdoutBuf, stderrBuf bytes.Buffer
 		cmd.Stdout = &stdoutBuf
@@ -297,7 +324,7 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 			fileSize = int64(len(content))
 		}
 	} else {
-		// Direct read.
+		// Direct read. On Windows the agent runs as SYSTEM so it can read anything.
 		info, err := os.Stat(req.GetSrcPath())
 		if err != nil {
 			readErr = err
@@ -306,7 +333,9 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 			if fileSize > maxFileSize {
 				readErr = fmt.Errorf("file size %d exceeds maximum of %d bytes", fileSize, maxFileSize)
 			} else {
-				fileMode = int32(info.Mode().Perm())
+				if runtime.GOOS != "windows" {
+					fileMode = int32(info.Mode().Perm())
+				}
 				content, readErr = os.ReadFile(req.GetSrcPath())
 			}
 		}
@@ -333,45 +362,43 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 	a.sendFetchFileResponse(resp)
 }
 
-// sendExecResponse sends an ExecResponse upstream.
+// ─────────────────────────────────────────────────────────
+// Stream senders
+// ─────────────────────────────────────────────────────────
+
 func (a *Agent) sendExecResponse(resp *pb.ExecResponse) {
 	err := a.upstreamStream.Send(&pb.AgentMessage{
-		Payload: &pb.AgentMessage_ExecResponse{
-			ExecResponse: resp,
-		},
+		Payload: &pb.AgentMessage_ExecResponse{ExecResponse: resp},
 	})
 	if err != nil {
 		a.log.Error("failed to send exec response", slog.String("request_id", resp.GetRequestId()), slog.String("error", err.Error()))
 	}
 }
 
-// sendFileChunk sends a FileChunk (put file ack) upstream.
 func (a *Agent) sendFileChunk(chunk *pb.FileChunk) {
 	err := a.upstreamStream.Send(&pb.AgentMessage{
-		Payload: &pb.AgentMessage_FileChunk{
-			FileChunk: chunk,
-		},
+		Payload: &pb.AgentMessage_FileChunk{FileChunk: chunk},
 	})
 	if err != nil {
 		a.log.Error("failed to send file chunk", slog.String("request_id", chunk.GetRequestId()), slog.String("error", err.Error()))
 	}
 }
 
-// sendFetchFileResponse sends a FetchFileResponse upstream.
 func (a *Agent) sendFetchFileResponse(resp *pb.FetchFileResponse) {
 	err := a.upstreamStream.Send(&pb.AgentMessage{
-		Payload: &pb.AgentMessage_FetchResponse{
-			FetchResponse: resp,
-		},
+		Payload: &pb.AgentMessage_FetchResponse{FetchResponse: resp},
 	})
 	if err != nil {
 		a.log.Error("failed to send fetch file response", slog.String("request_id", resp.GetRequestId()), slog.String("error", err.Error()))
 	}
 }
 
-// shellQuote wraps a string in single quotes for safe shell use.
+// ─────────────────────────────────────────────────────────
+// Shell helpers
+// ─────────────────────────────────────────────────────────
+
+// shellQuote wraps a string in single quotes for safe POSIX shell use.
 func shellQuote(s string) string {
-	// Replace single quotes with '\'' and wrap in single quotes.
 	quoted := "'"
 	for _, c := range s {
 		if c == '\'' {
@@ -382,4 +409,20 @@ func shellQuote(s string) string {
 	}
 	quoted += "'"
 	return quoted
+}
+
+// escapePowerShellArg escapes a string for use inside a PowerShell -Command argument.
+func escapePowerShellArg(s string) string {
+	// Escape single quotes by doubling them (PowerShell convention).
+	result := ""
+	for _, c := range s {
+		if c == '\'' {
+			result += "''"
+		} else if c == '"' {
+			result += "`\""
+		} else {
+			result += string(c)
+		}
+	}
+	return result
 }

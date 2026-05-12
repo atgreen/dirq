@@ -18,21 +18,33 @@ func main() {
 
 	tags := parseTags(os.Getenv("DIRQ_TAGS"))
 
-	cfg := agent.Config{
-		ServerAddr: envOr("DIRQ_SERVER", "localhost:50051"),
-		ListenAddr: envOr("DIRQ_LISTEN", ":50052"),
-		Tags:       tags,
-		Version:    version,
-	}
+	execEnabled := envOr("DIRQ_EXEC_ENABLED", "false") == "true"
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	cfg := agent.Config{
+		ServerAddr:  envOr("DIRQ_SERVER", "localhost:50051"),
+		ListenAddr:  envOr("DIRQ_LISTEN", ":50052"),
+		Tags:        tags,
+		Version:     version,
+		ExecEnabled: execEnabled,
+	}
 
 	log.Info("DirQ agent starting",
 		"server", cfg.ServerAddr,
 		"listen", cfg.ListenAddr,
 		"version", cfg.Version,
+		"exec_enabled", cfg.ExecEnabled,
 	)
+
+	// On Windows, try to run as a service first.
+	// Returns nil if we should run in foreground instead.
+	if err := runService(log, cfg); err != nil {
+		log.Error("service error", "error", err)
+		os.Exit(1)
+	}
+
+	// Foreground mode (Linux always, Windows when not run by SCM).
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
 	ag := agent.New(cfg, log)
 	if err := ag.Run(ctx); err != nil && ctx.Err() == nil {
