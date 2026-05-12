@@ -1,8 +1,8 @@
-# DirQ — Real-Time Endpoint Query & Ansible Inventory Platform
+# DirQ — Real-Time Endpoint Query & Ansible Execution Platform
 
-DirQ is an agent-based platform for querying live system state across large Windows/Linux fleets. Agents form a peer-to-peer relay mesh and report data back to a central server. The server acts as an Ansible Automation Platform (AAP) inventory source, exposing collected data as Ansible facts.
+DirQ is an agent-based platform for querying and managing large Windows/Linux fleets. Agents form a peer-to-peer relay mesh and report data back to a central server. The server acts as an Ansible Automation Platform (AAP) inventory source, exposing collected data as Ansible facts.
 
-Real-time fleet-wide endpoint querying, integrated with the Ansible ecosystem.
+In Phase 2, the relay mesh doubles as an **Ansible execution transport** — AAP can run playbooks against managed hosts through the DirQ mesh using `connection: dirq`, replacing SSH/WinRM entirely. No inbound ports required on managed hosts.
 
 ## Architecture
 
@@ -67,9 +67,10 @@ Queries are parsed on the server, pushed through the relay mesh to agents, filte
 | Component | Language | Description |
 |-----------|----------|-------------|
 | `dirq-server` | Go | Central server. gRPC service for agents, REST API for admins, Ansible inventory endpoint. Runs on OpenShift (production) or Podman (dev). |
-| `dirq-agent` | Go | Lightweight agent. Runs on managed Linux/Windows servers. Collects system data, relays queries through the P2P mesh. Single static binary, zero dependencies. |
+| `dirq-agent` | Go | Lightweight agent. Runs on managed Linux/Windows servers. Collects system data, relays queries, and optionally executes commands through the P2P mesh. Single static binary, zero dependencies. |
 | `dirq` | Go | CLI tool. Submit queries, list hosts, manage API tokens. |
 | `dirq_inventory.py` | Python | Ansible dynamic inventory plugin. Connects to the DirQ REST API, exposes hosts and facts to AAP/awx. |
+| `connection: dirq` | Python | Ansible connection plugin. Routes playbook execution through the DirQ mesh instead of SSH/WinRM. |
 
 ## Built-in Query Modules
 
@@ -160,6 +161,7 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | `DIRQ_SERVER` | `localhost:50051` | DirQ server gRPC address |
 | `DIRQ_LISTEN` | `:50052` | Address to listen on for downstream peers |
 | `DIRQ_TAGS` | | Comma-separated tags: `env=prod,dc=us-east` |
+| `DIRQ_EXEC_ENABLED` | `false` | Enable remote command execution (Phase 2) |
 
 ### CLI (environment variables and flags)
 
@@ -199,6 +201,10 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/hosts
 | `GET` | `/api/v1/tokens` | List tokens |
 | `DELETE` | `/api/v1/tokens/{name}` | Delete a token |
 | `GET` | `/api/v1/inventory` | Ansible dynamic inventory (JSON) |
+| `POST` | `/api/v1/exec` | Execute a command on an agent (Phase 2) |
+| `POST` | `/api/v1/put_file` | Write a file to an agent (Phase 2) |
+| `POST` | `/api/v1/fetch_file` | Read a file from an agent (Phase 2) |
+| `GET` | `/api/v1/exec_log` | Query execution audit log (Phase 2) |
 | `GET` | `/healthz` | Health check |
 
 ## Ansible Integration
@@ -237,6 +243,119 @@ Use in playbooks:
       when: dirq_disk.partitions | selectattr('pct_used', '>', 80) | list | length > 0
 ```
 
+## Phase 2: Execution Transport
+
+Phase 2 turns the DirQ relay mesh into an **Ansible connection transport**. AAP runs playbooks against managed hosts through the mesh — no SSH, no WinRM, no inbound firewall rules.
+
+### How It Works
+
+```
+AAP Job Template (connection: dirq)
+  │
+  ▼
+Execution Environment (with DirQ connection plugin)
+  │
+  ▼  REST API
+DirQ Server
+  │
+  ▼  gRPC relay mesh
+Zone Leader → Relay Peer → Target Agent
+                            │
+                            ▼
+                    Executes command locally
+                    Returns stdout/stderr/rc
+```
+
+1. Admin launches a job template in AAP with `connection: dirq`.
+2. AAP spins up an EE container with the DirQ connection plugin.
+3. For each task, Ansible calls `exec_command()`, `put_file()`, or `fetch_file()`.
+4. The plugin routes each request to the DirQ server REST API.
+5. The server pushes it through the relay mesh to the target agent.
+6. The agent executes locally and returns results back through the mesh.
+7. AAP records the job result normally — full audit trail preserved.
+
+### Using `connection: dirq` in Playbooks
+
+```yaml
+- name: Manage hosts via DirQ mesh
+  hosts: all
+  connection: dirq
+  gather_facts: false
+  vars:
+    dirq_server_url: http://dirq-server:8080
+    dirq_token: "{{ lookup('env', 'DIRQ_TOKEN') }}"
+  tasks:
+    - name: Check uptime
+      command: uptime
+
+    - name: Copy config file
+      copy:
+        src: app.conf
+        dest: /etc/myapp/app.conf
+        mode: '0644'
+
+    - name: Read remote file
+      fetch:
+        src: /var/log/myapp/status.log
+        dest: /tmp/status.log
+        flat: yes
+```
+
+Playbooks work identically to SSH-based execution. The connection plugin transparently routes everything through the DirQ mesh.
+
+### Enabling Exec on Agents
+
+Exec is **disabled by default** — agents must opt in:
+
+```bash
+# Enable via environment variable
+DIRQ_EXEC_ENABLED=true ./bin/dirq-agent
+
+# Or via the server API (admin token required)
+curl -X PATCH -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/v1/hosts/$AGENT_ID \
+  -d '{"exec_enabled": true}'
+```
+
+Agents with `exec_enabled: false` reject all exec/file requests. The inventory plugin exposes this as `dirq_exec_enabled` so playbooks can check it.
+
+### Security Model
+
+- **Exec requests are server-originated only.** The DirQ server's mTLS identity is required. Peer agents cannot send exec requests to each other — no lateral movement through the mesh.
+- **Opt-in per agent.** `exec_enabled` defaults to `false`. Admins explicitly enable it on hosts that should accept remote commands.
+- **Full audit trail.** Every exec operation is logged in PostgreSQL with: timestamp, AAP job ID, job template, target host, requesting user, command/path, and exit status. Agents also log locally to syslog / Windows Event Log.
+- **AAP retains orchestration authority.** DirQ does not decide what to execute. AAP's RBAC, credential vault, approval workflows, and job scheduling remain in control. DirQ is the data plane only.
+- **File transfer limits.** Put/fetch operations are capped at 100 MB by default.
+
+### Exec Audit Log
+
+```bash
+# View recent exec operations
+curl http://localhost:8080/api/v1/exec_log
+
+# Filter by AAP job
+curl "http://localhost:8080/api/v1/exec_log?aap_job_id=42"
+
+# Filter by agent
+curl "http://localhost:8080/api/v1/exec_log?agent_id=abc-123"
+```
+
+Each entry includes: operation type, command/path, become user, rc, success/error, AAP job attribution, and timestamps.
+
+### What This Replaces vs. What It Doesn't
+
+**Replaces:**
+- SSH/WinRM as the connection transport
+- Inbound firewall rules for Ansible access
+- SSH key distribution and rotation
+- WinRM HTTPS certificate management
+- Bastion hosts / jump boxes for reaching isolated hosts
+
+**Does not replace:**
+- AAP's orchestration, RBAC, credential vault, job scheduling
+- AAP's approval workflows and audit logging
+- Ansible's module system, playbook language, or roles
+
 ## Building
 
 ```bash
@@ -265,12 +384,15 @@ cmd/
   dirq/                 CLI entrypoint
 proto/dirq/v1/          Protobuf definitions (gRPC services + messages)
 internal/
-  server/               gRPC service, REST API, query dispatch
-  agent/                Registration, relay mesh, query execution
+  server/               gRPC service, REST API, query dispatch, exec routing
+  agent/                Registration, relay mesh, query execution, remote exec
   query/                DirQ DSL parser (participle) and evaluator
   modules/              System data collectors (disk, cpu, memory, os_info)
-  db/                   PostgreSQL schema and data access layer
-ansible/                Ansible dynamic inventory plugin
+  db/                   PostgreSQL schema and data access layer (incl. exec audit)
+ansible/
+  dirq_inventory.py     Dynamic inventory plugin for AAP/awx
+  connection_plugins/
+    dirq.py             Ansible connection plugin (connection: dirq)
 Containerfile           Multi-stage container build
 podman-compose.yml      Dev environment (server + PostgreSQL)
 PRD.md                  Product requirements document
