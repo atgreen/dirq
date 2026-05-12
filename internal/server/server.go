@@ -31,11 +31,12 @@ type Config struct {
 type Server struct {
 	pb.UnimplementedDirQServerServer
 
-	cfg    Config
-	db     *db.DB
-	log    *slog.Logger
-	grpcSv *grpc.Server
-	httpSv *http.Server
+	cfg     Config
+	topoCfg TopologyConfig
+	db      *db.DB
+	log     *slog.Logger
+	grpcSv  *grpc.Server
+	httpSv  *http.Server
 
 	// Connected zone leaders: agentID -> stream
 	mu      sync.RWMutex
@@ -57,6 +58,7 @@ type agentStream struct {
 func New(cfg Config, database *db.DB, log *slog.Logger) *Server {
 	return &Server{
 		cfg:          cfg,
+		topoCfg:      DefaultTopologyConfig(),
 		db:           database,
 		log:          log,
 		streams:      make(map[string]*agentStream),

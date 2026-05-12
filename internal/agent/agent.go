@@ -40,7 +40,8 @@ type Agent struct {
 	cfg     Config
 	log     *slog.Logger
 	agentID string
-	role    pb.AgentRole
+	role       pb.AgentRole
+	parentAddr string // where to connect upstream (server addr or parent's listen_addr)
 
 	// gRPC server for downstream peers
 	grpcSv *grpc.Server
@@ -207,12 +208,29 @@ func (a *Agent) register(ctx context.Context) error {
 
 	a.agentID = resp.AgentId
 	a.role = resp.Role
+
+	// Determine where to connect upstream.
+	if resp.ZoneLeaderAddr != "" && resp.Role != pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
+		// Connect to assigned parent (zone leader or relay peer).
+		a.parentAddr = resp.ZoneLeaderAddr
+		a.log.Info("assigned to parent", "parent_addr", a.parentAddr, "role", resp.Role)
+	} else {
+		// Zone leader — connect directly to the server.
+		a.parentAddr = a.cfg.ServerAddr
+	}
+
 	return nil
 }
 
 func (a *Agent) connectUpstream(ctx context.Context) error {
-	// For now, always connect to the server as a zone leader.
-	conn, err := grpc.NewClient(a.cfg.ServerAddr,
+	target := a.parentAddr
+	if target == "" {
+		target = a.cfg.ServerAddr
+	}
+
+	a.log.Info("connecting upstream", "target", target, "role", a.role)
+
+	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                20 * time.Second, // ping server every 20s if idle
@@ -225,12 +243,27 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 	}
 	a.upstreamConn = conn
 
-	client := pb.NewDirQServerClient(conn)
-	stream, err := client.AgentStream(ctx)
-	if err != nil {
-		return fmt.Errorf("open agent stream: %w", err)
+	// Zone leaders connect to the server's AgentStream RPC.
+	// Relays and leafs connect to their parent's RelayStream RPC.
+	if a.role == pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
+		client := pb.NewDirQServerClient(conn)
+		stream, err := client.AgentStream(ctx)
+		if err != nil {
+			return fmt.Errorf("open agent stream: %w", err)
+		}
+		a.upstreamStream = stream
+	} else {
+		client := pb.NewDirQRelayClient(conn)
+		stream, err := client.RelayStream(ctx)
+		if err != nil {
+			// Fall back to direct server connection if parent is unreachable.
+			a.log.Warn("parent unreachable, falling back to server",
+				"parent", target, "error", err)
+			conn.Close()
+			return a.connectToServer(ctx)
+		}
+		a.upstreamStream = stream
 	}
-	a.upstreamStream = stream
 
 	// Send Hello.
 	caps := []string{}
@@ -238,7 +271,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 		caps = append(caps, name)
 	}
 
-	err = stream.Send(&pb.AgentMessage{
+	err = a.upstreamStream.Send(&pb.AgentMessage{
 		Payload: &pb.AgentMessage_Hello{
 			Hello: &pb.AgentHello{
 				AgentId:      a.agentID,
@@ -250,6 +283,34 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("send hello: %w", err)
 	}
+
+	return nil
+}
+
+// connectToServer is the fallback when a parent peer is unreachable.
+// It connects directly to the DirQ server as if this were a zone leader.
+func (a *Agent) connectToServer(ctx context.Context) error {
+	a.log.Info("falling back to direct server connection", "server", a.cfg.ServerAddr)
+
+	conn, err := grpc.NewClient(a.cfg.ServerAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                20 * time.Second,
+			Timeout:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("connect to server: %w", err)
+	}
+	a.upstreamConn = conn
+
+	client := pb.NewDirQServerClient(conn)
+	stream, err := client.AgentStream(ctx)
+	if err != nil {
+		return fmt.Errorf("open server stream: %w", err)
+	}
+	a.upstreamStream = stream
 
 	return nil
 }

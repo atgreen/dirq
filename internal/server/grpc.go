@@ -41,18 +41,42 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		return nil, fmt.Errorf("register agent: %w", err)
 	}
 
-	// For now, assign all agents as zone leaders (direct connection).
-	// Topology manager will reassign roles as the fleet grows.
-	role := pb.AgentRole_AGENT_ROLE_ZONE_LEADER
-	if err := s.db.SetAgentRole(ctx, agent.ID, "zone_leader"); err != nil {
+	// Ask the topology manager where this agent fits in the tree.
+	a, err := s.assignRole(ctx)
+	if err != nil {
+		s.log.Error("topology assignment failed, defaulting to zone_leader", "error", err)
+		a = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
+	}
+
+	// Persist the role and parent in the DB.
+	roleName := "leaf"
+	switch a.Role {
+	case pb.AgentRole_AGENT_ROLE_ZONE_LEADER:
+		roleName = "zone_leader"
+	case pb.AgentRole_AGENT_ROLE_RELAY:
+		roleName = "relay"
+	}
+	if err := s.db.SetAgentRole(ctx, agent.ID, roleName); err != nil {
 		s.log.Error("failed to set agent role", "error", err)
 	}
+	if a.ParentID != "" {
+		if err := s.db.SetAgentParent(ctx, agent.ID, a.ParentID); err != nil {
+			s.log.Error("failed to set agent parent", "error", err)
+		}
+	}
+
+	s.log.Info("agent registered",
+		"hostname", req.Hostname,
+		"agent_id", agent.ID,
+		"role", roleName,
+		"parent_id", a.ParentID,
+		"parent_addr", a.ParentAddr,
+	)
 
 	return &pb.RegisterResponse{
 		AgentId:                  agent.ID,
-		Role:                    role,
-		Peers:                   nil, // no peers for zone leaders
-		ZoneLeaderAddr:          "",  // this IS the zone leader
+		Role:                    a.Role,
+		ZoneLeaderAddr:          a.ParentAddr,
 		HeartbeatIntervalSeconds: 30,
 	}, nil
 }
