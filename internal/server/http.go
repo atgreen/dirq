@@ -23,6 +23,9 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/hosts", s.authMiddleware(s.handleListHosts))
 	mux.HandleFunc("GET /api/v1/hosts/{id}", s.authMiddleware(s.handleGetHost))
 	mux.HandleFunc("GET /api/v1/hosts/{id}/facts", s.authMiddleware(s.handleGetHostFacts))
+	mux.HandleFunc("PUT /api/v1/hosts/{id}/tags", s.authMiddleware(s.handleSetTags))
+	mux.HandleFunc("PATCH /api/v1/hosts/{id}/tags", s.authMiddleware(s.handleMergeTags))
+	mux.HandleFunc("DELETE /api/v1/hosts/{id}/tags/{key}", s.authMiddleware(s.handleDeleteTag))
 	mux.HandleFunc("GET /api/v1/queries", s.authMiddleware(s.handleListQueries))
 	mux.HandleFunc("POST /api/v1/tokens", s.authMiddleware(s.handleCreateToken))
 	mux.HandleFunc("GET /api/v1/tokens", s.authMiddleware(s.handleListTokens))
@@ -275,6 +278,67 @@ func (s *Server) handleGetHostFacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, facts)
+}
+
+// ─────────────────────────────────────────────────────────
+// Tag management
+// ─────────────────────────────────────────────────────────
+
+// PUT /api/v1/hosts/{id}/tags — replace all tags
+func (s *Server) handleSetTags(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var tags map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&tags); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid JSON: expected {\"key\": \"value\", ...}")
+		return
+	}
+	if err := s.db.UpdateAgentTags(r.Context(), id, tags); err != nil {
+		httpError(w, http.StatusNotFound, "host not found")
+		return
+	}
+	agent, _ := s.db.GetAgent(r.Context(), id)
+	jsonResponse(w, http.StatusOK, agent)
+}
+
+// PATCH /api/v1/hosts/{id}/tags — merge tags (add/update without removing existing)
+func (s *Server) handleMergeTags(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var newTags map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&newTags); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid JSON: expected {\"key\": \"value\", ...}")
+		return
+	}
+	agent, err := s.db.GetAgent(r.Context(), id)
+	if err != nil {
+		httpError(w, http.StatusNotFound, "host not found")
+		return
+	}
+	for k, v := range newTags {
+		agent.Tags[k] = v
+	}
+	if err := s.db.UpdateAgentTags(r.Context(), id, agent.Tags); err != nil {
+		httpError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	agent, _ = s.db.GetAgent(r.Context(), id)
+	jsonResponse(w, http.StatusOK, agent)
+}
+
+// DELETE /api/v1/hosts/{id}/tags/{key} — remove a single tag
+func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	key := r.PathValue("key")
+	agent, err := s.db.GetAgent(r.Context(), id)
+	if err != nil {
+		httpError(w, http.StatusNotFound, "host not found")
+		return
+	}
+	delete(agent.Tags, key)
+	if err := s.db.UpdateAgentTags(r.Context(), id, agent.Tags); err != nil {
+		httpError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ─────────────────────────────────────────────────────────

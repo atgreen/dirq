@@ -16,6 +16,9 @@ func Registry() map[string]Module {
 		&CPUModule{},
 		&MemoryModule{},
 		&OSInfoModule{},
+		&PackagesModule{},
+		&NetworkModule{},
+		&ServicesModule{},
 	}
 	reg := make(map[string]Module, len(mods))
 	for _, m := range mods {

@@ -205,7 +205,58 @@ func hostsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(listCmd, showCmd, factsCmd)
+	tagCmd := &cobra.Command{
+		Use:   "tag [id] [key=value ...]",
+		Short: "Add or update tags on a host",
+		Long:  "Add or update tags. Example: dirq hosts tag abc-123 env=prod role=webserver",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			tags := make(map[string]string)
+			for _, kv := range args[1:] {
+				parts := strings.SplitN(kv, "=", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid tag format %q, expected key=value", kv)
+				}
+				tags[parts[0]] = parts[1]
+			}
+			body, _ := json.Marshal(tags)
+			resp, err := apiRequest("PATCH", "/api/v1/hosts/"+id+"/tags", bytes.NewReader(body))
+			if err != nil {
+				return err
+			}
+			var agent struct {
+				Hostname string            `json:"hostname"`
+				Tags     map[string]string `json:"tags"`
+			}
+			json.Unmarshal(resp, &agent)
+			fmt.Printf("Tags updated for %s:\n", agent.Hostname)
+			for k, v := range agent.Tags {
+				fmt.Printf("  %s=%s\n", k, v)
+			}
+			return nil
+		},
+	}
+
+	untagCmd := &cobra.Command{
+		Use:   "untag [id] [key ...]",
+		Short: "Remove tags from a host",
+		Long:  "Remove tags by key. Example: dirq hosts untag abc-123 env role",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			for _, key := range args[1:] {
+				_, err := apiRequest("DELETE", "/api/v1/hosts/"+id+"/tags/"+key, nil)
+				if err != nil {
+					return fmt.Errorf("failed to remove tag %q: %w", key, err)
+				}
+				fmt.Printf("Removed tag: %s\n", key)
+			}
+			return nil
+		},
+	}
+
+	cmd.AddCommand(listCmd, showCmd, factsCmd, tagCmd, untagCmd)
 	return cmd
 }
 

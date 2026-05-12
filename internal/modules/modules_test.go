@@ -94,7 +94,8 @@ func TestCollectModules(t *testing.T) {
 
 func TestCollectModulesAll(t *testing.T) {
 	results := CollectModules(nil)
-	if len(results) != 4 {
-		t.Errorf("expected 4 modules, got %d", len(results))
+	expected := len(Registry())
+	if len(results) != expected {
+		t.Errorf("expected %d modules, got %d", expected, len(results))
 	}
 }
