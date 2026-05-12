@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Anthony Green <green@moxielogic.com>
+
+namespace: atgreen
+name: dirq
+version: 1.0.0
+readme: README.md
+authors:
+  - Anthony Green <green@moxielogic.com>
+description: >
+  DirQ collection for Ansible Automation Platform. Provides a connection plugin
+  (connection: atgreen.dirq.dirq) that routes playbook execution through the DirQ
+  P2P relay mesh, and an inventory plugin that uses DirQ as a dynamic inventory
+  source with live host facts.
+license_file: LICENSE
+tags:
+  - infrastructure
+  - inventory
+  - networking
+  - system
+repository: https://github.com/atgreen/dirq
+homepage: https://github.com/atgreen/dirq
+issues: https://github.com/atgreen/dirq/issues
+build_ignore:
+  - "*.pyc"
+  - __pycache__

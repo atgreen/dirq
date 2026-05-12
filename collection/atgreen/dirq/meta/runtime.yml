@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Anthony Green <green@moxielogic.com>
+
+requires_ansible: ">=2.15.0"
