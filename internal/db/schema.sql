@@ -1,4 +1,4 @@
--- DirQ PostgreSQL Schema
+-- DirQ PostgreSQL Schema (idempotent — safe to run repeatedly)
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- Agents (host registry)
 -- ─────────────────────────────────────────────────────────
 
-CREATE TABLE agents (
+CREATE TABLE IF NOT EXISTS agents (
     id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     hostname      TEXT NOT NULL,
     os            TEXT NOT NULL,          -- 'linux' or 'windows'
@@ -20,21 +20,25 @@ CREATE TABLE agents (
     parent_id     TEXT REFERENCES agents(id) ON DELETE SET NULL,
     server_pod    TEXT,                  -- which server pod owns this agent's stream
     online        BOOLEAN NOT NULL DEFAULT true,
+    exec_enabled  BOOLEAN NOT NULL DEFAULT false,
     registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_agents_hostname ON agents(hostname);
-CREATE INDEX idx_agents_online ON agents(online);
-CREATE INDEX idx_agents_role ON agents(role);
-CREATE INDEX idx_agents_parent ON agents(parent_id);
-CREATE INDEX idx_agents_tags ON agents USING gin(tags);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_hostname ON agents(hostname);
+CREATE INDEX IF NOT EXISTS idx_agents_online ON agents(online);
+CREATE INDEX IF NOT EXISTS idx_agents_role ON agents(role);
+CREATE INDEX IF NOT EXISTS idx_agents_parent ON agents(parent_id);
+CREATE INDEX IF NOT EXISTS idx_agents_tags ON agents USING gin(tags);
+
+-- Migration: add exec_enabled if upgrading from an older schema.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS exec_enabled BOOLEAN NOT NULL DEFAULT false;
 
 -- ─────────────────────────────────────────────────────────
 -- Fact cache
 -- ─────────────────────────────────────────────────────────
 
-CREATE TABLE facts (
+CREATE TABLE IF NOT EXISTS facts (
     agent_id     TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     module       TEXT NOT NULL,           -- 'disk', 'cpu', 'memory', etc.
     data         JSONB NOT NULL,
@@ -42,14 +46,14 @@ CREATE TABLE facts (
     PRIMARY KEY (agent_id, module)
 );
 
-CREATE INDEX idx_facts_module ON facts(module);
-CREATE INDEX idx_facts_collected ON facts(collected_at);
+CREATE INDEX IF NOT EXISTS idx_facts_module ON facts(module);
+CREATE INDEX IF NOT EXISTS idx_facts_collected ON facts(collected_at);
 
 -- ─────────────────────────────────────────────────────────
 -- Query history
 -- ─────────────────────────────────────────────────────────
 
-CREATE TABLE queries (
+CREATE TABLE IF NOT EXISTS queries (
     id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     raw_query     TEXT NOT NULL,
     submitted_by  TEXT,                   -- API token name
@@ -66,7 +70,7 @@ CREATE TABLE queries (
 -- API tokens
 -- ─────────────────────────────────────────────────────────
 
-CREATE TABLE api_tokens (
+CREATE TABLE IF NOT EXISTS api_tokens (
     id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     name       TEXT NOT NULL UNIQUE,
     token_hash TEXT NOT NULL,            -- bcrypt hash
@@ -79,7 +83,7 @@ CREATE TABLE api_tokens (
 -- Server peers (for Podman dev — pod discovery)
 -- ─────────────────────────────────────────────────────────
 
-CREATE TABLE server_peers (
+CREATE TABLE IF NOT EXISTS server_peers (
     pod_id      TEXT PRIMARY KEY,
     addr        TEXT NOT NULL,
     registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -90,24 +94,20 @@ CREATE TABLE server_peers (
 -- Fact TTL configuration
 -- ─────────────────────────────────────────────────────────
 
-CREATE TABLE fact_ttl (
+CREATE TABLE IF NOT EXISTS fact_ttl (
     module      TEXT PRIMARY KEY,         -- module name or '_default'
     ttl_seconds INTEGER NOT NULL DEFAULT 900  -- 15 minutes default
 );
 
-INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('_default', 900);
-INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('disk', 300);
-INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('cpu', 3600);
-INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('memory', 300);
+INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('_default', 900) ON CONFLICT DO NOTHING;
+INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('disk', 300) ON CONFLICT DO NOTHING;
+INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('cpu', 3600) ON CONFLICT DO NOTHING;
+INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('memory', 300) ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────
--- Phase 2: Remote execution
--- ─────────────────────────────────────────────────────────
-
--- Add exec_enabled to agents table
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS exec_enabled BOOLEAN NOT NULL DEFAULT false;
-
 -- Execution audit log
+-- ─────────────────────────────────────────────────────────
+
 CREATE TABLE IF NOT EXISTS exec_log (
     id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     request_id    TEXT NOT NULL,

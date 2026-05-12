@@ -15,7 +15,7 @@ func (d *DiskModule) Collect() (map[string]any, error) {
 		return nil, err
 	}
 
-	var parts []map[string]any
+	var parts []any
 	for _, p := range partitions {
 		usage, err := disk.Usage(p.Mountpoint)
 		if err != nil {
@@ -25,9 +25,9 @@ func (d *DiskModule) Collect() (map[string]any, error) {
 			"device":      p.Device,
 			"mount_point": p.Mountpoint,
 			"fs_type":     p.Fstype,
-			"total_bytes": usage.Total,
-			"used_bytes":  usage.Used,
-			"free_bytes":  usage.Free,
+			"total_bytes": float64(usage.Total),
+			"used_bytes":  float64(usage.Used),
+			"free_bytes":  float64(usage.Free),
 			"pct_used":    usage.UsedPercent,
 		})
 	}
