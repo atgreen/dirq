@@ -1,0 +1,32 @@
+version: "3"
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17
+    environment:
+      POSTGRES_USER: dirq
+      POSTGRES_PASSWORD: dirq
+      POSTGRES_DB: dirq
+    ports:
+      - "5432:5432"
+    volumes:
+      - dirq-pgdata:/var/lib/postgresql/data
+
+  dirq-server:
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: server
+    environment:
+      DIRQ_GRPC_ADDR: ":50051"
+      DIRQ_HTTP_ADDR: ":8080"
+      DIRQ_DB_URL: "postgres://dirq:dirq@postgres:5432/dirq?sslmode=disable"
+      DIRQ_POD_ID: "dev-server-1"
+    ports:
+      - "50051:50051"
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  dirq-pgdata:

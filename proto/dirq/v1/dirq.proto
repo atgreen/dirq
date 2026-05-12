@@ -1,0 +1,161 @@
+syntax = "proto3";
+
+package dirq.v1;
+
+option go_package = "github.com/atgreen/dirq/proto/dirq/v1;dirqv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ─────────────────────────────────────────────────────────
+// Agent ↔ Server  (bootstrap + zone-leader connections)
+// ─────────────────────────────────────────────────────────
+
+service DirQServer {
+  // Agent calls this once at startup to register and get its peer assignment.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Zone leaders maintain a persistent bidirectional stream with the server.
+  // Server pushes queries down; zone leader streams results back.
+  rpc AgentStream(stream AgentMessage) returns (stream ServerMessage);
+
+  // Agent calls this when it loses all peers and needs reassignment.
+  rpc RequestPeers(PeerRequest) returns (PeerResponse);
+}
+
+// ─────────────────────────────────────────────────────────
+// Agent ↔ Agent  (P2P relay mesh)
+// ─────────────────────────────────────────────────────────
+
+service DirQRelay {
+  // Downstream agent connects to upstream peer. Bidirectional stream for
+  // relaying queries down and results up.
+  rpc RelayStream(stream AgentMessage) returns (stream ServerMessage);
+}
+
+// ─────────────────────────────────────────────────────────
+// Messages: Registration
+// ─────────────────────────────────────────────────────────
+
+message RegisterRequest {
+  string hostname     = 1;
+  string os           = 2;  // "linux" or "windows"
+  string os_version   = 3;  // e.g. "RHEL 9.2", "Windows Server 2022"
+  string arch         = 4;  // e.g. "amd64", "arm64"
+  string agent_version = 5;
+  repeated string capabilities = 6; // supported query modules: "disk","cpu","memory",...
+  string listen_addr  = 7;  // host:port this agent listens on for downstream peers
+  map<string,string> tags = 8; // user-defined tags
+}
+
+message RegisterResponse {
+  string agent_id       = 1;  // server-assigned unique ID
+  AgentRole role        = 2;
+  repeated PeerInfo peers = 3; // assigned upstream/sibling peers
+  string zone_leader_addr = 4; // if this agent is not a zone leader, connect here
+  int32 heartbeat_interval_seconds = 5;
+}
+
+enum AgentRole {
+  AGENT_ROLE_UNSPECIFIED = 0;
+  AGENT_ROLE_LEAF        = 1; // connects to a relay peer
+  AGENT_ROLE_RELAY       = 2; // accepts downstream + connects upstream
+  AGENT_ROLE_ZONE_LEADER = 3; // connects directly to the server
+}
+
+message PeerInfo {
+  string agent_id = 1;
+  string addr     = 2; // host:port
+}
+
+message PeerRequest {
+  string agent_id = 1;
+}
+
+message PeerResponse {
+  repeated PeerInfo peers = 2;
+  string zone_leader_addr = 3;
+}
+
+// ─────────────────────────────────────────────────────────
+// Messages: Bidirectional stream (agent ↔ server/peer)
+// ─────────────────────────────────────────────────────────
+
+message AgentMessage {
+  oneof payload {
+    Heartbeat heartbeat       = 1;
+    QueryResult query_result  = 2;
+    AgentHello hello          = 3;
+  }
+}
+
+message ServerMessage {
+  oneof payload {
+    QueryRequest query_request = 1;
+    PeerUpdate peer_update     = 2;
+    AgentUpdatePush update_push = 3;
+  }
+}
+
+// Agent identifies itself when opening a stream.
+message AgentHello {
+  string agent_id = 1;
+  repeated string capabilities = 2;
+}
+
+message Heartbeat {
+  string agent_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  uint32 connected_peers = 3; // how many downstream peers this agent has
+}
+
+// ─────────────────────────────────────────────────────────
+// Messages: Queries
+// ─────────────────────────────────────────────────────────
+
+message QueryRequest {
+  string query_id   = 1;
+  string raw_query  = 2; // the DirQ DSL expression
+  // Pre-parsed for agents that do filtering:
+  repeated string select_fields = 3;
+  repeated string modules       = 4; // which modules to collect: "disk","cpu","memory"
+  repeated Filter filters       = 5;
+  int32 timeout_seconds         = 6;
+}
+
+message Filter {
+  string field    = 1; // e.g. "disk.pct_used"
+  string operator = 2; // e.g. ">", "=", "<", "!=", "LIKE"
+  string value    = 3;
+}
+
+message QueryResult {
+  string query_id   = 1;
+  string agent_id   = 2;
+  string hostname   = 3;
+  bool   success    = 4;
+  string error      = 5;
+  google.protobuf.Struct data = 6; // structured JSON result
+  google.protobuf.Timestamp collected_at = 7;
+}
+
+// ─────────────────────────────────────────────────────────
+// Messages: Topology updates
+// ─────────────────────────────────────────────────────────
+
+message PeerUpdate {
+  repeated PeerInfo new_peers = 1;
+  AgentRole new_role          = 2;
+}
+
+// ─────────────────────────────────────────────────────────
+// Messages: Agent binary updates
+// ─────────────────────────────────────────────────────────
+
+message AgentUpdatePush {
+  string version    = 1;
+  bytes  binary     = 2; // the new agent binary (chunked in practice)
+  bytes  signature  = 3; // Ed25519 signature
+  string os         = 4; // target OS
+  string arch       = 5; // target arch
+}
