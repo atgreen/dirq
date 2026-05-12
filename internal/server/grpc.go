@@ -32,6 +32,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		Capabilities: req.Capabilities,
 		ListenAddr:   req.ListenAddr,
 		Tags:         tags,
+		ExecEnabled:  req.ExecEnabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("register agent: %w", err)

@@ -1,0 +1,32 @@
+---
+- name: Test DirQ connection
+  hosts: all
+  connection: dirq
+  gather_facts: false
+  vars:
+    dirq_server_url: http://localhost:8090
+
+  tasks:
+    - name: Run whoami
+      raw: whoami
+      register: result
+
+    - name: Show whoami output
+      debug:
+        msg: "I am: {{ result.stdout | trim }}"
+
+    - name: Get uptime
+      raw: uptime
+      register: uptime_result
+
+    - name: Show uptime
+      debug:
+        msg: "{{ uptime_result.stdout | trim }}"
+
+    - name: Check kernel version
+      raw: uname -r
+      register: kernel
+
+    - name: Show kernel
+      debug:
+        msg: "Kernel: {{ kernel.stdout | trim }}"
