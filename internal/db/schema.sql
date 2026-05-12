@@ -99,3 +99,37 @@ INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('_default', 900);
 INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('disk', 300);
 INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('cpu', 3600);
 INSERT INTO fact_ttl (module, ttl_seconds) VALUES ('memory', 300);
+
+-- ─────────────────────────────────────────────────────────
+-- Phase 2: Remote execution
+-- ─────────────────────────────────────────────────────────
+
+-- Add exec_enabled to agents table
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS exec_enabled BOOLEAN NOT NULL DEFAULT false;
+
+-- Execution audit log
+CREATE TABLE IF NOT EXISTS exec_log (
+    id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    request_id    TEXT NOT NULL,
+    agent_id      TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    hostname      TEXT NOT NULL,
+    operation     TEXT NOT NULL,  -- 'exec_command', 'put_file', 'fetch_file'
+    command       TEXT,           -- for exec_command
+    dest_path     TEXT,           -- for put_file
+    src_path      TEXT,           -- for fetch_file
+    become        BOOLEAN NOT NULL DEFAULT false,
+    become_user   TEXT,
+    rc            INTEGER,
+    success       BOOLEAN,
+    error         TEXT,
+    aap_job_id    TEXT,
+    aap_job_template TEXT,
+    aap_user      TEXT,
+    started_at    TIMESTAMPTZ,
+    finished_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_exec_log_agent ON exec_log(agent_id);
+CREATE INDEX IF NOT EXISTS idx_exec_log_aap_job ON exec_log(aap_job_id);
+CREATE INDEX IF NOT EXISTS idx_exec_log_created ON exec_log(created_at);

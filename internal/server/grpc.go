@@ -128,6 +128,12 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			}
 		case *pb.AgentMessage_QueryResult:
 			s.handleQueryResult(p.QueryResult)
+		case *pb.AgentMessage_ExecResponse:
+			s.handleExecResponse(p.ExecResponse)
+		case *pb.AgentMessage_FileChunk:
+			s.handleFileChunk(p.FileChunk)
+		case *pb.AgentMessage_FetchResponse:
+			s.handleFetchResponse(p.FetchResponse)
 		default:
 			s.log.Warn("unknown message type from agent", "agent_id", agentID)
 		}

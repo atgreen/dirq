@@ -22,11 +22,11 @@ func (db *DB) RegisterAgent(ctx context.Context, p RegisterAgentParams) (Agent, 
 	}
 
 	row := db.pool.QueryRow(ctx, `
-		INSERT INTO agents (hostname, os, os_version, arch, agent_version, listen_addr, capabilities, tags)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO agents (hostname, os, os_version, arch, agent_version, listen_addr, capabilities, tags, exec_enabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, hostname, os, os_version, arch, agent_version, listen_addr, role,
-		          capabilities, tags, parent_id, server_pod, online, registered_at, last_seen_at`,
-		p.Hostname, p.OS, p.OSVersion, p.Arch, p.AgentVersion, p.ListenAddr, caps, tagsJSON,
+		          capabilities, tags, parent_id, server_pod, online, exec_enabled, registered_at, last_seen_at`,
+		p.Hostname, p.OS, p.OSVersion, p.Arch, p.AgentVersion, p.ListenAddr, caps, tagsJSON, p.ExecEnabled,
 	)
 
 	return scanAgent(row)
@@ -36,7 +36,7 @@ func (db *DB) RegisterAgent(ctx context.Context, p RegisterAgentParams) (Agent, 
 func (db *DB) GetAgent(ctx context.Context, id string) (Agent, error) {
 	row := db.pool.QueryRow(ctx, `
 		SELECT id, hostname, os, os_version, arch, agent_version, listen_addr, role,
-		       capabilities, tags, parent_id, server_pod, online, registered_at, last_seen_at
+		       capabilities, tags, parent_id, server_pod, online, exec_enabled, registered_at, last_seen_at
 		FROM agents WHERE id = $1`, id)
 	return scanAgent(row)
 }
@@ -45,7 +45,7 @@ func (db *DB) GetAgent(ctx context.Context, id string) (Agent, error) {
 func (db *DB) GetAgentByHostname(ctx context.Context, hostname string) (Agent, error) {
 	row := db.pool.QueryRow(ctx, `
 		SELECT id, hostname, os, os_version, arch, agent_version, listen_addr, role,
-		       capabilities, tags, parent_id, server_pod, online, registered_at, last_seen_at
+		       capabilities, tags, parent_id, server_pod, online, exec_enabled, registered_at, last_seen_at
 		FROM agents WHERE hostname = $1`, hostname)
 	return scanAgent(row)
 }
@@ -78,7 +78,7 @@ func (db *DB) ListAgents(ctx context.Context, f ListAgentsFilter) ([]Agent, erro
 	}
 
 	query := `SELECT id, hostname, os, os_version, arch, agent_version, listen_addr, role,
-	                 capabilities, tags, parent_id, server_pod, online, registered_at, last_seen_at
+	                 capabilities, tags, parent_id, server_pod, online, exec_enabled, registered_at, last_seen_at
 	          FROM agents`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
@@ -186,7 +186,7 @@ func scanAgent(row pgx.Row) (Agent, error) {
 	err := row.Scan(
 		&a.ID, &a.Hostname, &a.OS, &a.OSVersion, &a.Arch, &a.AgentVersion,
 		&a.ListenAddr, &a.Role, &a.Capabilities, &tagsJSON,
-		&a.ParentID, &a.ServerPod, &a.Online, &a.RegisteredAt, &a.LastSeenAt,
+		&a.ParentID, &a.ServerPod, &a.Online, &a.ExecEnabled, &a.RegisteredAt, &a.LastSeenAt,
 	)
 	if err != nil {
 		return Agent{}, err
@@ -209,7 +209,7 @@ func scanAgentRows(rows pgx.Rows) (Agent, error) {
 	err := rows.Scan(
 		&a.ID, &a.Hostname, &a.OS, &a.OSVersion, &a.Arch, &a.AgentVersion,
 		&a.ListenAddr, &a.Role, &a.Capabilities, &tagsJSON,
-		&a.ParentID, &a.ServerPod, &a.Online, &a.RegisteredAt, &a.LastSeenAt,
+		&a.ParentID, &a.ServerPod, &a.Online, &a.ExecEnabled, &a.RegisteredAt, &a.LastSeenAt,
 	)
 	if err != nil {
 		return Agent{}, err

@@ -22,10 +22,11 @@ import (
 
 // Config holds agent configuration.
 type Config struct {
-	ServerAddr string            // DirQ server address for bootstrap
-	ListenAddr string            // address this agent listens on for downstream peers
-	Tags       map[string]string // user-defined tags
-	Version    string
+	ServerAddr  string            // DirQ server address for bootstrap
+	ListenAddr  string            // address this agent listens on for downstream peers
+	Tags        map[string]string // user-defined tags
+	Version     string
+	ExecEnabled bool // Phase 2: whether this agent accepts exec/file requests
 }
 
 // Agent is the DirQ endpoint agent.
@@ -112,6 +113,7 @@ func (a *Agent) register(ctx context.Context) error {
 		Capabilities: caps,
 		ListenAddr:   a.cfg.ListenAddr,
 		Tags:         a.cfg.Tags,
+		ExecEnabled:  a.cfg.ExecEnabled,
 	})
 	if err != nil {
 		return fmt.Errorf("register RPC: %w", err)
@@ -150,6 +152,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 			Hello: &pb.AgentHello{
 				AgentId:      a.agentID,
 				Capabilities: caps,
+				ExecEnabled:  a.cfg.ExecEnabled,
 			},
 		},
 	})
@@ -229,6 +232,12 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 	case *pb.ServerMessage_UpdatePush:
 		a.log.Info("update push received", "version", p.UpdatePush.Version)
 		// TODO: handle agent updates
+	case *pb.ServerMessage_ExecRequest:
+		go a.handleExecRequest(ctx, p.ExecRequest)
+	case *pb.ServerMessage_PutFile:
+		go a.handlePutFile(ctx, p.PutFile)
+	case *pb.ServerMessage_FetchFile:
+		go a.handleFetchFile(ctx, p.FetchFile)
 	}
 }
 

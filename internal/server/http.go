@@ -25,6 +25,12 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/tokens", s.authMiddleware(s.handleListTokens))
 	mux.HandleFunc("DELETE /api/v1/tokens/{name}", s.authMiddleware(s.handleDeleteToken))
 
+	// Phase 2: exec endpoints
+	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(s.handleExecCommand))
+	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(s.handlePutFile))
+	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(s.handleFetchFile))
+	mux.HandleFunc("GET /api/v1/exec_log", s.authMiddleware(s.handleListExecLogs))
+
 	// Ansible inventory endpoint
 	mux.HandleFunc("GET /api/v1/inventory", s.authMiddleware(s.handleInventory))
 

@@ -46,6 +46,7 @@ message RegisterRequest {
   repeated string capabilities = 6; // supported query modules: "disk","cpu","memory",...
   string listen_addr  = 7;  // host:port this agent listens on for downstream peers
   map<string,string> tags = 8; // user-defined tags
+  bool exec_enabled = 9;      // Phase 2: whether this agent accepts exec requests
 }
 
 message RegisterResponse {
@@ -83,17 +84,23 @@ message PeerResponse {
 
 message AgentMessage {
   oneof payload {
-    Heartbeat heartbeat       = 1;
-    QueryResult query_result  = 2;
-    AgentHello hello          = 3;
+    Heartbeat heartbeat           = 1;
+    QueryResult query_result      = 2;
+    AgentHello hello              = 3;
+    ExecResponse exec_response    = 4; // Phase 2: command execution result
+    FileChunk file_chunk          = 5; // Phase 2: file transfer data
+    FetchFileResponse fetch_response = 6; // Phase 2: fetched file data
   }
 }
 
 message ServerMessage {
   oneof payload {
-    QueryRequest query_request = 1;
-    PeerUpdate peer_update     = 2;
-    AgentUpdatePush update_push = 3;
+    QueryRequest query_request    = 1;
+    PeerUpdate peer_update        = 2;
+    AgentUpdatePush update_push   = 3;
+    ExecRequest exec_request      = 4; // Phase 2: run command on agent
+    PutFileRequest put_file       = 5; // Phase 2: write file to agent
+    FetchFileRequest fetch_file   = 6; // Phase 2: read file from agent
   }
 }
 
@@ -101,6 +108,7 @@ message ServerMessage {
 message AgentHello {
   string agent_id = 1;
   repeated string capabilities = 2;
+  bool exec_enabled = 3; // Phase 2: whether exec is enabled on this agent
 }
 
 message Heartbeat {
@@ -158,4 +166,87 @@ message AgentUpdatePush {
   bytes  signature  = 3; // Ed25519 signature
   string os         = 4; // target OS
   string arch       = 5; // target arch
+}
+
+// ─────────────────────────────────────────────────────────
+// Phase 2: Remote execution
+// ─────────────────────────────────────────────────────────
+
+// ExecRequest asks the agent to run a command.
+message ExecRequest {
+  string request_id    = 1;  // unique ID for this exec operation
+  string agent_id      = 2;  // target agent
+  string command       = 3;  // command to execute (shell command string)
+  bool   become        = 4;  // run with privilege escalation (sudo/runas)
+  string become_user   = 5;  // user to become (default: root/Administrator)
+  string become_method = 6;  // "sudo", "runas", etc.
+  map<string,string> environment = 7; // extra env vars for the command
+  int32  timeout_seconds = 8;
+  // AAP attribution (for audit logging)
+  string aap_job_id        = 9;
+  string aap_job_template  = 10;
+  string aap_user          = 11;
+}
+
+// ExecResponse returns the result of command execution.
+message ExecResponse {
+  string request_id  = 1;
+  string agent_id    = 2;
+  string hostname    = 3;
+  int32  rc          = 4;  // exit code
+  bytes  stdout      = 5;
+  bytes  stderr      = 6;
+  bool   success     = 7;
+  string error       = 8;  // agent-level error (e.g. exec disabled, timeout)
+  google.protobuf.Timestamp started_at  = 9;
+  google.protobuf.Timestamp finished_at = 10;
+}
+
+// PutFileRequest asks the agent to write a file to disk.
+message PutFileRequest {
+  string request_id  = 1;
+  string agent_id    = 2;
+  string dest_path   = 3;  // absolute path on the agent
+  bytes  content     = 4;  // file content (max 100MB default)
+  int32  mode        = 5;  // unix file mode (e.g. 0644), ignored on Windows
+  bool   become      = 6;
+  string become_user = 7;
+  // AAP attribution
+  string aap_job_id       = 8;
+  string aap_job_template = 9;
+  string aap_user         = 10;
+}
+
+// FetchFileRequest asks the agent to read a file from disk and send it back.
+message FetchFileRequest {
+  string request_id  = 1;
+  string agent_id    = 2;
+  string src_path    = 3;  // absolute path on the agent
+  bool   become      = 4;
+  string become_user = 5;
+  // AAP attribution
+  string aap_job_id       = 6;
+  string aap_job_template = 7;
+  string aap_user         = 8;
+}
+
+// FetchFileResponse returns file content from the agent.
+message FetchFileResponse {
+  string request_id = 1;
+  string agent_id   = 2;
+  string hostname   = 3;
+  bool   success    = 4;
+  string error      = 5;
+  bytes  content    = 6;
+  int32  mode       = 7;  // original file mode
+  int64  size       = 8;  // file size in bytes
+}
+
+// FileChunk is the acknowledgement for a PutFileRequest.
+message FileChunk {
+  string request_id = 1;
+  string agent_id   = 2;
+  string hostname   = 3;
+  bool   success    = 4;
+  string error      = 5;
 }

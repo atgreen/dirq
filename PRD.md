@@ -46,8 +46,10 @@ tools that don't integrate natively with Ansible.
 
 ## Non-Goals
 
-- **Configuration management / remediation.** DirQ is read-only. It collects and
-  reports; it does not change system state. Remediation is Ansible's job.
+- **Configuration management / remediation (V1).** DirQ V1 is read-only. It
+  collects and reports; it does not change system state. Remediation is Ansible's
+  job. (Phase 2 adds an execution transport for AAP — see below — but DirQ
+  never decides what to run; AAP retains full orchestration authority.)
 - **Log aggregation or streaming telemetry.** This is not a replacement for
   Splunk, Elastic, or Prometheus. DirQ answers point-in-time questions.
 - **Agent deployment / orchestration.** How agents get installed on endpoints is
@@ -186,6 +188,117 @@ tools that don't integrate natively with Ansible.
 
 - **As an admin, I want the DirQ server to emit events (webhooks or message queue)
   when agents go offline or query thresholds are breached.**
+
+### Phase 2 — AAP Execution Transport
+
+Phase 2 extends the DirQ agent mesh into an **execution transport for AAP**,
+allowing Ansible playbooks to reach managed hosts through the existing DirQ
+relay mesh instead of SSH or WinRM. DirQ does not decide what to execute —
+AAP retains full orchestration authority (RBAC, credential vault, approval
+workflows, audit trail). DirQ provides the connection layer only.
+
+**Why:** In large enterprises, managed hosts sit behind NAT, firewalls, or
+bastion layers that make inbound SSH/WinRM difficult or impossible. The DirQ
+agent already maintains a persistent, agent-initiated outbound gRPC connection
+through the relay mesh. Reusing that connection as an Ansible transport
+eliminates the need for inbound firewall rules, SSH credential management,
+and WinRM configuration — while preserving AAP's governance model.
+
+#### User Stories (Phase 2)
+
+- **As an Ansible developer, I want to use `connection: dirq` in my playbooks,
+  so that AAP reaches managed hosts through the DirQ mesh instead of SSH/WinRM.**
+  - Acceptance: A custom Ansible connection plugin (`connection: dirq`) implements
+    `exec_command()`, `put_file()`, and `fetch_file()` by routing requests through
+    the DirQ server API and relay mesh. Playbooks run identically to SSH-based
+    execution. The plugin is packaged in a custom Execution Environment image.
+
+- **As an Ansible developer, I want DirQ-collected facts to be automatically
+  available during playbook execution without a `gather_facts` step, so that
+  plays start faster and use live data.**
+  - Acceptance: When `connection: dirq` is used, the connection plugin injects
+    cached DirQ facts into the play's `hostvars` before task execution begins.
+    `gather_facts: false` is the recommended default; users can still enable
+    standard fact gathering if needed.
+
+- **As a platform engineer, I want to enable or disable execution capability
+  per agent, so that I control which hosts accept remote commands.**
+  - Acceptance: Agent configuration includes an `exec_enabled` flag (default:
+    `false`). Agents with exec disabled reject execution requests and are not
+    offered as execution targets. The flag is settable at deploy time and via
+    the DirQ server API (with admin token). Agents report their exec capability
+    during registration; the inventory plugin exposes this as a fact
+    (`dirq_exec_enabled`).
+
+- **As a security engineer, I want every command executed through the DirQ mesh
+  to be logged with full attribution, so that I have an audit trail equivalent
+  to or better than SSH session logging.**
+  - Acceptance: The DirQ server logs each execution request with: timestamp,
+    AAP job ID, job template name, target host, requesting user (from AAP),
+    command or module invoked, and exit status. Logs are stored in PostgreSQL
+    and queryable via the DirQ API. The agent also logs execution events
+    locally to syslog / Windows Event Log.
+
+- **As a platform engineer, I want AAP to execute playbooks against hosts that
+  are behind NAT or firewalls with no inbound access, so that I don't need
+  bastion hosts or VPN tunnels for automation.**
+  - Acceptance: A host whose agent connects outbound through the relay mesh
+    is reachable by AAP via `connection: dirq` with no inbound ports open.
+    Works across NAT boundaries, air-gapped segments (with relay peers in
+    the gap), and cloud VPCs.
+
+#### Technical Approach
+
+**Ansible Connection Plugin (`connection: dirq`):**
+A Python connection plugin distributed as part of a custom EE image. The
+plugin holds a gRPC channel to the DirQ server. When Ansible calls
+`exec_command(cmd)`, the plugin sends an `ExecRequest` message to the DirQ
+server, which routes it through the relay mesh to the target agent. The
+agent executes the command locally and streams stdout/stderr/rc back through
+the mesh. `put_file()` and `fetch_file()` work the same way — file content
+is streamed through the existing gRPC bidirectional stream.
+
+**Agent Exec Module:**
+A new gRPC service on the agent alongside the existing query service. The
+exec module handles three operations: run command (with optional become/sudo),
+receive file (write to disk), and send file (read from disk). The exec
+module is compiled into the same agent binary but only activated when
+`exec_enabled: true`. All operations are gated by the server's mTLS
+identity — the agent only accepts exec requests that originate from the
+DirQ server, never from peer agents.
+
+**Execution flow:**
+1. Admin launches a job template in AAP with `connection: dirq`.
+2. AAP spins up an EE container with the DirQ connection plugin.
+3. The plugin connects to the DirQ server via gRPC.
+4. For each target host, Ansible calls `exec_command()` / `put_file()` /
+   `fetch_file()` through the plugin.
+5. The DirQ server routes each request through the relay mesh to the
+   target agent's exec module.
+6. The agent executes locally and returns results back through the mesh.
+7. The plugin returns results to Ansible as if they came from SSH.
+8. AAP records the job result normally — full audit trail preserved.
+
+**Security model:**
+- Exec requests are only accepted from the DirQ server's mTLS identity.
+  Peer agents cannot send exec requests to each other.
+- The agent's `exec_enabled` flag must be true; otherwise requests are
+  rejected at the agent.
+- AAP's RBAC governs who can launch job templates. DirQ does not duplicate
+  this — it trusts the authenticated server-originated request.
+- All exec traffic is encrypted end-to-end via the existing mTLS mesh.
+- Every execution is logged server-side (PostgreSQL) and agent-side
+  (syslog / Event Log) with full attribution to the AAP job and user.
+- File transfers are size-limited (configurable, default 100 MB) to
+  prevent mesh abuse.
+
+**What this replaces vs. what it doesn't:**
+- **Replaces:** SSH/WinRM as the connection transport. Firewall rules for
+  inbound access. SSH key distribution and rotation. WinRM HTTPS
+  certificate management.
+- **Does not replace:** AAP's orchestration, RBAC, credential vault,
+  job scheduling, approval workflows, or audit logging. AAP remains the
+  control plane; DirQ is the data plane.
 
 ## Technical Constraints
 
@@ -382,6 +495,13 @@ tree needed at small scale — every agent is effectively a zone leader).
     Protobuf forward compatibility (additive fields only) provides the
     underlying wire-level safety.
 
+15. **Phase 2 — Execution transport:** The DirQ relay mesh doubles as an
+    Ansible connection transport. A custom `connection: dirq` plugin routes
+    Ansible exec/put/fetch operations through the mesh to agents with
+    `exec_enabled: true`. AAP retains full orchestration authority; DirQ
+    provides the data plane only. Exec requests are server-originated
+    (mTLS-gated) and fully audited.
+
 ## Open Questions
 
 _(All major architectural decisions are resolved. Remaining questions are
@@ -401,3 +521,18 @@ implementation-level and will be answered during engineering design.)_
    launch (org-specific target).
 6. **Fact accuracy:** DirQ-reported facts match `ansible.builtin.setup` output for
    equivalent data points in 99%+ of cases. Validated via automated comparison test.
+
+### Phase 2 Success Metrics
+
+7. **Exec transport parity:** Playbooks produce identical results when run with
+   `connection: dirq` vs. `connection: ssh` (Linux) or `connection: winrm`
+   (Windows). Validated via side-by-side integration test suite.
+8. **Exec latency overhead:** Single-task execution via `connection: dirq` adds
+   < 500 ms round-trip overhead compared to direct SSH on the same network.
+   Measured end-to-end from Ansible task start to task completion.
+9. **NAT/firewall traversal:** Playbook execution succeeds against hosts with
+   no inbound ports open, connected only through the outbound relay mesh.
+   Validated via integration test with firewall rules blocking all inbound.
+10. **Audit completeness:** 100% of exec operations are logged with AAP job ID,
+    user, target host, command, and exit status. Validated via audit log query
+    after test job run.

@@ -35,6 +35,10 @@ type Server struct {
 	// Connected zone leaders: agentID -> stream
 	mu      sync.RWMutex
 	streams map[string]*agentStream
+
+	// Phase 2: exec sessions pending response
+	execMu       sync.RWMutex
+	execSessions map[string]*execSession
 }
 
 type agentStream struct {
@@ -47,10 +51,11 @@ type agentStream struct {
 // New creates a new DirQ server.
 func New(cfg Config, database *db.DB, log *slog.Logger) *Server {
 	return &Server{
-		cfg:     cfg,
-		db:      database,
-		log:     log,
-		streams: make(map[string]*agentStream),
+		cfg:          cfg,
+		db:           database,
+		log:          log,
+		streams:      make(map[string]*agentStream),
+		execSessions: make(map[string]*execSession),
 	}
 }
 

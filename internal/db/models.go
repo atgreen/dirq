@@ -20,6 +20,7 @@ type Agent struct {
 	ParentID     *string           `json:"parent_id,omitempty"`
 	ServerPod    *string           `json:"server_pod,omitempty"`
 	Online       bool              `json:"online"`
+	ExecEnabled  bool              `json:"exec_enabled"`
 	RegisteredAt time.Time         `json:"registered_at"`
 	LastSeenAt   time.Time         `json:"last_seen_at"`
 }
@@ -34,6 +35,7 @@ type RegisterAgentParams struct {
 	ListenAddr   string            `json:"listen_addr"`
 	Capabilities []string          `json:"capabilities"`
 	Tags         map[string]string `json:"tags"`
+	ExecEnabled  bool              `json:"exec_enabled"`
 }
 
 // ListAgentsFilter controls which agents are returned by ListAgents.
@@ -74,6 +76,29 @@ type Query struct {
 	SuccessCount int        `json:"success_count"`
 	ErrorCount   int        `json:"error_count"`
 	TimeoutCount int        `json:"timeout_count"`
+}
+
+// ExecLog represents an entry in the execution audit log.
+type ExecLog struct {
+	ID             string     `json:"id"`
+	RequestID      string     `json:"request_id"`
+	AgentID        string     `json:"agent_id"`
+	Hostname       string     `json:"hostname"`
+	Operation      string     `json:"operation"`
+	Command        *string    `json:"command,omitempty"`
+	DestPath       *string    `json:"dest_path,omitempty"`
+	SrcPath        *string    `json:"src_path,omitempty"`
+	Become         bool       `json:"become"`
+	BecomeUser     *string    `json:"become_user,omitempty"`
+	RC             *int       `json:"rc,omitempty"`
+	Success        *bool      `json:"success,omitempty"`
+	Error          *string    `json:"error,omitempty"`
+	AAPJobID       *string    `json:"aap_job_id,omitempty"`
+	AAPJobTemplate *string    `json:"aap_job_template,omitempty"`
+	AAPUser        *string    `json:"aap_user,omitempty"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // ServerPeer represents a server pod in a Podman deployment.

@@ -85,6 +85,7 @@ type RegisterRequest struct {
 	Capabilities  []string               `protobuf:"bytes,6,rep,name=capabilities,proto3" json:"capabilities,omitempty"`                                                           // supported query modules: "disk","cpu","memory",...
 	ListenAddr    string                 `protobuf:"bytes,7,opt,name=listen_addr,json=listenAddr,proto3" json:"listen_addr,omitempty"`                                             // host:port this agent listens on for downstream peers
 	Tags          map[string]string      `protobuf:"bytes,8,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // user-defined tags
+	ExecEnabled   bool                   `protobuf:"varint,9,opt,name=exec_enabled,json=execEnabled,proto3" json:"exec_enabled,omitempty"`                                         // Phase 2: whether this agent accepts exec requests
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -173,6 +174,13 @@ func (x *RegisterRequest) GetTags() map[string]string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *RegisterRequest) GetExecEnabled() bool {
+	if x != nil {
+		return x.ExecEnabled
+	}
+	return false
 }
 
 type RegisterResponse struct {
@@ -406,6 +414,9 @@ type AgentMessage struct {
 	//	*AgentMessage_Heartbeat
 	//	*AgentMessage_QueryResult
 	//	*AgentMessage_Hello
+	//	*AgentMessage_ExecResponse
+	//	*AgentMessage_FileChunk
+	//	*AgentMessage_FetchResponse
 	Payload       isAgentMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -475,6 +486,33 @@ func (x *AgentMessage) GetHello() *AgentHello {
 	return nil
 }
 
+func (x *AgentMessage) GetExecResponse() *ExecResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentMessage_ExecResponse); ok {
+			return x.ExecResponse
+		}
+	}
+	return nil
+}
+
+func (x *AgentMessage) GetFileChunk() *FileChunk {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentMessage_FileChunk); ok {
+			return x.FileChunk
+		}
+	}
+	return nil
+}
+
+func (x *AgentMessage) GetFetchResponse() *FetchFileResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentMessage_FetchResponse); ok {
+			return x.FetchResponse
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Payload interface {
 	isAgentMessage_Payload()
 }
@@ -491,11 +529,29 @@ type AgentMessage_Hello struct {
 	Hello *AgentHello `protobuf:"bytes,3,opt,name=hello,proto3,oneof"`
 }
 
+type AgentMessage_ExecResponse struct {
+	ExecResponse *ExecResponse `protobuf:"bytes,4,opt,name=exec_response,json=execResponse,proto3,oneof"` // Phase 2: command execution result
+}
+
+type AgentMessage_FileChunk struct {
+	FileChunk *FileChunk `protobuf:"bytes,5,opt,name=file_chunk,json=fileChunk,proto3,oneof"` // Phase 2: file transfer data
+}
+
+type AgentMessage_FetchResponse struct {
+	FetchResponse *FetchFileResponse `protobuf:"bytes,6,opt,name=fetch_response,json=fetchResponse,proto3,oneof"` // Phase 2: fetched file data
+}
+
 func (*AgentMessage_Heartbeat) isAgentMessage_Payload() {}
 
 func (*AgentMessage_QueryResult) isAgentMessage_Payload() {}
 
 func (*AgentMessage_Hello) isAgentMessage_Payload() {}
+
+func (*AgentMessage_ExecResponse) isAgentMessage_Payload() {}
+
+func (*AgentMessage_FileChunk) isAgentMessage_Payload() {}
+
+func (*AgentMessage_FetchResponse) isAgentMessage_Payload() {}
 
 type ServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -504,6 +560,9 @@ type ServerMessage struct {
 	//	*ServerMessage_QueryRequest
 	//	*ServerMessage_PeerUpdate
 	//	*ServerMessage_UpdatePush
+	//	*ServerMessage_ExecRequest
+	//	*ServerMessage_PutFile
+	//	*ServerMessage_FetchFile
 	Payload       isServerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -573,6 +632,33 @@ func (x *ServerMessage) GetUpdatePush() *AgentUpdatePush {
 	return nil
 }
 
+func (x *ServerMessage) GetExecRequest() *ExecRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_ExecRequest); ok {
+			return x.ExecRequest
+		}
+	}
+	return nil
+}
+
+func (x *ServerMessage) GetPutFile() *PutFileRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_PutFile); ok {
+			return x.PutFile
+		}
+	}
+	return nil
+}
+
+func (x *ServerMessage) GetFetchFile() *FetchFileRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_FetchFile); ok {
+			return x.FetchFile
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Payload interface {
 	isServerMessage_Payload()
 }
@@ -589,17 +675,36 @@ type ServerMessage_UpdatePush struct {
 	UpdatePush *AgentUpdatePush `protobuf:"bytes,3,opt,name=update_push,json=updatePush,proto3,oneof"`
 }
 
+type ServerMessage_ExecRequest struct {
+	ExecRequest *ExecRequest `protobuf:"bytes,4,opt,name=exec_request,json=execRequest,proto3,oneof"` // Phase 2: run command on agent
+}
+
+type ServerMessage_PutFile struct {
+	PutFile *PutFileRequest `protobuf:"bytes,5,opt,name=put_file,json=putFile,proto3,oneof"` // Phase 2: write file to agent
+}
+
+type ServerMessage_FetchFile struct {
+	FetchFile *FetchFileRequest `protobuf:"bytes,6,opt,name=fetch_file,json=fetchFile,proto3,oneof"` // Phase 2: read file from agent
+}
+
 func (*ServerMessage_QueryRequest) isServerMessage_Payload() {}
 
 func (*ServerMessage_PeerUpdate) isServerMessage_Payload() {}
 
 func (*ServerMessage_UpdatePush) isServerMessage_Payload() {}
 
+func (*ServerMessage_ExecRequest) isServerMessage_Payload() {}
+
+func (*ServerMessage_PutFile) isServerMessage_Payload() {}
+
+func (*ServerMessage_FetchFile) isServerMessage_Payload() {}
+
 // Agent identifies itself when opening a stream.
 type AgentHello struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	Capabilities  []string               `protobuf:"bytes,2,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	ExecEnabled   bool                   `protobuf:"varint,3,opt,name=exec_enabled,json=execEnabled,proto3" json:"exec_enabled,omitempty"` // Phase 2: whether exec is enabled on this agent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -646,6 +751,13 @@ func (x *AgentHello) GetCapabilities() []string {
 		return x.Capabilities
 	}
 	return nil
+}
+
+func (x *AgentHello) GetExecEnabled() bool {
+	if x != nil {
+		return x.ExecEnabled
+	}
+	return false
 }
 
 type Heartbeat struct {
@@ -1073,11 +1185,652 @@ func (x *AgentUpdatePush) GetArch() string {
 	return ""
 }
 
+// ExecRequest asks the agent to run a command.
+type ExecRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	RequestId      string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                                                              // unique ID for this exec operation
+	AgentId        string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`                                                                    // target agent
+	Command        string                 `protobuf:"bytes,3,opt,name=command,proto3" json:"command,omitempty"`                                                                                   // command to execute (shell command string)
+	Become         bool                   `protobuf:"varint,4,opt,name=become,proto3" json:"become,omitempty"`                                                                                    // run with privilege escalation (sudo/runas)
+	BecomeUser     string                 `protobuf:"bytes,5,opt,name=become_user,json=becomeUser,proto3" json:"become_user,omitempty"`                                                           // user to become (default: root/Administrator)
+	BecomeMethod   string                 `protobuf:"bytes,6,opt,name=become_method,json=becomeMethod,proto3" json:"become_method,omitempty"`                                                     // "sudo", "runas", etc.
+	Environment    map[string]string      `protobuf:"bytes,7,rep,name=environment,proto3" json:"environment,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // extra env vars for the command
+	TimeoutSeconds int32                  `protobuf:"varint,8,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	// AAP attribution (for audit logging)
+	AapJobId       string `protobuf:"bytes,9,opt,name=aap_job_id,json=aapJobId,proto3" json:"aap_job_id,omitempty"`
+	AapJobTemplate string `protobuf:"bytes,10,opt,name=aap_job_template,json=aapJobTemplate,proto3" json:"aap_job_template,omitempty"`
+	AapUser        string `protobuf:"bytes,11,opt,name=aap_user,json=aapUser,proto3" json:"aap_user,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ExecRequest) Reset() {
+	*x = ExecRequest{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecRequest) ProtoMessage() {}
+
+func (x *ExecRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecRequest.ProtoReflect.Descriptor instead.
+func (*ExecRequest) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ExecRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ExecRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ExecRequest) GetCommand() string {
+	if x != nil {
+		return x.Command
+	}
+	return ""
+}
+
+func (x *ExecRequest) GetBecome() bool {
+	if x != nil {
+		return x.Become
+	}
+	return false
+}
+
+func (x *ExecRequest) GetBecomeUser() string {
+	if x != nil {
+		return x.BecomeUser
+	}
+	return ""
+}
+
+func (x *ExecRequest) GetBecomeMethod() string {
+	if x != nil {
+		return x.BecomeMethod
+	}
+	return ""
+}
+
+func (x *ExecRequest) GetEnvironment() map[string]string {
+	if x != nil {
+		return x.Environment
+	}
+	return nil
+}
+
+func (x *ExecRequest) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+func (x *ExecRequest) GetAapJobId() string {
+	if x != nil {
+		return x.AapJobId
+	}
+	return ""
+}
+
+func (x *ExecRequest) GetAapJobTemplate() string {
+	if x != nil {
+		return x.AapJobTemplate
+	}
+	return ""
+}
+
+func (x *ExecRequest) GetAapUser() string {
+	if x != nil {
+		return x.AapUser
+	}
+	return ""
+}
+
+// ExecResponse returns the result of command execution.
+type ExecResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	AgentId       string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Hostname      string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Rc            int32                  `protobuf:"varint,4,opt,name=rc,proto3" json:"rc,omitempty"` // exit code
+	Stdout        []byte                 `protobuf:"bytes,5,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr        []byte                 `protobuf:"bytes,6,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	Success       bool                   `protobuf:"varint,7,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"` // agent-level error (e.g. exec disabled, timeout)
+	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecResponse) Reset() {
+	*x = ExecResponse{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecResponse) ProtoMessage() {}
+
+func (x *ExecResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecResponse.ProtoReflect.Descriptor instead.
+func (*ExecResponse) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ExecResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ExecResponse) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ExecResponse) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *ExecResponse) GetRc() int32 {
+	if x != nil {
+		return x.Rc
+	}
+	return 0
+}
+
+func (x *ExecResponse) GetStdout() []byte {
+	if x != nil {
+		return x.Stdout
+	}
+	return nil
+}
+
+func (x *ExecResponse) GetStderr() []byte {
+	if x != nil {
+		return x.Stderr
+	}
+	return nil
+}
+
+func (x *ExecResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ExecResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *ExecResponse) GetStartedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.StartedAt
+	}
+	return nil
+}
+
+func (x *ExecResponse) GetFinishedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return nil
+}
+
+// PutFileRequest asks the agent to write a file to disk.
+type PutFileRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	RequestId  string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	AgentId    string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	DestPath   string                 `protobuf:"bytes,3,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"` // absolute path on the agent
+	Content    []byte                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`                   // file content (max 100MB default)
+	Mode       int32                  `protobuf:"varint,5,opt,name=mode,proto3" json:"mode,omitempty"`                        // unix file mode (e.g. 0644), ignored on Windows
+	Become     bool                   `protobuf:"varint,6,opt,name=become,proto3" json:"become,omitempty"`
+	BecomeUser string                 `protobuf:"bytes,7,opt,name=become_user,json=becomeUser,proto3" json:"become_user,omitempty"`
+	// AAP attribution
+	AapJobId       string `protobuf:"bytes,8,opt,name=aap_job_id,json=aapJobId,proto3" json:"aap_job_id,omitempty"`
+	AapJobTemplate string `protobuf:"bytes,9,opt,name=aap_job_template,json=aapJobTemplate,proto3" json:"aap_job_template,omitempty"`
+	AapUser        string `protobuf:"bytes,10,opt,name=aap_user,json=aapUser,proto3" json:"aap_user,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *PutFileRequest) Reset() {
+	*x = PutFileRequest{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutFileRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutFileRequest) ProtoMessage() {}
+
+func (x *PutFileRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutFileRequest.ProtoReflect.Descriptor instead.
+func (*PutFileRequest) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *PutFileRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *PutFileRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *PutFileRequest) GetDestPath() string {
+	if x != nil {
+		return x.DestPath
+	}
+	return ""
+}
+
+func (x *PutFileRequest) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *PutFileRequest) GetMode() int32 {
+	if x != nil {
+		return x.Mode
+	}
+	return 0
+}
+
+func (x *PutFileRequest) GetBecome() bool {
+	if x != nil {
+		return x.Become
+	}
+	return false
+}
+
+func (x *PutFileRequest) GetBecomeUser() string {
+	if x != nil {
+		return x.BecomeUser
+	}
+	return ""
+}
+
+func (x *PutFileRequest) GetAapJobId() string {
+	if x != nil {
+		return x.AapJobId
+	}
+	return ""
+}
+
+func (x *PutFileRequest) GetAapJobTemplate() string {
+	if x != nil {
+		return x.AapJobTemplate
+	}
+	return ""
+}
+
+func (x *PutFileRequest) GetAapUser() string {
+	if x != nil {
+		return x.AapUser
+	}
+	return ""
+}
+
+// FetchFileRequest asks the agent to read a file from disk and send it back.
+type FetchFileRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	RequestId  string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	AgentId    string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	SrcPath    string                 `protobuf:"bytes,3,opt,name=src_path,json=srcPath,proto3" json:"src_path,omitempty"` // absolute path on the agent
+	Become     bool                   `protobuf:"varint,4,opt,name=become,proto3" json:"become,omitempty"`
+	BecomeUser string                 `protobuf:"bytes,5,opt,name=become_user,json=becomeUser,proto3" json:"become_user,omitempty"`
+	// AAP attribution
+	AapJobId       string `protobuf:"bytes,6,opt,name=aap_job_id,json=aapJobId,proto3" json:"aap_job_id,omitempty"`
+	AapJobTemplate string `protobuf:"bytes,7,opt,name=aap_job_template,json=aapJobTemplate,proto3" json:"aap_job_template,omitempty"`
+	AapUser        string `protobuf:"bytes,8,opt,name=aap_user,json=aapUser,proto3" json:"aap_user,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FetchFileRequest) Reset() {
+	*x = FetchFileRequest{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchFileRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchFileRequest) ProtoMessage() {}
+
+func (x *FetchFileRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchFileRequest.ProtoReflect.Descriptor instead.
+func (*FetchFileRequest) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *FetchFileRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *FetchFileRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *FetchFileRequest) GetSrcPath() string {
+	if x != nil {
+		return x.SrcPath
+	}
+	return ""
+}
+
+func (x *FetchFileRequest) GetBecome() bool {
+	if x != nil {
+		return x.Become
+	}
+	return false
+}
+
+func (x *FetchFileRequest) GetBecomeUser() string {
+	if x != nil {
+		return x.BecomeUser
+	}
+	return ""
+}
+
+func (x *FetchFileRequest) GetAapJobId() string {
+	if x != nil {
+		return x.AapJobId
+	}
+	return ""
+}
+
+func (x *FetchFileRequest) GetAapJobTemplate() string {
+	if x != nil {
+		return x.AapJobTemplate
+	}
+	return ""
+}
+
+func (x *FetchFileRequest) GetAapUser() string {
+	if x != nil {
+		return x.AapUser
+	}
+	return ""
+}
+
+// FetchFileResponse returns file content from the agent.
+type FetchFileResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	AgentId       string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Hostname      string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Success       bool                   `protobuf:"varint,4,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	Content       []byte                 `protobuf:"bytes,6,opt,name=content,proto3" json:"content,omitempty"`
+	Mode          int32                  `protobuf:"varint,7,opt,name=mode,proto3" json:"mode,omitempty"` // original file mode
+	Size          int64                  `protobuf:"varint,8,opt,name=size,proto3" json:"size,omitempty"` // file size in bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchFileResponse) Reset() {
+	*x = FetchFileResponse{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchFileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchFileResponse) ProtoMessage() {}
+
+func (x *FetchFileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchFileResponse.ProtoReflect.Descriptor instead.
+func (*FetchFileResponse) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *FetchFileResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *FetchFileResponse) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *FetchFileResponse) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *FetchFileResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *FetchFileResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *FetchFileResponse) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *FetchFileResponse) GetMode() int32 {
+	if x != nil {
+		return x.Mode
+	}
+	return 0
+}
+
+func (x *FetchFileResponse) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+// FileChunk is the acknowledgement for a PutFileRequest.
+type FileChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	AgentId       string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Hostname      string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Success       bool                   `protobuf:"varint,4,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileChunk) Reset() {
+	*x = FileChunk{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileChunk) ProtoMessage() {}
+
+func (x *FileChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileChunk.ProtoReflect.Descriptor instead.
+func (*FileChunk) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *FileChunk) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *FileChunk) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *FileChunk) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *FileChunk) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *FileChunk) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_proto_dirq_v1_dirq_proto protoreflect.FileDescriptor
 
 const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\n" +
-	"\x18proto/dirq/v1/dirq.proto\x12\adirq.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xcb\x02\n" +
+	"\x18proto/dirq/v1/dirq.proto\x12\adirq.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xee\x02\n" +
 	"\x0fRegisterRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x1d\n" +
@@ -1088,7 +1841,8 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\fcapabilities\x18\x06 \x03(\tR\fcapabilities\x12\x1f\n" +
 	"\vlisten_addr\x18\a \x01(\tR\n" +
 	"listenAddr\x126\n" +
-	"\x04tags\x18\b \x03(\v2\".dirq.v1.RegisterRequest.TagsEntryR\x04tags\x1a7\n" +
+	"\x04tags\x18\b \x03(\v2\".dirq.v1.RegisterRequest.TagsEntryR\x04tags\x12!\n" +
+	"\fexec_enabled\x18\t \x01(\bR\vexecEnabled\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe6\x01\n" +
@@ -1105,23 +1859,32 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\"a\n" +
 	"\fPeerResponse\x12'\n" +
 	"\x05peers\x18\x02 \x03(\v2\x11.dirq.v1.PeerInfoR\x05peers\x12(\n" +
-	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\"\xb5\x01\n" +
+	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\"\xed\x02\n" +
 	"\fAgentMessage\x122\n" +
 	"\theartbeat\x18\x01 \x01(\v2\x12.dirq.v1.HeartbeatH\x00R\theartbeat\x129\n" +
 	"\fquery_result\x18\x02 \x01(\v2\x14.dirq.v1.QueryResultH\x00R\vqueryResult\x12+\n" +
-	"\x05hello\x18\x03 \x01(\v2\x13.dirq.v1.AgentHelloH\x00R\x05helloB\t\n" +
-	"\apayload\"\xcd\x01\n" +
+	"\x05hello\x18\x03 \x01(\v2\x13.dirq.v1.AgentHelloH\x00R\x05hello\x12<\n" +
+	"\rexec_response\x18\x04 \x01(\v2\x15.dirq.v1.ExecResponseH\x00R\fexecResponse\x123\n" +
+	"\n" +
+	"file_chunk\x18\x05 \x01(\v2\x12.dirq.v1.FileChunkH\x00R\tfileChunk\x12C\n" +
+	"\x0efetch_response\x18\x06 \x01(\v2\x1a.dirq.v1.FetchFileResponseH\x00R\rfetchResponseB\t\n" +
+	"\apayload\"\xfa\x02\n" +
 	"\rServerMessage\x12<\n" +
 	"\rquery_request\x18\x01 \x01(\v2\x15.dirq.v1.QueryRequestH\x00R\fqueryRequest\x126\n" +
 	"\vpeer_update\x18\x02 \x01(\v2\x13.dirq.v1.PeerUpdateH\x00R\n" +
 	"peerUpdate\x12;\n" +
 	"\vupdate_push\x18\x03 \x01(\v2\x18.dirq.v1.AgentUpdatePushH\x00R\n" +
-	"updatePushB\t\n" +
-	"\apayload\"K\n" +
+	"updatePush\x129\n" +
+	"\fexec_request\x18\x04 \x01(\v2\x14.dirq.v1.ExecRequestH\x00R\vexecRequest\x124\n" +
+	"\bput_file\x18\x05 \x01(\v2\x17.dirq.v1.PutFileRequestH\x00R\aputFile\x12:\n" +
+	"\n" +
+	"fetch_file\x18\x06 \x01(\v2\x19.dirq.v1.FetchFileRequestH\x00R\tfetchFileB\t\n" +
+	"\apayload\"n\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\"\n" +
-	"\fcapabilities\x18\x02 \x03(\tR\fcapabilities\"\x89\x01\n" +
+	"\fcapabilities\x18\x02 \x03(\tR\fcapabilities\x12!\n" +
+	"\fexec_enabled\x18\x03 \x01(\bR\vexecEnabled\"\x89\x01\n" +
 	"\tHeartbeat\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12'\n" +
@@ -1154,7 +1917,85 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x06binary\x18\x02 \x01(\fR\x06binary\x12\x1c\n" +
 	"\tsignature\x18\x03 \x01(\fR\tsignature\x12\x0e\n" +
 	"\x02os\x18\x04 \x01(\tR\x02os\x12\x12\n" +
-	"\x04arch\x18\x05 \x01(\tR\x04arch*n\n" +
+	"\x04arch\x18\x05 \x01(\tR\x04arch\"\xd4\x03\n" +
+	"\vExecRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x18\n" +
+	"\acommand\x18\x03 \x01(\tR\acommand\x12\x16\n" +
+	"\x06become\x18\x04 \x01(\bR\x06become\x12\x1f\n" +
+	"\vbecome_user\x18\x05 \x01(\tR\n" +
+	"becomeUser\x12#\n" +
+	"\rbecome_method\x18\x06 \x01(\tR\fbecomeMethod\x12G\n" +
+	"\venvironment\x18\a \x03(\v2%.dirq.v1.ExecRequest.EnvironmentEntryR\venvironment\x12'\n" +
+	"\x0ftimeout_seconds\x18\b \x01(\x05R\x0etimeoutSeconds\x12\x1c\n" +
+	"\n" +
+	"aap_job_id\x18\t \x01(\tR\baapJobId\x12(\n" +
+	"\x10aap_job_template\x18\n" +
+	" \x01(\tR\x0eaapJobTemplate\x12\x19\n" +
+	"\baap_user\x18\v \x01(\tR\aaapUser\x1a>\n" +
+	"\x10EnvironmentEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcc\x02\n" +
+	"\fExecResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1a\n" +
+	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\x0e\n" +
+	"\x02rc\x18\x04 \x01(\x05R\x02rc\x12\x16\n" +
+	"\x06stdout\x18\x05 \x01(\fR\x06stdout\x12\x16\n" +
+	"\x06stderr\x18\x06 \x01(\fR\x06stderr\x12\x18\n" +
+	"\asuccess\x18\a \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\b \x01(\tR\x05error\x129\n" +
+	"\n" +
+	"started_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
+	"\vfinished_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"finishedAt\"\xb1\x02\n" +
+	"\x0ePutFileRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1b\n" +
+	"\tdest_path\x18\x03 \x01(\tR\bdestPath\x12\x18\n" +
+	"\acontent\x18\x04 \x01(\fR\acontent\x12\x12\n" +
+	"\x04mode\x18\x05 \x01(\x05R\x04mode\x12\x16\n" +
+	"\x06become\x18\x06 \x01(\bR\x06become\x12\x1f\n" +
+	"\vbecome_user\x18\a \x01(\tR\n" +
+	"becomeUser\x12\x1c\n" +
+	"\n" +
+	"aap_job_id\x18\b \x01(\tR\baapJobId\x12(\n" +
+	"\x10aap_job_template\x18\t \x01(\tR\x0eaapJobTemplate\x12\x19\n" +
+	"\baap_user\x18\n" +
+	" \x01(\tR\aaapUser\"\x83\x02\n" +
+	"\x10FetchFileRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x19\n" +
+	"\bsrc_path\x18\x03 \x01(\tR\asrcPath\x12\x16\n" +
+	"\x06become\x18\x04 \x01(\bR\x06become\x12\x1f\n" +
+	"\vbecome_user\x18\x05 \x01(\tR\n" +
+	"becomeUser\x12\x1c\n" +
+	"\n" +
+	"aap_job_id\x18\x06 \x01(\tR\baapJobId\x12(\n" +
+	"\x10aap_job_template\x18\a \x01(\tR\x0eaapJobTemplate\x12\x19\n" +
+	"\baap_user\x18\b \x01(\tR\aaapUser\"\xdb\x01\n" +
+	"\x11FetchFileResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1a\n" +
+	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\x18\n" +
+	"\asuccess\x18\x04 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x12\x18\n" +
+	"\acontent\x18\x06 \x01(\fR\acontent\x12\x12\n" +
+	"\x04mode\x18\a \x01(\x05R\x04mode\x12\x12\n" +
+	"\x04size\x18\b \x01(\x03R\x04size\"\x91\x01\n" +
+	"\tFileChunk\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1a\n" +
+	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\x18\n" +
+	"\asuccess\x18\x04 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error*n\n" +
 	"\tAgentRole\x12\x1a\n" +
 	"\x16AGENT_ROLE_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fAGENT_ROLE_LEAF\x10\x01\x12\x14\n" +
@@ -1181,7 +2022,7 @@ func file_proto_dirq_v1_dirq_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_dirq_v1_dirq_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_proto_dirq_v1_dirq_proto_goTypes = []any{
 	(AgentRole)(0),                // 0: dirq.v1.AgentRole
 	(*RegisterRequest)(nil),       // 1: dirq.v1.RegisterRequest
@@ -1198,40 +2039,56 @@ var file_proto_dirq_v1_dirq_proto_goTypes = []any{
 	(*QueryResult)(nil),           // 12: dirq.v1.QueryResult
 	(*PeerUpdate)(nil),            // 13: dirq.v1.PeerUpdate
 	(*AgentUpdatePush)(nil),       // 14: dirq.v1.AgentUpdatePush
-	nil,                           // 15: dirq.v1.RegisterRequest.TagsEntry
-	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 17: google.protobuf.Struct
+	(*ExecRequest)(nil),           // 15: dirq.v1.ExecRequest
+	(*ExecResponse)(nil),          // 16: dirq.v1.ExecResponse
+	(*PutFileRequest)(nil),        // 17: dirq.v1.PutFileRequest
+	(*FetchFileRequest)(nil),      // 18: dirq.v1.FetchFileRequest
+	(*FetchFileResponse)(nil),     // 19: dirq.v1.FetchFileResponse
+	(*FileChunk)(nil),             // 20: dirq.v1.FileChunk
+	nil,                           // 21: dirq.v1.RegisterRequest.TagsEntry
+	nil,                           // 22: dirq.v1.ExecRequest.EnvironmentEntry
+	(*timestamppb.Timestamp)(nil), // 23: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 24: google.protobuf.Struct
 }
 var file_proto_dirq_v1_dirq_proto_depIdxs = []int32{
-	15, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
+	21, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
 	0,  // 1: dirq.v1.RegisterResponse.role:type_name -> dirq.v1.AgentRole
 	3,  // 2: dirq.v1.RegisterResponse.peers:type_name -> dirq.v1.PeerInfo
 	3,  // 3: dirq.v1.PeerResponse.peers:type_name -> dirq.v1.PeerInfo
 	9,  // 4: dirq.v1.AgentMessage.heartbeat:type_name -> dirq.v1.Heartbeat
 	12, // 5: dirq.v1.AgentMessage.query_result:type_name -> dirq.v1.QueryResult
 	8,  // 6: dirq.v1.AgentMessage.hello:type_name -> dirq.v1.AgentHello
-	10, // 7: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
-	13, // 8: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
-	14, // 9: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
-	16, // 10: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
-	11, // 11: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
-	17, // 12: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
-	16, // 13: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
-	3,  // 14: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
-	0,  // 15: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
-	1,  // 16: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
-	6,  // 17: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
-	4,  // 18: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
-	6,  // 19: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
-	2,  // 20: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
-	7,  // 21: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
-	5,  // 22: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
-	7,  // 23: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
-	20, // [20:24] is the sub-list for method output_type
-	16, // [16:20] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	16, // 7: dirq.v1.AgentMessage.exec_response:type_name -> dirq.v1.ExecResponse
+	20, // 8: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
+	19, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
+	10, // 10: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
+	13, // 11: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
+	14, // 12: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
+	15, // 13: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
+	17, // 14: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
+	18, // 15: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
+	23, // 16: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
+	11, // 17: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
+	24, // 18: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
+	23, // 19: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
+	3,  // 20: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
+	0,  // 21: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
+	22, // 22: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
+	23, // 23: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
+	23, // 24: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
+	1,  // 25: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
+	6,  // 26: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
+	4,  // 27: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
+	6,  // 28: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
+	2,  // 29: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
+	7,  // 30: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
+	5,  // 31: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
+	7,  // 32: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
+	29, // [29:33] is the sub-list for method output_type
+	25, // [25:29] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_proto_dirq_v1_dirq_proto_init() }
@@ -1243,11 +2100,17 @@ func file_proto_dirq_v1_dirq_proto_init() {
 		(*AgentMessage_Heartbeat)(nil),
 		(*AgentMessage_QueryResult)(nil),
 		(*AgentMessage_Hello)(nil),
+		(*AgentMessage_ExecResponse)(nil),
+		(*AgentMessage_FileChunk)(nil),
+		(*AgentMessage_FetchResponse)(nil),
 	}
 	file_proto_dirq_v1_dirq_proto_msgTypes[6].OneofWrappers = []any{
 		(*ServerMessage_QueryRequest)(nil),
 		(*ServerMessage_PeerUpdate)(nil),
 		(*ServerMessage_UpdatePush)(nil),
+		(*ServerMessage_ExecRequest)(nil),
+		(*ServerMessage_PutFile)(nil),
+		(*ServerMessage_FetchFile)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1255,7 +2118,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_dirq_v1_dirq_proto_rawDesc), len(file_proto_dirq_v1_dirq_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
