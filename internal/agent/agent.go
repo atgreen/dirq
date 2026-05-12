@@ -11,6 +11,8 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/atgreen/dirq/internal/modules"
+	"github.com/atgreen/dirq/internal/query"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -401,9 +404,9 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 	// Collect data from requested modules.
 	collected := modules.CollectModules(qr.Modules)
 
-	// Apply agent-side filtering.
+	// Apply agent-side filtering (array-aware: filters into packages, services, etc.)
 	if len(qr.Filters) > 0 {
-		collected = applyFilters(collected, qr.Filters)
+		collected = query.FilterCollectedData(protoFiltersToConditions(qr.Filters), collected)
 	}
 
 	data, err := structpb.NewStruct(collected)
@@ -554,9 +557,32 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 // Agent-side filtering
 // ─────────────────────────────────────────────────────────
 
-func applyFilters(data map[string]any, filters []*pb.Filter) map[string]any {
-	// For now, filters are applied at the top level.
-	// A filter like "disk.pct_used > 90" means check data["disk"]["pct_used"] > 90
-	// This is a simplified implementation — full DSL eval happens in the query package.
-	return data
+// protoFiltersToConditions converts proto Filter messages back into query.Condition
+// objects so the agent can use the query package's FilterCollectedData.
+func protoFiltersToConditions(filters []*pb.Filter) []*query.Condition {
+	conds := make([]*query.Condition, 0, len(filters))
+	for _, f := range filters {
+		if f.Operator == "IN" {
+			// IN operator: value is comma-separated list.
+			values := strings.Split(f.Value, ",")
+			conds = append(conds, &query.Condition{
+				Field: f.Field,
+				In:    &query.InClause{Values: values},
+			})
+		} else {
+			c := &query.Condition{
+				Field:    f.Field,
+				Operator: f.Operator,
+			}
+			// Try to parse as number, fall back to string.
+			if num, err := strconv.ParseFloat(f.Value, 64); err == nil {
+				c.Value = &query.Value{Number: &num}
+			} else {
+				val := f.Value
+				c.Value = &query.Value{String: &val}
+			}
+			conds = append(conds, c)
+		}
+	}
+	return conds
 }

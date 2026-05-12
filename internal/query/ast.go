@@ -8,9 +8,9 @@ package query
 //
 // Example: SELECT hostname, disk.pct_used FROM tag:prod WHERE disk.pct_used > 80 ORDER BY disk.pct_used DESC
 type Query struct {
-	Select  []*SelectExpr `parser:"'SELECT' @@ (',' @@)*"`
-	From    *FromClause   `parser:"('FROM' @@)?"`
-	Where   *WhereClause  `parser:"('WHERE' @@)?"`
+	Select  []*SelectExpr  `parser:"'SELECT' @@ (',' @@)*"`
+	From    *FromClause    `parser:"('FROM' @@)?"`
+	Where   *WhereClause   `parser:"('WHERE' @@)?"`
 	GroupBy *GroupByClause `parser:"('GROUP' 'BY' @@)?"`
 	OrderBy *OrderByClause `parser:"('ORDER' 'BY' @@)?"`
 }
@@ -44,11 +44,17 @@ type WhereClause struct {
 	Conditions []*Condition `parser:"@@ ('AND' @@)*"`
 }
 
-// Condition is a single comparison: field op value.
+// Condition is a single comparison: field op value, or field IN ('a', 'b').
 type Condition struct {
-	Field    string `parser:"@(Ident ('.' Ident)*)"`
-	Operator string `parser:"@( CompOp | '>' | '<' | '=' | 'LIKE' )"`
-	Value    *Value `parser:"@@"`
+	Field    string    `parser:"@(Ident ('.' Ident)*)"`
+	In       *InClause `parser:"( @@"`
+	Operator string    `parser:"| @( CompOp | '>' | '<' | '=' | 'LIKE' )"`
+	Value    *Value    `parser:"@@ )"`
+}
+
+// InClause represents the IN ('val1', 'val2', ...) syntax.
+type InClause struct {
+	Values []string `parser:"'IN' '(' @String (',' @String)* ')'"`
 }
 
 // Value holds either a number or a string literal.

@@ -32,6 +32,49 @@ func ExtractTarget(q *Query) TargetScope {
 	}
 }
 
+// ExtractModules returns the set of module names referenced in the query.
+func ExtractModules(q *Query) []string {
+	seen := make(map[string]bool)
+
+	addField := func(f string) {
+		parts := strings.SplitN(f, ".", 2)
+		if len(parts) == 2 {
+			seen[parts[0]] = true
+		}
+	}
+
+	for _, s := range q.Select {
+		if s.AggFunc != nil {
+			addField(s.AggFunc.Arg)
+		} else {
+			addField(s.Field)
+		}
+	}
+	if q.Where != nil {
+		for _, c := range q.Where.Conditions {
+			addField(c.Field)
+		}
+	}
+	if q.GroupBy != nil {
+		for _, f := range q.GroupBy.Fields {
+			addField(f)
+		}
+	}
+	if q.OrderBy != nil {
+		addField(q.OrderBy.Field)
+	}
+
+	modules := make([]string, 0, len(seen))
+	for m := range seen {
+		modules = append(modules, m)
+	}
+	sort.Strings(modules)
+	if len(modules) == 0 {
+		return []string{"cpu", "disk", "memory", "os_info"}
+	}
+	return modules
+}
+
 // ToFilterProtos converts the WHERE clause conditions into Filter proto messages.
 func ToFilterProtos(q *Query) []*dirqv1.Filter {
 	if q.Where == nil {
@@ -39,14 +82,215 @@ func ToFilterProtos(q *Query) []*dirqv1.Filter {
 	}
 	filters := make([]*dirqv1.Filter, 0, len(q.Where.Conditions))
 	for _, c := range q.Where.Conditions {
-		filters = append(filters, &dirqv1.Filter{
-			Field:    c.Field,
-			Operator: c.Operator,
-			Value:    valueToString(c.Value),
-		})
+		if c.In != nil {
+			// IN clause: encode as operator="IN", value=comma-separated list.
+			filters = append(filters, &dirqv1.Filter{
+				Field:    c.Field,
+				Operator: "IN",
+				Value:    strings.Join(c.In.Values, ","),
+			})
+		} else {
+			filters = append(filters, &dirqv1.Filter{
+				Field:    c.Field,
+				Operator: c.Operator,
+				Value:    valueToString(c.Value),
+			})
+		}
 	}
 	return filters
 }
+
+// ─────────────────────────────────────────────────────────
+// Array-aware filtering
+// ─────────────────────────────────────────────────────────
+
+// arrayModuleKeys maps module names to the array key within their collected data.
+// When a WHERE condition references a field like "packages.name", we know that
+// "packages" contains an array at key "packages", and we filter its elements.
+var arrayModuleKeys = map[string]string{
+	"packages": "packages",
+	"services": "services",
+	"disk":     "partitions",
+	"network":  "interfaces",
+}
+
+// FilterCollectedData applies WHERE conditions to the collected module data.
+// For array modules (packages, services, disk, network), it filters the array
+// elements — only entries matching the conditions are kept.
+// For scalar modules (cpu, memory, os_info), it's a pass/fail check.
+//
+// Returns the filtered data map (modules with no matching data are removed).
+func FilterCollectedData(conditions []*Condition, data map[string]any) map[string]any {
+	if len(conditions) == 0 {
+		return data
+	}
+
+	// Group conditions by module.
+	moduleConditions := map[string][]*Condition{}
+	for _, c := range conditions {
+		parts := strings.SplitN(c.Field, ".", 2)
+		if len(parts) == 2 {
+			moduleConditions[parts[0]] = append(moduleConditions[parts[0]], c)
+		}
+	}
+
+	result := make(map[string]any, len(data))
+	for module, moduleData := range data {
+		conds, hasConds := moduleConditions[module]
+		if !hasConds {
+			// No filters for this module — include as-is.
+			result[module] = moduleData
+			continue
+		}
+
+		arrayKey, isArray := arrayModuleKeys[module]
+		if !isArray {
+			// Scalar module — check conditions against the module data map.
+			if md, ok := moduleData.(map[string]any); ok {
+				if matchesScalarConditions(module, conds, md) {
+					result[module] = moduleData
+				}
+			}
+			continue
+		}
+
+		// Array module — filter the array elements.
+		md, ok := moduleData.(map[string]any)
+		if !ok {
+			continue
+		}
+		arr, ok := md[arrayKey]
+		if !ok {
+			continue
+		}
+
+		items, ok := arr.([]any)
+		if !ok {
+			continue
+		}
+
+		var filtered []any
+		for _, item := range items {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if matchesArrayEntry(module, conds, entry) {
+				filtered = append(filtered, entry)
+			}
+		}
+
+		if len(filtered) > 0 {
+			result[module] = map[string]any{
+				arrayKey: filtered,
+			}
+		}
+	}
+
+	return result
+}
+
+// matchesScalarConditions checks whether a scalar module's data satisfies all conditions.
+func matchesScalarConditions(module string, conds []*Condition, data map[string]any) bool {
+	for _, c := range conds {
+		field := stripModulePrefix(module, c.Field)
+		val, ok := data[field]
+		if !ok {
+			return false
+		}
+		if !evalConditionValue(c, val) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesArrayEntry checks whether a single array element satisfies all conditions.
+func matchesArrayEntry(module string, conds []*Condition, entry map[string]any) bool {
+	for _, c := range conds {
+		field := stripModulePrefix(module, c.Field)
+		val, ok := entry[field]
+		if !ok {
+			return false
+		}
+		if !evalConditionValue(c, val) {
+			return false
+		}
+	}
+	return true
+}
+
+// evalConditionValue checks a single condition against a value.
+func evalConditionValue(c *Condition, actual any) bool {
+	// IN clause.
+	if c.In != nil {
+		actualStr := fmt.Sprintf("%v", actual)
+		for _, v := range c.In.Values {
+			if actualStr == v {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Standard operators.
+	op := c.Operator
+	if c.Value == nil {
+		return false
+	}
+
+	if c.Value.String != nil {
+		expected := *c.Value.String
+		actualStr := fmt.Sprintf("%v", actual)
+		switch op {
+		case "=":
+			return actualStr == expected
+		case "!=":
+			return actualStr != expected
+		case "LIKE":
+			return matchLike(actualStr, expected)
+		}
+		return false
+	}
+
+	if c.Value.Number != nil {
+		expected := *c.Value.Number
+		actualNum, err := toFloat64(actual)
+		if err != nil {
+			return false
+		}
+		switch op {
+		case "=":
+			return actualNum == expected
+		case "!=":
+			return actualNum != expected
+		case ">":
+			return actualNum > expected
+		case "<":
+			return actualNum < expected
+		case ">=":
+			return actualNum >= expected
+		case "<=":
+			return actualNum <= expected
+		}
+	}
+
+	return false
+}
+
+// stripModulePrefix removes the module prefix from a dotted field path.
+// "packages.name" with module "packages" returns "name".
+func stripModulePrefix(module, field string) string {
+	prefix := module + "."
+	if strings.HasPrefix(field, prefix) {
+		return field[len(prefix):]
+	}
+	return field
+}
+
+// ─────────────────────────────────────────────────────────
+// Row-based evaluation (used for server-side aggregation)
+// ─────────────────────────────────────────────────────────
 
 // Row is a map of field names to values used for in-memory filtering and aggregation.
 type Row map[string]any
@@ -57,6 +301,16 @@ func MatchesWhere(q *Query, row Row) (bool, error) {
 		return true, nil
 	}
 	for _, cond := range q.Where.Conditions {
+		if cond.In != nil {
+			val, ok := row[cond.Field]
+			if !ok {
+				return false, nil
+			}
+			if !evalConditionValue(cond, val) {
+				return false, nil
+			}
+			continue
+		}
 		val, ok := row[cond.Field]
 		if !ok {
 			return false, nil
@@ -74,6 +328,10 @@ func MatchesWhere(q *Query, row Row) (bool, error) {
 
 func evalCondition(cond *Condition, actual any) (bool, error) {
 	op := cond.Operator
+
+	if cond.Value == nil {
+		return false, fmt.Errorf("condition has no value")
+	}
 
 	// String comparison.
 	if cond.Value.String != nil {
@@ -156,6 +414,9 @@ func toFloat64(v any) (float64, error) {
 }
 
 func valueToString(v *Value) string {
+	if v == nil {
+		return ""
+	}
 	if v.Number != nil {
 		return strconv.FormatFloat(*v.Number, 'f', -1, 64)
 	}
@@ -165,20 +426,22 @@ func valueToString(v *Value) string {
 	return ""
 }
 
+// ─────────────────────────────────────────────────────────
+// Aggregation
+// ─────────────────────────────────────────────────────────
+
 // AggregatedRow holds the result of a GROUP BY aggregation for one group.
 type AggregatedRow struct {
 	GroupKey map[string]any
-	Values  map[string]any // aggregation results keyed by display name, e.g. "COUNT(hostname)"
+	Values  map[string]any
 }
 
 // Aggregate applies GROUP BY and aggregation functions to a set of rows.
-// It returns one AggregatedRow per distinct group.
 func Aggregate(q *Query, rows []Row) ([]AggregatedRow, error) {
 	if q.GroupBy == nil {
 		return nil, fmt.Errorf("query has no GROUP BY clause")
 	}
 
-	// Group the rows.
 	type group struct {
 		key  map[string]any
 		rows []Row
@@ -202,7 +465,6 @@ func Aggregate(q *Query, rows []Row) ([]AggregatedRow, error) {
 		groups[gk].rows = append(groups[gk].rows, row)
 	}
 
-	// Compute aggregations per group.
 	result := make([]AggregatedRow, 0, len(groups))
 	for _, gk := range groupOrder {
 		g := groups[gk]
@@ -210,12 +472,9 @@ func Aggregate(q *Query, rows []Row) ([]AggregatedRow, error) {
 			GroupKey: g.key,
 			Values:  make(map[string]any),
 		}
-
-		// Copy group key fields into values.
 		for k, v := range g.key {
 			ar.Values[k] = v
 		}
-
 		for _, sel := range q.Select {
 			if sel.AggFunc == nil {
 				continue
@@ -227,7 +486,6 @@ func Aggregate(q *Query, rows []Row) ([]AggregatedRow, error) {
 			}
 			ar.Values[displayName] = val
 		}
-
 		result = append(result, ar)
 	}
 
@@ -244,7 +502,6 @@ func computeAgg(fn *AggFunc, rows []Row) (any, error) {
 			}
 		}
 		return count, nil
-
 	case "SUM":
 		var sum float64
 		for _, r := range rows {
@@ -259,7 +516,6 @@ func computeAgg(fn *AggFunc, rows []Row) (any, error) {
 			sum += n
 		}
 		return sum, nil
-
 	case "AVG":
 		var sum float64
 		var count int
@@ -279,7 +535,6 @@ func computeAgg(fn *AggFunc, rows []Row) (any, error) {
 			return 0.0, nil
 		}
 		return sum / float64(count), nil
-
 	case "MIN":
 		min := math.MaxFloat64
 		for _, r := range rows {
@@ -299,7 +554,6 @@ func computeAgg(fn *AggFunc, rows []Row) (any, error) {
 			return 0.0, nil
 		}
 		return min, nil
-
 	case "MAX":
 		max := -math.MaxFloat64
 		for _, r := range rows {
@@ -319,7 +573,6 @@ func computeAgg(fn *AggFunc, rows []Row) (any, error) {
 			return 0.0, nil
 		}
 		return max, nil
-
 	default:
 		return nil, fmt.Errorf("unknown aggregation function: %s", fn.Name)
 	}
