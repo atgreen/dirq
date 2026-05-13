@@ -14,10 +14,9 @@ RUN CGO_ENABLED=0 go build -o /dirq-server ./cmd/dirq-server
 RUN CGO_ENABLED=0 go build -o /dirq-agent  ./cmd/dirq-agent
 RUN CGO_ENABLED=0 go build -o /dirq        ./cmd/dirq
 
-# ── Server image ────────────────────────────────────────
-FROM docker.io/library/alpine:3.21 AS server
+# ── Server image (minimal — no Python needed) ──────────
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS server
 
-RUN apk add --no-cache ca-certificates
 COPY --from=builder /dirq-server /usr/local/bin/dirq-server
 COPY --from=builder /dirq        /usr/local/bin/dirq
 
@@ -25,10 +24,9 @@ EXPOSE 50051 8080
 
 ENTRYPOINT ["dirq-server"]
 
-# ── Agent image ─────────────────────────────────────────
-FROM docker.io/library/alpine:3.21 AS agent
+# ── Agent image (full UBI — Python required for Ansible modules) ──
+FROM registry.access.redhat.com/ubi9/ubi:latest AS agent
 
-RUN apk add --no-cache ca-certificates python3
 COPY --from=builder /dirq-agent /usr/local/bin/dirq-agent
 
 EXPOSE 50052
