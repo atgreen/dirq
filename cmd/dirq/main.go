@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -509,6 +510,7 @@ Examples:
 
 			var result struct {
 				Results []struct {
+					AgentID  string `json:"agent_id"`
 					Hostname string `json:"hostname"`
 					Success  bool   `json:"success"`
 				} `json:"results"`
@@ -517,10 +519,14 @@ Examples:
 				return fmt.Errorf("parse query result: %w", err)
 			}
 
-			var hosts []string
+			type hostInfo struct {
+				hostname string
+				agentID  string
+			}
+			var hosts []hostInfo
 			for _, r := range result.Results {
 				if r.Success && r.Hostname != "" {
-					hosts = append(hosts, r.Hostname)
+					hosts = append(hosts, hostInfo{r.Hostname, r.AgentID})
 				}
 			}
 
@@ -529,9 +535,13 @@ Examples:
 				return nil
 			}
 
-			fmt.Printf("Query matched %d host(s): %s\n\n", len(hosts), strings.Join(hosts, ", "))
+			names := make([]string, len(hosts))
+			for i, h := range hosts {
+				names[i] = h.hostname
+			}
+			fmt.Printf("Query matched %d host(s): %s\n\n", len(hosts), strings.Join(names, ", "))
 
-			// Write ephemeral inventory file.
+			// Write ephemeral inventory with DirQ connection settings.
 			tmpInv, err := os.CreateTemp("", "dirq-inventory-*.ini")
 			if err != nil {
 				return fmt.Errorf("create temp inventory: %w", err)
@@ -539,7 +549,8 @@ Examples:
 			defer os.Remove(tmpInv.Name())
 
 			for _, h := range hosts {
-				fmt.Fprintf(tmpInv, "%s dirq_server_url=%s\n", h, serverURL)
+				fmt.Fprintf(tmpInv, "%s dirq_agent_id=%s dirq_server_url=%s ansible_connection=dirq\n",
+					h.hostname, h.agentID, serverURL)
 			}
 			tmpInv.Close()
 
@@ -571,8 +582,17 @@ Examples:
 			proc.Stderr = os.Stderr
 			proc.Stdin = os.Stdin
 
-			// Pass through DirQ env vars.
+			// Pass through env vars + point Ansible at the DirQ connection plugin.
 			proc.Env = os.Environ()
+
+			// Find the standalone connection plugin relative to our binary.
+			exePath, _ := os.Executable()
+			pluginDir := filepath.Join(filepath.Dir(exePath), "..", "ansible", "connection_plugins")
+			if absDir, err := filepath.Abs(pluginDir); err == nil {
+				if _, err := os.Stat(absDir); err == nil {
+					proc.Env = append(proc.Env, "ANSIBLE_CONNECTION_PLUGINS="+absDir)
+				}
+			}
 
 			return proc.Run()
 		},
