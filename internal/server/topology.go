@@ -12,52 +12,53 @@ import (
 
 // TopologyConfig controls how the mesh tree is shaped.
 type TopologyConfig struct {
-	// MaxChildrenPerNode is the maximum number of children any single node
-	// (zone leader or relay) can have. This is the fan-out ratio.
-	// Default: 50
+	// MaxChildrenPerNode is the maximum number of children any node can
+	// have. This is the fan-out ratio. Default: 50.
 	MaxChildrenPerNode int
 
-	// MaxZoneLeaders is the maximum number of zone leaders that connect
-	// directly to the server. Once this limit is reached, new agents are
-	// assigned as relays or leafs under existing zone leaders.
-	// Default: 50
+	// MaxZoneLeaders is the number of agents that connect directly to the
+	// server. Once this limit is reached, all new agents are placed in the
+	// tree below existing zone leaders. The tree grows as deep as needed.
+	// Default: 5.
 	MaxZoneLeaders int
 }
 
-// DefaultTopologyConfig returns sensible defaults for up to ~125k agents.
+// DefaultTopologyConfig returns sensible defaults.
 //
-//	Level 0: Server (1)
-//	Level 1: up to 50 zone leaders (connect to server)
-//	Level 2: up to 50 relays per zone leader (2,500 relay nodes)
-//	Level 3: up to 50 leafs per relay (125,000 leaf agents)
+// With 5 zone leaders and fan-out 50:
 //
-// Max hops from any leaf to the server: 3.
+//	Depth 2: 5 × 50 = 250 agents
+//	Depth 3: 5 × 50² = 12,500 agents
+//	Depth 4: 5 × 50³ = 625,000 agents
+//
+// The tree grows organically — no fixed depth limit.
+// Server always holds exactly 5 connections regardless of fleet size.
 func DefaultTopologyConfig() TopologyConfig {
 	return TopologyConfig{
 		MaxChildrenPerNode: 50,
-		MaxZoneLeaders:     50,
+		MaxZoneLeaders:     5,
 	}
 }
 
 // assignment is the result of the topology manager deciding where a new
 // agent fits in the tree.
 type assignment struct {
-	Role     pb.AgentRole
-	ParentID string // empty for zone leaders (they connect to the server)
+	Role       pb.AgentRole
+	ParentID   string // empty for zone leaders (they connect to the server)
 	ParentAddr string // listen_addr of the parent, empty for zone leaders
 }
 
 // assignRole decides the role and parent for a newly registered agent.
 //
 // Algorithm:
-//  1. If we have fewer than MaxZoneLeaders zone leaders, make this agent
-//     a zone leader. It connects directly to the server.
-//  2. Otherwise, find a zone leader with room for more children. Make this
-//     agent a relay under that zone leader.
-//  3. If all zone leaders are full, find a relay with room. Make this agent
-//     a leaf under that relay.
-//  4. If everything is full, fall back to zone leader (exceeds the soft
-//     limit rather than rejecting the agent).
+//  1. If we have fewer than MaxZoneLeaders, assign as zone leader.
+//  2. Otherwise, find any node in the tree with room for another child
+//     (preferring the shallowest available node to keep the tree balanced).
+//  3. If the entire tree is full, add an extra zone leader.
+//
+// There is no relay/leaf distinction — every non-ZL node is simply a "node"
+// in the tree. Nodes with children automatically relay traffic; nodes without
+// children are effectively leafs. The agent binary handles both cases.
 func (s *Server) assignRole(ctx context.Context) (assignment, error) {
 	cfg := s.topoCfg
 
@@ -77,36 +78,22 @@ func (s *Server) assignRole(ctx context.Context) (assignment, error) {
 		}, nil
 	}
 
-	// Step 2: Find a zone leader with room for a relay child.
-	zl, err := s.db.FindParentWithRoom(ctx, "zone_leader", cfg.MaxChildrenPerNode)
-	if err == nil && zl.ID != "" {
-		s.log.Info("topology: assigning as relay",
-			"parent", zl.Hostname,
-			"parent_id", zl.ID,
+	// Step 2: Find any node with room, preferring shallowest (BFS fill).
+	parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
+	if err == nil && parent.ID != "" {
+		s.log.Info("topology: assigning under parent",
+			"parent", parent.Hostname,
+			"parent_id", parent.ID,
+			"parent_role", parent.Role,
 		)
 		return assignment{
-			Role:       pb.AgentRole_AGENT_ROLE_RELAY,
-			ParentID:   zl.ID,
-			ParentAddr: zl.ListenAddr,
+			Role:       pb.AgentRole_AGENT_ROLE_RELAY, // all non-ZL nodes use relay role
+			ParentID:   parent.ID,
+			ParentAddr: parent.ListenAddr,
 		}, nil
 	}
 
-	// Step 3: All zone leaders full. Find a relay with room for a leaf child.
-	relay, err := s.db.FindParentWithRoom(ctx, "relay", cfg.MaxChildrenPerNode)
-	if err == nil && relay.ID != "" {
-		s.log.Info("topology: assigning as leaf",
-			"parent", relay.Hostname,
-			"parent_id", relay.ID,
-		)
-		return assignment{
-			Role:       pb.AgentRole_AGENT_ROLE_LEAF,
-			ParentID:   relay.ID,
-			ParentAddr: relay.ListenAddr,
-		}, nil
-	}
-
-	// Step 4: Everything is full. Exceed the zone leader limit rather than
-	// rejecting the agent. Log a warning.
+	// Step 3: Tree is full. Add an extra zone leader.
 	s.log.Warn("topology: tree is full, adding extra zone_leader",
 		"zone_leaders", zoneLeaderCount,
 		"max", cfg.MaxZoneLeaders,

@@ -80,3 +80,47 @@ func (db *DB) FindParentWithRoom(ctx context.Context, role string, maxChildren i
 	}
 	return agent, nil
 }
+
+// FindShallowestParentWithRoom finds the shallowest node in the tree that has
+// room for another child. "Shallowest" means fewest hops from a zone leader
+// (BFS fill order). This keeps the tree balanced and minimizes depth.
+//
+// Uses a recursive CTE to compute depth from zone leaders, then picks the
+// shallowest node with child_count < maxChildren.
+func (db *DB) FindShallowestParentWithRoom(ctx context.Context, maxChildren int) (Agent, error) {
+	row := db.pool.QueryRow(ctx, `
+		WITH RECURSIVE tree AS (
+			-- Zone leaders are depth 0
+			SELECT id, hostname, os, os_version, arch, agent_version,
+			       listen_addr, role, capabilities, tags,
+			       parent_id, server_pod, online, exec_enabled,
+			       registered_at, last_seen_at, 0 AS depth
+			FROM agents
+			WHERE role = 'zone_leader' AND online = true AND listen_addr != ''
+			UNION ALL
+			-- Children are depth + 1
+			SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
+			       a.listen_addr, a.role, a.capabilities, a.tags,
+			       a.parent_id, a.server_pod, a.online, a.exec_enabled,
+			       a.registered_at, a.last_seen_at, tree.depth + 1
+			FROM agents a
+			JOIN tree ON a.parent_id = tree.id
+			WHERE a.online = true AND a.listen_addr != ''
+		)
+		SELECT t.id, t.hostname, t.os, t.os_version, t.arch, t.agent_version,
+		       t.listen_addr, t.role, t.capabilities, t.tags,
+		       t.parent_id, t.server_pod, t.online, t.exec_enabled,
+		       t.registered_at, t.last_seen_at
+		FROM tree t
+		WHERE (SELECT COUNT(*) FROM agents c WHERE c.parent_id = t.id AND c.online = true) < $1
+		ORDER BY t.depth ASC,
+		         (SELECT COUNT(*) FROM agents c WHERE c.parent_id = t.id AND c.online = true) ASC
+		LIMIT 1`,
+		maxChildren,
+	)
+	agent, err := scanAgent(row)
+	if err != nil {
+		return Agent{}, err
+	}
+	return agent, nil
+}
