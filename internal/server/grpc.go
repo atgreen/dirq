@@ -173,8 +173,14 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 
 		switch p := msg.Payload.(type) {
 		case *pb.AgentMessage_Heartbeat:
-			if err := s.db.UpdateAgentHeartbeat(ctx, agentID); err != nil {
-				s.log.Error("heartbeat update failed", "error", err)
+			// Use the agent ID from the heartbeat, not the stream owner.
+			// Relay agents forward heartbeats through zone leaders.
+			hbAgentID := p.Heartbeat.AgentId
+			if hbAgentID == "" {
+				hbAgentID = agentID
+			}
+			if err := s.db.UpdateAgentHeartbeat(ctx, hbAgentID); err != nil {
+				s.log.Error("heartbeat update failed", "agent_id", hbAgentID, "error", err)
 			}
 		case *pb.AgentMessage_QueryResult:
 			s.handleQueryResult(p.QueryResult)
