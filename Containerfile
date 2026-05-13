@@ -28,7 +28,7 @@ ENTRYPOINT ["dirq-server"]
 # ── Agent image ─────────────────────────────────────────
 FROM docker.io/library/alpine:3.21 AS agent
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates python3
 COPY --from=builder /dirq-agent /usr/local/bin/dirq-agent
 
 EXPOSE 50052
