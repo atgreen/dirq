@@ -7,6 +7,35 @@ import (
 	"context"
 )
 
+// topologyLockID is a fixed advisory lock ID for serializing topology assignments.
+const topologyLockID int64 = 0x4469725174706F // "DirQtpo"
+
+// WithTopologyLock runs fn while holding an exclusive advisory lock.
+// This serializes all topology assignments so concurrent registrations can't
+// race on zone leader counts or parent child counts. The lock is released
+// when the transaction commits.
+func (db *DB) WithTopologyLock(ctx context.Context, fn func() error) error {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Acquire advisory lock — blocks until available.
+	_, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", topologyLockID)
+	if err != nil {
+		return err
+	}
+
+	// fn runs its own queries against the pool. The advisory lock ensures
+	// only one fn runs at a time across all connections.
+	if err := fn(); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
 // CountAgentsByRole returns the number of online agents with the given role.
 func (db *DB) CountAgentsByRole(ctx context.Context, role string) (int, error) {
 	var count int

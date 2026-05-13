@@ -41,28 +41,43 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		return nil, fmt.Errorf("register agent: %w", err)
 	}
 
-	// Ask the topology manager where this agent fits in the tree.
-	a, err := s.assignRole(ctx)
+	// Assign role under an advisory lock to prevent races when thousands
+	// of agents register concurrently. Without this, multiple agents can
+	// all see "4 zone leaders" and all become the 5th, or two agents can
+	// be assigned to a parent that only has 1 slot left.
+	var a assignment
+	err = s.db.WithTopologyLock(ctx, func() error {
+		var assignErr error
+		a, assignErr = s.assignRole(ctx)
+		if assignErr != nil {
+			return assignErr
+		}
+
+		roleName := "relay"
+		switch a.Role {
+		case pb.AgentRole_AGENT_ROLE_ZONE_LEADER:
+			roleName = "zone_leader"
+		}
+		if err := s.db.SetAgentRole(ctx, agent.ID, roleName); err != nil {
+			return err
+		}
+		if a.ParentID != "" {
+			if err := s.db.SetAgentParent(ctx, agent.ID, a.ParentID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		s.log.Error("topology assignment failed, defaulting to zone_leader", "error", err)
 		a = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
+		s.db.SetAgentRole(ctx, agent.ID, "zone_leader")
 	}
 
-	// Persist the role and parent in the DB.
-	roleName := "leaf"
+	roleName := "relay"
 	switch a.Role {
 	case pb.AgentRole_AGENT_ROLE_ZONE_LEADER:
 		roleName = "zone_leader"
-	case pb.AgentRole_AGENT_ROLE_RELAY:
-		roleName = "relay"
-	}
-	if err := s.db.SetAgentRole(ctx, agent.ID, roleName); err != nil {
-		s.log.Error("failed to set agent role", "error", err)
-	}
-	if a.ParentID != "" {
-		if err := s.db.SetAgentParent(ctx, agent.ID, a.ParentID); err != nil {
-			s.log.Error("failed to set agent parent", "error", err)
-		}
 	}
 
 	s.log.Info("agent registered",
