@@ -92,6 +92,9 @@ func grpcDialOpts() []grpc.DialOption {
 
 // New creates a new agent.
 func New(cfg Config, log *slog.Logger) *Agent {
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = ":50052"
+	}
 	return &Agent{
 		cfg:         cfg,
 		log:         log,
@@ -116,10 +119,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	a.log.Info("registered", "agent_id", a.agentID, "role", a.role)
 
-	// Step 2: Start listening for downstream peers.
-	if a.cfg.ListenAddr != "" {
-		go a.startRelayServer(ctx)
-	}
+	// Step 2: Start listening for downstream peers. Every agent listens —
+	// the topology manager may assign children to any node at any time.
+	go a.startRelayServer(ctx)
 
 	// Step 3: Connect and run, reconnecting on failure.
 	return a.connectLoop(ctx)

@@ -399,7 +399,7 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DIRQ_SERVER` | `localhost:50051` | DirQ server gRPC address |
-| `DIRQ_LISTEN` | `:50052` | Address to listen on for downstream peers |
+| `DIRQ_LISTEN` | `:50052` | Address to listen on for downstream peers (always enabled) |
 | `DIRQ_TAGS` | | Comma-separated tags: `env=prod,dc=us-east` |
 | `DIRQ_EXEC_ENABLED` | `false` | Enable remote command execution |
 
