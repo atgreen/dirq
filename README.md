@@ -112,6 +112,27 @@ The server holds a fixed number of zone leader connections (default 5). All othe
 
 The server always holds exactly `DIRQ_MAX_ZONE_LEADERS` connections regardless of fleet size. The tree deepens — it never widens at the server.
 
+### Result Aggregation
+
+Query results aggregate in-mesh, not at the server. Each relay buffers results
+from its children for 2 seconds, then flushes one `AggregatedQueryResult`
+upstream. Zone leaders do the same. The server receives ~5 messages (one per
+zone leader) instead of 100k individual responses. This is similar to Tanium's
+"snowball" aggregation model.
+
+### Redundant Parents
+
+Each non-zone-leader agent receives 2 fallback parent addresses during
+registration, chosen from different branches of the tree. On parent failure:
+
+1. Try fallback parent 0 (different branch, sub-second)
+2. Try fallback parent 1 (another branch)
+3. Fall back to direct server connection (last resort)
+
+This eliminates the thundering herd at the server when a relay dies — orphaned
+agents switch to fallback parents locally instead of all re-registering through
+the server simultaneously.
+
 ### Built-in Query Modules
 
 | Module | Data collected |
@@ -422,6 +443,11 @@ Exec is **disabled by default** — opt in per agent:
 ```bash
 DIRQ_EXEC_ENABLED=true ./bin/dirq-agent
 ```
+
+Default exec timeout is 300 seconds (5 minutes), configurable via `dirq_exec_timeout`
+in the connection plugin. Long-running tasks like `yum update` work without special
+handling. Exec responses are forwarded immediately through the relay chain — they
+are not batched by the result aggregator.
 
 ### Exec Audit Log
 
