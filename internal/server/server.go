@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/atgreen/dirq/internal/db"
+	"github.com/atgreen/dirq/internal/signutil"
 	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
@@ -42,6 +43,7 @@ type Server struct {
 	log     *slog.Logger
 	grpcSv  *grpc.Server
 	httpSv  *http.Server
+	signer  *signutil.Signer
 
 	// Connected zone leaders: agentID -> stream
 	mu      sync.RWMutex
@@ -108,6 +110,12 @@ func (s *Server) Start(ctx context.Context) error {
 	} else {
 		// Only reached when DIRQ_TLS_DISABLED=true
 	}
+
+	signer, err := signutil.EnsureServerSigner(signutil.ConfigFromEnv(), s.log)
+	if err != nil {
+		return fmt.Errorf("signing setup: %w", err)
+	}
+	s.signer = signer
 
 	s.grpcSv = grpc.NewServer(grpcOpts...)
 	pb.RegisterDirQServerServer(s.grpcSv, s)

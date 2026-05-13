@@ -75,9 +75,11 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 
 	return &pb.RegisterResponse{
 		AgentId:                  agent.ID,
-		Role:                    a.Role,
-		ZoneLeaderAddr:          a.ParentAddr,
+		Role:                     a.Role,
+		ZoneLeaderAddr:           a.ParentAddr,
 		HeartbeatIntervalSeconds: 30,
+		ServerSigningPublicKey:   s.signer.PublicKey(),
+		ServerSigningKeyId:       s.signer.KeyID(),
 	}, nil
 }
 
@@ -188,11 +190,11 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 
 // querySession tracks an in-flight query.
 type querySession struct {
-	queryID    string
-	results    chan *pb.QueryResult
-	targetIDs  []string
-	startedAt  time.Time
-	timeout    time.Duration
+	queryID   string
+	results   chan *pb.QueryResult
+	targetIDs []string
+	startedAt time.Time
+	timeout   time.Duration
 }
 
 var (
@@ -230,6 +232,9 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 		Payload: &pb.ServerMessage_QueryRequest{
 			QueryRequest: qr,
 		},
+	}
+	if err := s.signServerMessage(msg); err != nil {
+		return nil, fmt.Errorf("sign query request: %w", err)
 	}
 
 	// Broadcast to ALL connected zone leaders. Each zone leader executes

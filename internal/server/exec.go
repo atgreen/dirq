@@ -105,6 +105,10 @@ func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.Serve
 		s.execMu.Unlock()
 	}()
 
+	if err := s.signServerMessage(msg); err != nil {
+		return nil, fmt.Errorf("sign control message: %w", err)
+	}
+
 	// Find the stream to send through. If the target agent is a zone
 	// leader, send directly. Otherwise, find its zone leader ancestor
 	// and route through that zone leader's stream — the mesh relays it.
@@ -284,8 +288,8 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 type putFileRequest struct {
 	AgentID    string `json:"agent_id"`
 	DestPath   string `json:"dest_path"`
-	Content    string `json:"content"`    // base64-encoded file content
-	Mode       int    `json:"mode"`       // unix file mode
+	Content    string `json:"content"` // base64-encoded file content
+	Mode       int    `json:"mode"`    // unix file mode
 	Become     bool   `json:"become"`
 	BecomeUser string `json:"become_user"`
 	Timeout    int    `json:"timeout"`

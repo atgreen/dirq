@@ -58,6 +58,8 @@ message RegisterResponse {
   repeated PeerInfo peers = 3; // assigned upstream/sibling peers
   string zone_leader_addr = 4; // if this agent is not a zone leader, connect here
   int32 heartbeat_interval_seconds = 5;
+  bytes server_signing_public_key = 6; // Ed25519 public key for signed control messages
+  string server_signing_key_id = 7;    // identifier/fingerprint for the signing key
 }
 
 enum AgentRole {
@@ -105,6 +107,10 @@ message ServerMessage {
     PutFileRequest put_file       = 5; // Phase 2: write file to agent
     FetchFileRequest fetch_file   = 6; // Phase 2: read file from agent
   }
+  string signer_key_id = 7;
+  int64 signed_at_unix = 8;
+  int64 expires_at_unix = 9;
+  bytes signature = 10;
 }
 
 // Agent identifies itself when opening a stream.

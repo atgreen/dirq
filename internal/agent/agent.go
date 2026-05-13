@@ -24,6 +24,7 @@ import (
 
 	"github.com/atgreen/dirq/internal/modules"
 	"github.com/atgreen/dirq/internal/query"
+	"github.com/atgreen/dirq/internal/signutil"
 	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
@@ -41,9 +42,9 @@ type Config struct {
 type Agent struct {
 	pb.UnimplementedDirQRelayServer
 
-	cfg     Config
-	log     *slog.Logger
-	agentID string
+	cfg        Config
+	log        *slog.Logger
+	agentID    string
 	role       pb.AgentRole
 	parentAddr string // where to connect upstream (server addr or parent's listen_addr)
 
@@ -53,6 +54,7 @@ type Agent struct {
 	// Upstream connection (to server or parent peer)
 	upstreamConn   *grpc.ClientConn
 	upstreamStream pb.DirQServer_AgentStreamClient
+	serverVerifier *signutil.Verifier
 
 	// Connected downstream peers
 	mu          sync.RWMutex
@@ -245,6 +247,9 @@ func (a *Agent) register(ctx context.Context) error {
 
 	a.agentID = resp.AgentId
 	a.role = resp.Role
+	if err := a.setServerVerifier(resp.GetServerSigningPublicKey(), resp.GetServerSigningKeyId()); err != nil {
+		return fmt.Errorf("load server signing key: %w", err)
+	}
 
 	// Determine where to connect upstream.
 	if resp.ZoneLeaderAddr != "" && resp.Role != pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
@@ -402,6 +407,11 @@ func (a *Agent) sendHeartbeat() {
 }
 
 func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) {
+	if err := a.verifyServerMessage(msg); err != nil {
+		a.log.Error("rejected unsigned or invalid server message", "error", err)
+		return
+	}
+
 	switch p := msg.Payload.(type) {
 	case *pb.ServerMessage_QueryRequest:
 		// Queries are broadcast — execute locally AND relay to downstream peers.

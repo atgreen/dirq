@@ -1,8 +1,55 @@
 # DirQ — Real-Time Endpoint Query & Ansible Execution Platform
 
-DirQ is an agent-based platform for querying and managing large Windows/Linux fleets. Agents form a peer-to-peer relay mesh and report data back to a central server. The server acts as an Ansible Automation Platform (AAP) inventory source, exposing collected data as Ansible facts.
+DirQ is an agent-based platform for querying and managing large Windows/Linux fleets. Agents form a peer-to-peer relay mesh and report data back to a central server. The server acts as an Ansible Automation Platform (AAP) inventory source, exposes collected data as structured facts, and can route Ansible execution through the mesh itself.
 
-The relay mesh also serves as an **Ansible execution transport** — AAP can run playbooks against managed hosts through the DirQ mesh using `connection: dirq`, replacing SSH/WinRM entirely. No inbound ports required on managed hosts.
+The key idea is simple:
+
+- **Query the fleet like a dataset** instead of logging into hosts one by one
+- **Keep managed hosts outbound-only** instead of opening SSH/WinRM inbound
+- **Reuse Ansible** while replacing the transport underneath
+- **Scale with a relay tree** so the server does not need a direct session to every node
+
+## Why DirQ?
+
+DirQ is useful when traditional fleet access patterns start breaking down:
+
+1. **Large locked-down environments**
+   You need fleet visibility and execution, but managed hosts cannot accept inbound SSH or WinRM.
+
+2. **Segmented enterprise networks**
+   You want a single control plane across data centers, edge sites, or heavily firewalled zones without building a maze of bastions and exceptions.
+
+3. **Real-time fleet troubleshooting**
+   You need to answer questions like "which prod hosts have disks over 90%?" or "where is `sshd` stopped?" and act on the result immediately.
+
+4. **Ansible without transport pain**
+   You already have playbooks, roles, and operators who know Ansible, but you want to stop depending on SSH/WinRM reachability for every target.
+
+5. **Very large estates**
+   You want server connection count to stay bounded while the fleet grows, instead of scaling linearly with node count.
+
+### What makes DirQ different?
+
+- **Mesh-first architecture:** agents relay for each other, so the fleet becomes its own transport.
+- **Structured query model:** modules return normalized data instead of raw command output.
+- **Inventory and execution in one system:** the same platform that knows the fleet can also target it.
+- **Ansible compatibility:** DirQ can act as both inventory source and execution transport.
+
+## What You Can Do With It
+
+- Run fleet-wide queries against CPU, memory, disk, OS, packages, network, and services.
+- Target hosts by tags, groups, and Ansible inventory groupings derived from DirQ facts.
+- Use DirQ as an Ansible inventory source for AAP or CLI Ansible.
+- Run playbooks through `connection: dirq` instead of SSH/WinRM.
+- Scale to large fleets without requiring the server to hold a direct connection to every agent.
+
+## Read This README
+
+- Start with [Quick Start](#quick-start-podman-on-laptop) if you want to see the system working locally.
+- Jump to [Query DSL](#query-dsl) if you want to understand how fleet queries work.
+- Use [Execution Transport](#execution-transport) if you care about running Ansible through the mesh.
+- Use [TLS](#tls), [Authentication](#authentication), and [REST API](#rest-api) for operational details.
+- Use [Multi-Datacenter Deployment](#multi-datacenter-deployment) and [AAP Integration](#aap-integration) for production integration patterns.
 
 ## Architecture
 
@@ -36,7 +83,7 @@ The relay mesh also serves as an **Ansible execution transport** — AAP can run
                      └──────────────┘
 ```
 
-All links in the mesh are **gRPC over mTLS**. Agents connect outbound — no inbound ports required on managed hosts. Only zone leaders connect directly to the server, keeping OpenShift router load low even at 100k nodes.
+All links in the mesh are **gRPC over TLS**. Agents connect outbound, and only a bounded number of zone leaders connect directly to the server. The relay tree absorbs the rest of the fleet.
 
 ### Scaling the Mesh
 
