@@ -273,13 +273,23 @@ func (a *Agent) register(ctx context.Context) error {
 		caps = append(caps, name)
 	}
 
+	// Resolve the listen address to include our reachable IP.
+	// If ListenAddr is just ":50052", we discover our outbound IP
+	// by checking the connection to the server.
+	listenAddr := a.cfg.ListenAddr
+	if listenAddr != "" && listenAddr[0] == ':' {
+		if outboundIP := resolveOutboundIP(a.cfg.ServerAddr); outboundIP != "" {
+			listenAddr = outboundIP + listenAddr
+		}
+	}
+
 	resp, err := client.Register(ctx, &pb.RegisterRequest{
 		Hostname:     hostname,
 		Os:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
 		AgentVersion: a.cfg.Version,
 		Capabilities: caps,
-		ListenAddr:   a.cfg.ListenAddr,
+		ListenAddr:   listenAddr,
 		Tags:         a.cfg.Tags,
 		ExecEnabled:  a.cfg.ExecEnabled,
 	})
@@ -485,7 +495,9 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 
 	switch p := msg.Payload.(type) {
 	case *pb.ServerMessage_QueryRequest:
-		// Queries are broadcast — execute locally AND relay to downstream peers.
+		// Queries are broadcast — relay the original signed message to downstream
+		// peers, then execute locally.
+		a.relayToDownstreams(msg)
 		go a.executeQuery(ctx, p.QueryRequest)
 	case *pb.ServerMessage_PeerUpdate:
 		a.log.Info("peer update received", "new_role", p.PeerUpdate.NewRole)
@@ -514,8 +526,7 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 }
 
 func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
-	// Always relay to downstream peers first (they may be targets even if we're not).
-	a.relayQueryToDownstreams(qr)
+	// Relay is handled by handleServerMessage before this is called.
 
 	// Check if this agent is a target. If target_agent_ids is empty, it's a
 	// broadcast (all agents execute). If populated, only listed agents execute.
@@ -576,14 +587,6 @@ func (a *Agent) sendQueryResult(queryID, hostname string, success bool, errMsg s
 
 	// Route through the aggregator — it will buffer and flush as a batch.
 	a.aggregator.add(result)
-}
-
-func (a *Agent) relayQueryToDownstreams(qr *pb.QueryRequest) {
-	a.relayToDownstreams(&pb.ServerMessage{
-		Payload: &pb.ServerMessage_QueryRequest{
-			QueryRequest: qr,
-		},
-	})
 }
 
 // relayToDownstreams sends any ServerMessage to all connected downstream peers.
@@ -717,6 +720,24 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 
 // protoFiltersToConditions converts proto Filter messages back into query.Condition
 // objects so the agent can use the query package's FilterCollectedData.
+// resolveOutboundIP discovers the IP address this host uses to reach a target.
+// It opens a UDP connection (no actual traffic) to the target and reads the
+// local address. Returns empty string on failure.
+func resolveOutboundIP(target string) string {
+	// Strip port if target has one, use a dummy port for UDP dial.
+	host := target
+	if h, _, err := net.SplitHostPort(target); err == nil {
+		host = h
+	}
+	conn, err := net.Dial("udp", host+":1")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
 func protoFiltersToConditions(filters []*pb.Filter) []*query.Condition {
 	conds := make([]*query.Condition, 0, len(filters))
 	for _, f := range filters {

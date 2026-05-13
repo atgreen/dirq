@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Anthony Green <green@moxielogic.com>
+#
+# Local mesh test — run with:
+#   podman kube play mesh.yml
+#
+# This creates a pod with PostgreSQL + DirQ server, plus agent pods.
+# Scale agents by adding more agent pod definitions or running:
+#   for i in $(seq 1 20); do podman kube play agent-pod.yml --name dirq-agent-$i; done
+#
+# Tear down:
+#   podman kube down mesh.yml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-server-pod
+  labels:
+    app: dirq-server
+spec:
+  containers:
+    - name: postgres
+      image: docker.io/library/postgres:17
+      env:
+        - name: POSTGRES_USER
+          value: dirq
+        - name: POSTGRES_PASSWORD
+          value: dirq
+        - name: POSTGRES_DB
+          value: dirq
+      ports:
+        - containerPort: 5432
+
+    - name: dirq-server
+      image: localhost/dirq_dirq-server:latest
+      env:
+        - name: DIRQ_GRPC_ADDR
+          value: ":50051"
+        - name: DIRQ_HTTP_ADDR
+          value: ":8080"
+        - name: DIRQ_DB_URL
+          value: "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"
+        - name: DIRQ_POD_ID
+          value: "test-server"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_AUTH_DISABLED
+          value: "true"
+        - name: DIRQ_MAX_ZONE_LEADERS
+          value: "2"
+        - name: DIRQ_MAX_CHILDREN
+          value: "5"
+      ports:
+        - containerPort: 50051
+          hostPort: 50051
+        - containerPort: 8080
+          hostPort: 8090

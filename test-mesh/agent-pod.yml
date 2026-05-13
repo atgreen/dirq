@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Anthony Green <green@moxielogic.com>
+#
+# Single agent pod template. Used by run-mesh.sh to spawn multiple agents.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-AGENT_NUM
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq_dirq-agent:latest
+      env:
+        - name: DIRQ_SERVER
+          value: "DIRQ_SERVER_ADDR:50051"
+        - name: DIRQ_LISTEN
+          value: ":50052"
+        - name: DIRQ_TAGS
+          value: "env=test,agent_num=AGENT_NUM"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
