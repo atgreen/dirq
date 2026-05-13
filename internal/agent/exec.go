@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -153,7 +154,13 @@ func buildCommandUnix(ctx context.Context, cmdStr string, become bool, becomeUse
 // scheduled-task trick to run as another user without storing passwords.
 func buildCommandWindows(ctx context.Context, cmdStr string, become bool, becomeUser string) *exec.Cmd {
 	if !become || becomeUser == "" || becomeUser == "Administrator" || becomeUser == "SYSTEM" {
-		// Run directly — the agent (running as SYSTEM) already has privileges.
+		// Detect PowerShell: if the command starts with powershell/pwsh or
+		// contains PowerShell-specific syntax, use PowerShell directly.
+		// Ansible sends PowerShell-wrapped commands when ansible_shell_type=powershell.
+		lower := strings.ToLower(strings.TrimSpace(cmdStr))
+		if strings.HasPrefix(lower, "powershell") || strings.HasPrefix(lower, "pwsh") {
+			return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", cmdStr)
+		}
 		return exec.CommandContext(ctx, "cmd", "/c", cmdStr)
 	}
 
