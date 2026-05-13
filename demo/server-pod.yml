@@ -37,7 +37,7 @@ spec:
         - name: DIRQ_MAX_ZONE_LEADERS
           value: "3"
         - name: DIRQ_MAX_CHILDREN
-          value: "10"
+          value: "3"
       ports:
         - containerPort: 50051
           hostPort: 50051

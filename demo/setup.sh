@@ -122,6 +122,16 @@ launch_agent "dev-3"       healthy    "env=dev,role=devbox,dc=eu-west"
 # Healthy prod app servers
 launch_agent "app-prod-1"  healthy    "env=prod,role=appserver,dc=us-east"
 launch_agent "app-prod-2"  healthy    "env=prod,role=appserver,dc=eu-west"
+launch_agent "app-prod-3"  healthy    "env=prod,role=appserver,dc=us-east"
+launch_agent "app-prod-4"  healthy    "env=prod,role=appserver,dc=eu-west"
+
+# Extra nodes to force a deeper tree (3 ZLs × 3 children = 9 at depth 1, rest overflow to depth 2)
+launch_agent "worker-1"    healthy    "env=prod,role=worker,dc=us-east"
+launch_agent "worker-2"    healthy    "env=prod,role=worker,dc=us-east"
+launch_agent "worker-3"    healthy    "env=prod,role=worker,dc=eu-west"
+launch_agent "worker-4"    healthy    "env=prod,role=worker,dc=eu-west"
+launch_agent "worker-5"    healthy    "env=prod,role=worker,dc=us-east"
+launch_agent "worker-6"    healthy    "env=prod,role=worker,dc=eu-west"
 
 echo ""
 sleep 3
