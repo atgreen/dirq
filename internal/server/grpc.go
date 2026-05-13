@@ -162,6 +162,16 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			}
 		case *pb.AgentMessage_QueryResult:
 			s.handleQueryResult(p.QueryResult)
+		case *pb.AgentMessage_AggregatedResult:
+			// Unpack batched results from a zone leader's subtree.
+			s.log.Info("received aggregated result",
+				"query_id", p.AggregatedResult.QueryId,
+				"count", len(p.AggregatedResult.Results),
+				"from", agentID,
+			)
+			for _, r := range p.AggregatedResult.Results {
+				s.handleQueryResult(r)
+			}
 		case *pb.AgentMessage_ExecResponse:
 			s.handleExecResponse(p.ExecResponse)
 		case *pb.AgentMessage_FileChunk:

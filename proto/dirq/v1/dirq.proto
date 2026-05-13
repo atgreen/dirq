@@ -92,9 +92,10 @@ message AgentMessage {
     Heartbeat heartbeat           = 1;
     QueryResult query_result      = 2;
     AgentHello hello              = 3;
-    ExecResponse exec_response    = 4; // Phase 2: command execution result
-    FileChunk file_chunk          = 5; // Phase 2: file transfer data
-    FetchFileResponse fetch_response = 6; // Phase 2: fetched file data
+    ExecResponse exec_response    = 4;
+    FileChunk file_chunk          = 5;
+    FetchFileResponse fetch_response = 6;
+    AggregatedQueryResult aggregated_result = 7; // batched results from subtree
   }
 }
 
@@ -157,6 +158,15 @@ message QueryResult {
   string error      = 5;
   google.protobuf.Struct data = 6; // structured JSON result
   google.protobuf.Timestamp collected_at = 7;
+}
+
+// AggregatedQueryResult carries batched results from a subtree.
+// Relay agents and zone leaders buffer individual QueryResults from their
+// children, then flush them as one aggregated message upstream. This reduces
+// the number of messages the server receives from O(agents) to O(zone_leaders).
+message AggregatedQueryResult {
+  string query_id = 1;
+  repeated QueryResult results = 2;
 }
 
 // ─────────────────────────────────────────────────────────

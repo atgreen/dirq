@@ -26,6 +26,8 @@ services:
       DIRQ_HTTP_ADDR: ":8080"
       DIRQ_DB_URL: "postgres://dirq:dirq@postgres:5432/dirq?sslmode=disable"
       DIRQ_POD_ID: "dev-server-1"
+      DIRQ_TLS_DISABLED: "true"
+      DIRQ_AUTH_DISABLED: "true"
     ports:
       - "50051:50051"
       - "8090:8080"
