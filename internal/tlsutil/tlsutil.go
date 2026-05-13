@@ -2,13 +2,19 @@
 // Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
 // Package tlsutil provides TLS configuration helpers for DirQ server and agents.
+//
+// TLS is enabled by default. If no cert/key files are configured, self-signed
+// certificates are auto-generated at startup. To explicitly disable TLS (not
+// recommended), set DIRQ_TLS_DISABLED=true.
 package tlsutil
 
 import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 
 	"google.golang.org/grpc/credentials"
 )
@@ -19,10 +25,17 @@ type Config struct {
 	CertFile string // path to this process's certificate
 	KeyFile  string // path to this process's private key
 	Insecure bool   // skip cert verification (for self-signed)
+	Disabled bool   // explicitly disable TLS (DIRQ_TLS_DISABLED=true)
 }
 
-// Enabled returns true if TLS is configured (cert and key are set).
+// Enabled returns true if TLS should be used. TLS is on by default —
+// it's only off when explicitly disabled.
 func (c Config) Enabled() bool {
+	return !c.Disabled
+}
+
+// HasUserCerts returns true if the user provided their own cert and key.
+func (c Config) HasUserCerts() bool {
 	return c.CertFile != "" && c.KeyFile != ""
 }
 
@@ -33,7 +46,64 @@ func ConfigFromEnv() Config {
 		CertFile: os.Getenv("DIRQ_TLS_CERT"),
 		KeyFile:  os.Getenv("DIRQ_TLS_KEY"),
 		Insecure: os.Getenv("DIRQ_TLS_INSECURE") == "true",
+		Disabled: os.Getenv("DIRQ_TLS_DISABLED") == "true",
 	}
+}
+
+// autoGenDir is where auto-generated certs are stored.
+const autoGenDir = "/tmp/dirq-autotls"
+
+// EnsureCerts makes sure TLS cert/key files exist. If the user provided their
+// own, those are used. Otherwise, self-signed certs are auto-generated.
+// Returns the (possibly updated) Config and logs what happened.
+func EnsureCerts(cfg Config, role string, log *slog.Logger) (Config, error) {
+	if cfg.Disabled {
+		log.Warn("TLS explicitly disabled — all gRPC connections are unencrypted. NOT RECOMMENDED for production.")
+		return cfg, nil
+	}
+
+	if cfg.HasUserCerts() {
+		if cfg.CAFile != "" {
+			log.Info("TLS enabled with user-supplied certs (mTLS)",
+				"cert", cfg.CertFile, "ca", cfg.CAFile)
+		} else {
+			log.Info("TLS enabled with user-supplied certs",
+				"cert", cfg.CertFile)
+		}
+		return cfg, nil
+	}
+
+	// No user certs — auto-generate self-signed.
+	log.Warn("No TLS certs configured — auto-generating self-signed certificates. " +
+		"Set DIRQ_TLS_CERT and DIRQ_TLS_KEY for production use.")
+
+	result, err := GenerateSelfSigned(autoGenDir)
+	if err != nil {
+		return cfg, fmt.Errorf("auto-generate TLS certs: %w", err)
+	}
+
+	cfg.CAFile = result.CAFile
+	cfg.Insecure = true // self-signed: skip verification by default
+
+	switch role {
+	case "server":
+		cfg.CertFile = result.ServerCertFile
+		cfg.KeyFile = result.ServerKeyFile
+	case "agent":
+		cfg.CertFile = result.AgentCertFile
+		cfg.KeyFile = result.AgentKeyFile
+	default:
+		cfg.CertFile = result.ServerCertFile
+		cfg.KeyFile = result.ServerKeyFile
+	}
+
+	log.Info("auto-generated self-signed TLS certs",
+		"dir", autoGenDir,
+		"cert", filepath.Base(cfg.CertFile),
+		"ca", filepath.Base(cfg.CAFile),
+	)
+
+	return cfg, nil
 }
 
 // ServerCredentials returns gRPC transport credentials for a server.
@@ -49,8 +119,8 @@ func ServerCredentials(cfg Config) (credentials.TransportCredentials, error) {
 		MinVersion:   tls.VersionTLS12,
 	}
 
-	// If CA is provided, require and verify client certificates (mTLS).
-	if cfg.CAFile != "" {
+	// If CA is provided and not in insecure mode, require mTLS.
+	if cfg.CAFile != "" && !cfg.Insecure {
 		caPool, err := loadCAPool(cfg.CAFile)
 		if err != nil {
 			return nil, err
@@ -79,7 +149,7 @@ func ClientCredentials(cfg Config) (credentials.TransportCredentials, error) {
 	}
 
 	// Load CA for server verification.
-	if cfg.CAFile != "" {
+	if cfg.CAFile != "" && !cfg.Insecure {
 		caPool, err := loadCAPool(cfg.CAFile)
 		if err != nil {
 			return nil, err

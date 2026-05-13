@@ -91,17 +91,20 @@ func (s *Server) Start(ctx context.Context) error {
 		}),
 	}
 
-	// Add TLS if configured.
+	// TLS is on by default. Auto-generates self-signed certs if none provided.
 	tlsCfg := tlsutil.ConfigFromEnv()
+	tlsCfg, err := tlsutil.EnsureCerts(tlsCfg, "server", s.log)
+	if err != nil {
+		return fmt.Errorf("TLS setup: %w", err)
+	}
 	if tlsCfg.Enabled() {
 		creds, err := tlsutil.ServerCredentials(tlsCfg)
 		if err != nil {
-			return fmt.Errorf("TLS setup: %w", err)
+			return fmt.Errorf("TLS credentials: %w", err)
 		}
 		grpcOpts = append(grpcOpts, grpc.Creds(creds))
-		s.log.Info("TLS enabled for gRPC", "cert", tlsCfg.CertFile, "ca", tlsCfg.CAFile)
 	} else {
-		s.log.Warn("TLS disabled — gRPC connections are unencrypted")
+		// Only reached when DIRQ_TLS_DISABLED=true
 	}
 
 	s.grpcSv = grpc.NewServer(grpcOpts...)

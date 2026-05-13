@@ -411,9 +411,11 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | `DIRQ_TLS_CERT` | | Path to this process's TLS certificate |
 | `DIRQ_TLS_KEY` | | Path to this process's TLS private key |
 | `DIRQ_TLS_INSECURE` | `false` | Skip cert verification (agent only — for self-signed certs) |
+| `DIRQ_TLS_DISABLED` | `false` | Explicitly disable TLS (not recommended) |
 
-When `DIRQ_TLS_CERT` and `DIRQ_TLS_KEY` are set, TLS is enabled. When they
-are not set, all gRPC connections run unencrypted (dev mode).
+TLS is **enabled by default**. If no cert/key files are provided, self-signed
+certificates are auto-generated at startup. Set `DIRQ_TLS_DISABLED=true` to
+explicitly run without encryption (not recommended for production).
 
 ### CLI (environment variables and flags)
 
@@ -425,17 +427,34 @@ are not set, all gRPC connections run unencrypted (dev mode).
 
 ## TLS
 
-All gRPC connections (server-to-agent, agent-to-agent relay) support TLS.
-Three modes:
+TLS is **enabled by default** on all gRPC connections. If no certificates are
+configured, self-signed certs are auto-generated at startup. Traffic is always
+encrypted unless you explicitly opt out.
 
-### 1. No TLS (development)
+| TLS vars set | Behavior |
+|---|---|
+| Nothing | Auto-generate self-signed certs, TLS enabled, no mTLS, log warning |
+| `CERT` + `KEY` | TLS with user-supplied certs, no mTLS |
+| `CERT` + `KEY` + `CA` | Full mTLS (mutual authentication) |
+| `DIRQ_TLS_DISABLED=true` | Explicitly insecure (must opt in) |
 
-Don't set any `DIRQ_TLS_*` variables. All connections are unencrypted.
-This is the default for local development.
+### Default: auto-generated certs (zero config)
 
-### 2. Self-signed certificates
+With no TLS variables set, the server and agent auto-generate self-signed
+certificates on startup. All gRPC traffic is encrypted. You'll see a log
+warning:
 
-Generate a CA, server cert, and agent cert with one command:
+```
+WARN No TLS certs configured — auto-generating self-signed certificates.
+     Set DIRQ_TLS_CERT and DIRQ_TLS_KEY for production use.
+```
+
+This is fine for development and testing. For production, use user-supplied
+or manually generated certs.
+
+### Self-signed certificates (manual)
+
+Generate a CA, server cert, and agent cert:
 
 ```bash
 ./bin/dirq tls generate --dir ./certs
@@ -465,15 +484,7 @@ DIRQ_TLS_KEY=./certs/agent.key \
   ./bin/dirq-agent
 ```
 
-**Agent (skip verification — when you don't want to distribute the CA):**
-```bash
-DIRQ_TLS_CERT=./certs/agent.crt \
-DIRQ_TLS_KEY=./certs/agent.key \
-DIRQ_TLS_INSECURE=true \
-  ./bin/dirq-agent
-```
-
-### 3. User-supplied certificates
+### User-supplied certificates (production)
 
 Point the environment variables at your own CA-signed certificates.
 Any standard x509 certs work — from your corporate CA, Let's Encrypt, etc.
@@ -503,6 +514,20 @@ certificate against the CA. This prevents agents from connecting to a
 rogue server.
 
 For full mutual authentication, set `DIRQ_TLS_CA` on both sides.
+
+### Explicitly disabling TLS
+
+Not recommended, but available for isolated test environments:
+
+```bash
+DIRQ_TLS_DISABLED=true ./bin/dirq-server
+DIRQ_TLS_DISABLED=true ./bin/dirq-agent
+```
+
+The server and agent will log a warning:
+```
+WARN TLS explicitly disabled — all gRPC connections are unencrypted. NOT RECOMMENDED for production.
+```
 
 ## API Tokens
 

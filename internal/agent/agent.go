@@ -65,9 +65,11 @@ type downstreamPeer struct {
 	cancel  context.CancelFunc
 }
 
-// grpcDialOpts returns the standard gRPC dial options including TLS if configured.
+// cachedTLSConfig is set once during Run() by EnsureCerts.
+var cachedTLSConfig *tlsutil.Config
+
+// grpcDialOpts returns the standard gRPC dial options including TLS.
 func grpcDialOpts() []grpc.DialOption {
-	tlsCfg := tlsutil.ConfigFromEnv()
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                20 * time.Second,
@@ -75,13 +77,14 @@ func grpcDialOpts() []grpc.DialOption {
 			PermitWithoutStream: true,
 		}),
 	}
-	if tlsCfg.Enabled() {
-		creds, err := tlsutil.ClientCredentials(tlsCfg)
+
+	cfg := cachedTLSConfig
+	if cfg != nil && cfg.Enabled() {
+		creds, err := tlsutil.ClientCredentials(*cfg)
 		if err == nil {
 			opts = append(opts, grpc.WithTransportCredentials(creds))
 			return opts
 		}
-		// Fall through to insecure if TLS setup fails.
 	}
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	return opts
@@ -99,6 +102,14 @@ func New(cfg Config, log *slog.Logger) *Agent {
 // Run starts the agent: registers with server, opens stream, listens for peers.
 // If the upstream connection drops, Run reconnects with exponential backoff.
 func (a *Agent) Run(ctx context.Context) error {
+	// Step 0: Ensure TLS certs exist (auto-generate if needed).
+	tlsCfg := tlsutil.ConfigFromEnv()
+	tlsCfg, err := tlsutil.EnsureCerts(tlsCfg, "agent", a.log)
+	if err != nil {
+		return fmt.Errorf("TLS setup: %w", err)
+	}
+	cachedTLSConfig = &tlsCfg
+
 	// Step 1: Register with the server (retry until success or context cancelled).
 	if err := a.registerWithRetry(ctx); err != nil {
 		return err
@@ -517,9 +528,8 @@ func (a *Agent) relayToDownstreams(msg *pb.ServerMessage) {
 
 func (a *Agent) startRelayServer(ctx context.Context) {
 	var serverOpts []grpc.ServerOption
-	tlsCfg := tlsutil.ConfigFromEnv()
-	if tlsCfg.Enabled() {
-		creds, err := tlsutil.ServerCredentials(tlsCfg)
+	if cachedTLSConfig != nil && cachedTLSConfig.Enabled() {
+		creds, err := tlsutil.ServerCredentials(*cachedTLSConfig)
 		if err != nil {
 			a.log.Error("relay TLS setup failed, using insecure", "error", err)
 		} else {
