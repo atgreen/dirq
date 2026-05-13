@@ -90,7 +90,7 @@ func (s *Server) Start(ctx context.Context) error {
 			Timeout: 10 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second,
+			MinTime:             30 * time.Second,
 			PermitWithoutStream: true,
 		}),
 	}

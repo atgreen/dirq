@@ -75,8 +75,8 @@ var cachedTLSConfig *tlsutil.Config
 func grpcDialOpts() []grpc.DialOption {
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                20 * time.Second,
-			Timeout:             10 * time.Second,
+			Time:                60 * time.Second,
+			Timeout:             15 * time.Second,
 			PermitWithoutStream: true,
 		}),
 	}
@@ -597,6 +597,13 @@ func (a *Agent) startRelayServer(ctx context.Context) {
 			serverOpts = append(serverOpts, grpc.Creds(creds))
 		}
 	}
+	// Add keepalive policy to allow client pings without ENHANCE_YOUR_CALM.
+	serverOpts = append(serverOpts,
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             30 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
 	a.grpcSv = grpc.NewServer(serverOpts...)
 	pb.RegisterDirQRelayServer(a.grpcSv, a)
 
