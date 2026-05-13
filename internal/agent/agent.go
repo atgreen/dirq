@@ -60,10 +60,6 @@ type Agent struct {
 	// Connected downstream peers
 	mu          sync.RWMutex
 	downstreams map[string]*downstreamPeer
-
-	// Query result aggregator — buffers results from this agent and its
-	// downstream subtree, then flushes as one AggregatedQueryResult upstream.
-	aggregator *queryAggregator
 }
 
 type downstreamPeer struct {
@@ -126,27 +122,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	a.log.Info("registered", "agent_id", a.agentID, "role", a.role)
 
-	// Step 2: Initialize result aggregator. Buffers query results from this
-	// agent and its subtree, flushes as one AggregatedQueryResult upstream
-	// after 2 seconds of idle (no new results). Reduces server message count
-	// from O(agents) to O(zone_leaders).
-	a.aggregator = newQueryAggregator(2*time.Second, func(agg *pb.AggregatedQueryResult) {
-		if a.upstreamStream == nil {
-			return
-		}
-		err := a.upstreamStream.Send(&pb.AgentMessage{
-			Payload: &pb.AgentMessage_AggregatedResult{
-				AggregatedResult: agg,
-			},
-		})
-		if err != nil {
-			a.log.Error("failed to send aggregated result", "query_id", agg.QueryId, "count", len(agg.Results), "error", err)
-		} else {
-			a.log.Info("flushed aggregated result", "query_id", agg.QueryId, "count", len(agg.Results))
-		}
-	})
-
-	// Step 3: Start listening for downstream peers. Every agent listens —
+	// Step 2: Start listening for downstream peers. Every agent listens —
 	// the topology manager may assign children to any node at any time.
 	go a.startRelayServer(ctx)
 
@@ -575,18 +551,22 @@ func (a *Agent) isTargeted(targetIDs []string) bool {
 }
 
 func (a *Agent) sendQueryResult(queryID, hostname string, success bool, errMsg string, data *structpb.Struct) {
-	result := &pb.QueryResult{
-		QueryId:     queryID,
-		AgentId:     a.agentID,
-		Hostname:    hostname,
-		Success:     success,
-		Error:       errMsg,
-		Data:        data,
-		CollectedAt: timestamppb.Now(),
+	msg := &pb.AgentMessage{
+		Payload: &pb.AgentMessage_QueryResult{
+			QueryResult: &pb.QueryResult{
+				QueryId:     queryID,
+				AgentId:     a.agentID,
+				Hostname:    hostname,
+				Success:     success,
+				Error:       errMsg,
+				Data:        data,
+				CollectedAt: timestamppb.Now(),
+			},
+		},
 	}
-
-	// Route through the aggregator — it will buffer and flush as a batch.
-	a.aggregator.add(result)
+	if err := a.upstreamStream.Send(msg); err != nil {
+		a.log.Error("failed to send query result", "error", err)
+	}
 }
 
 // relayToDownstreams sends any ServerMessage to all connected downstream peers.
@@ -697,19 +677,10 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 			return err
 		}
 
-		switch p := msg.Payload.(type) {
-		case *pb.AgentMessage_QueryResult:
-			// Query results go through the aggregator for batching.
-			a.aggregator.add(p.QueryResult)
-		case *pb.AgentMessage_AggregatedResult:
-			// Already-aggregated results from a downstream relay.
-			a.aggregator.addAggregated(p.AggregatedResult)
-		default:
-			// Exec responses, file chunks, heartbeats — forward immediately.
-			if err := a.upstreamStream.Send(msg); err != nil {
-				a.log.Error("failed to relay upstream", "peer_id", peerID, "error", err)
-				return err
-			}
+		// Forward everything upstream immediately — no buffering.
+		if err := a.upstreamStream.Send(msg); err != nil {
+			a.log.Error("failed to relay upstream", "peer_id", peerID, "error", err)
+			return err
 		}
 	}
 }

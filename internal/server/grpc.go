@@ -290,7 +290,7 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 	var results []*pb.QueryResult
 	hardTimeout := time.NewTimer(qs.timeout)
 	defer hardTimeout.Stop()
-	idleTimeout := time.NewTimer(3 * time.Second)
+	idleTimeout := time.NewTimer(5 * time.Second)
 	defer idleTimeout.Stop()
 
 	maxResults := len(targetIDs)
@@ -305,7 +305,7 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 				default:
 				}
 			}
-			idleTimeout.Reset(3 * time.Second)
+			idleTimeout.Reset(5 * time.Second)
 		case <-idleTimeout.C:
 			// No results for 3s — assume all matching agents have responded.
 			return results, nil
