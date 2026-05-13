@@ -13,36 +13,176 @@ import (
 	dirqv1 "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
-// TargetScope describes the target scope of a query.
-type TargetScope struct {
-	All      bool   // FROM *
-	TagKey   string // tag key to match (e.g. "env", "group")
-	TagValue string // tag value to match, empty = any value for that key
+// IsTagField returns true if the field name is in the tag.* namespace.
+func IsTagField(field string) bool {
+	return strings.HasPrefix(field, "tag.")
 }
 
-// ExtractTarget returns the target scope from the query's FROM clause.
-// If no FROM clause is present, it defaults to all hosts.
-//
-//	FROM *              → All=true
-//	FROM tag:env=prod   → TagKey="env", TagValue="prod"
-//	FROM tag:env        → TagKey="env", TagValue="" (any value)
-//	FROM group:web      → TagKey="group", TagValue="web"
-func ExtractTarget(q *Query) TargetScope {
-	if q.From == nil || q.From.All {
-		return TargetScope{All: true}
+// tagKeyFromField extracts the tag key from a tag.* field (e.g. "tag.env" → "env").
+func tagKeyFromField(field string) string {
+	return strings.TrimPrefix(field, "tag.")
+}
+
+// MatchesAgentTags evaluates tag.* conditions in the expression against an
+// agent's tag map. Non-tag conditions (data fields) are treated as true —
+// this conservatively includes agents that might match data conditions.
+// Returns true if the agent should receive the query.
+func MatchesAgentTags(expr Expr, tags map[string]string) bool {
+	if expr == nil {
+		return true
 	}
-	scope := q.From.Scope
-	if scope.Kind == "group" {
-		return TargetScope{
-			TagKey:   "group",
-			TagValue: scope.Key, // group:webservers → key="group", value="webservers"
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		left := MatchesAgentTags(e.Left, tags)
+		right := MatchesAgentTags(e.Right, tags)
+		if e.Op == "AND" {
+			return left && right
 		}
+		return left || right
+	case *NotExpr:
+		return !MatchesAgentTags(e.Expr, tags)
+	case *CompareExpr:
+		if !IsTagField(e.Field) {
+			return true // data field — can't evaluate, assume match
+		}
+		key := tagKeyFromField(e.Field)
+		actual, exists := tags[key]
+		if !exists {
+			return e.Operator == "!="
+		}
+		if e.Value.String != nil {
+			switch e.Operator {
+			case "=":
+				return actual == *e.Value.String
+			case "!=":
+				return actual != *e.Value.String
+			}
+		}
+		return false
+	case *LikeExpr:
+		if !IsTagField(e.Field) {
+			return true
+		}
+		key := tagKeyFromField(e.Field)
+		actual, exists := tags[key]
+		if !exists {
+			return e.Negated
+		}
+		result := matchLike(actual, e.Pattern)
+		if e.Negated {
+			return !result
+		}
+		return result
+	case *InExpr:
+		if !IsTagField(e.Field) {
+			return true
+		}
+		key := tagKeyFromField(e.Field)
+		actual, exists := tags[key]
+		if !exists {
+			return e.Negated
+		}
+		found := false
+		for _, v := range e.Values {
+			if actual == v {
+				found = true
+				break
+			}
+		}
+		if e.Negated {
+			return !found
+		}
+		return found
+	case *IsNullExpr:
+		if !IsTagField(e.Field) {
+			return true
+		}
+		key := tagKeyFromField(e.Field)
+		_, exists := tags[key]
+		if e.Negated {
+			return exists
+		}
+		return !exists
 	}
-	// tag:env=prod or tag:env
-	return TargetScope{
-		TagKey:   scope.Key,
-		TagValue: scope.Value,
+	return true
+}
+
+// StripTagFields returns a new expression with tag.* conditions removed.
+// For AND chains, tag conditions are dropped. For OR nodes that mix tag
+// and data conditions, the expression is kept intact (agents will receive
+// it and data conditions will be evaluated; tag conditions always pass
+// since the agent was already pre-filtered).
+// Returns nil if the entire expression was tag-only.
+func StripTagFields(expr Expr) Expr {
+	if expr == nil {
+		return nil
 	}
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		if e.Op == "AND" {
+			left := StripTagFields(e.Left)
+			right := StripTagFields(e.Right)
+			if left == nil {
+				return right
+			}
+			if right == nil {
+				return left
+			}
+			return &BinaryExpr{Op: "AND", Left: left, Right: right}
+		}
+		// OR: keep both sides. Tag conditions on agents that passed
+		// pre-filtering will just evaluate to true harmlessly.
+		return e
+	case *NotExpr:
+		inner := StripTagFields(e.Expr)
+		if inner == nil {
+			return nil
+		}
+		return &NotExpr{Expr: inner}
+	case *CompareExpr:
+		if IsTagField(e.Field) {
+			return nil
+		}
+		return e
+	case *LikeExpr:
+		if IsTagField(e.Field) {
+			return nil
+		}
+		return e
+	case *InExpr:
+		if IsTagField(e.Field) {
+			return nil
+		}
+		return e
+	case *IsNullExpr:
+		if IsTagField(e.Field) {
+			return nil
+		}
+		return e
+	}
+	return expr
+}
+
+// HasTagConditions returns true if the expression contains any tag.* references.
+func HasTagConditions(expr Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		return HasTagConditions(e.Left) || HasTagConditions(e.Right)
+	case *NotExpr:
+		return HasTagConditions(e.Expr)
+	case *CompareExpr:
+		return IsTagField(e.Field)
+	case *LikeExpr:
+		return IsTagField(e.Field)
+	case *InExpr:
+		return IsTagField(e.Field)
+	case *IsNullExpr:
+		return IsTagField(e.Field)
+	}
+	return false
 }
 
 // ExtractModules returns the set of module names referenced in the query.
@@ -59,14 +199,12 @@ func ExtractModules(q *Query) []string {
 	for _, s := range q.Select {
 		if s.AggFunc != nil {
 			addField(s.AggFunc.Arg)
-		} else {
+		} else if !s.Star {
 			addField(s.Field)
 		}
 	}
 	if q.Where != nil {
-		for _, c := range q.Where.Conditions {
-			addField(c.Field)
-		}
+		extractModulesFromExpr(q.Where, seen)
 	}
 	if q.GroupBy != nil {
 		for _, f := range q.GroupBy.Fields {
@@ -74,7 +212,9 @@ func ExtractModules(q *Query) []string {
 		}
 	}
 	if q.OrderBy != nil {
-		addField(q.OrderBy.Field)
+		for _, o := range q.OrderBy {
+			addField(o.Field)
+		}
 	}
 
 	modules := make([]string, 0, len(seen))
@@ -88,29 +228,103 @@ func ExtractModules(q *Query) []string {
 	return modules
 }
 
-// ToFilterProtos converts the WHERE clause conditions into Filter proto messages.
+func extractModulesFromExpr(expr Expr, seen map[string]bool) {
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		extractModulesFromExpr(e.Left, seen)
+		extractModulesFromExpr(e.Right, seen)
+	case *NotExpr:
+		extractModulesFromExpr(e.Expr, seen)
+	case *CompareExpr:
+		addFieldToSet(e.Field, seen)
+	case *LikeExpr:
+		addFieldToSet(e.Field, seen)
+	case *InExpr:
+		addFieldToSet(e.Field, seen)
+	case *IsNullExpr:
+		addFieldToSet(e.Field, seen)
+	}
+}
+
+func addFieldToSet(f string, seen map[string]bool) {
+	if IsTagField(f) {
+		return // tag.* is metadata, not a data module
+	}
+	parts := strings.SplitN(f, ".", 2)
+	if len(parts) == 2 {
+		seen[parts[0]] = true
+	}
+}
+
+// ─────────────────────────────────────────────────────────
+// Proto filter pushdown (flat AND-only conditions)
+// ─────────────────────────────────────────────────────────
+
+// ToFilterProtos converts the WHERE clause into flat Filter proto messages
+// for agent-side pushdown. Tag conditions are stripped (already handled
+// server-side). Only works for pure AND chains of simple data conditions.
+// Returns nil if the expression is too complex (OR, NOT, etc.),
+// meaning the server should do the filtering.
 func ToFilterProtos(q *Query) []*dirqv1.Filter {
 	if q.Where == nil {
 		return nil
 	}
-	filters := make([]*dirqv1.Filter, 0, len(q.Where.Conditions))
-	for _, c := range q.Where.Conditions {
-		if c.In != nil {
-			// IN clause: encode as operator="IN", value=comma-separated list.
-			filters = append(filters, &dirqv1.Filter{
-				Field:    c.Field,
-				Operator: "IN",
-				Value:    strings.Join(c.In.Values, ","),
-			})
-		} else {
-			filters = append(filters, &dirqv1.Filter{
-				Field:    c.Field,
-				Operator: c.Operator,
-				Value:    valueToString(c.Value),
-			})
-		}
+	dataExpr := StripTagFields(q.Where)
+	if dataExpr == nil {
+		return nil // all conditions were tag-based
+	}
+	conds := flattenANDs(dataExpr)
+	if conds == nil {
+		return nil // too complex for pushdown
+	}
+	filters := make([]*dirqv1.Filter, 0, len(conds))
+	for _, c := range conds {
+		filters = append(filters, c)
 	}
 	return filters
+}
+
+// flattenANDs extracts a list of simple filters from a pure AND chain.
+// Returns nil if the expression contains OR, NOT, or other complex nodes.
+func flattenANDs(expr Expr) []*dirqv1.Filter {
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		if e.Op != "AND" {
+			return nil
+		}
+		left := flattenANDs(e.Left)
+		right := flattenANDs(e.Right)
+		if left == nil || right == nil {
+			return nil
+		}
+		return append(left, right...)
+	case *CompareExpr:
+		return []*dirqv1.Filter{{
+			Field:    e.Field,
+			Operator: e.Operator,
+			Value:    valueToString(&e.Value),
+		}}
+	case *LikeExpr:
+		if e.Negated {
+			return nil
+		}
+		return []*dirqv1.Filter{{
+			Field:    e.Field,
+			Operator: "LIKE",
+			Value:    e.Pattern,
+		}}
+	case *InExpr:
+		if e.Negated {
+			return nil
+		}
+		return []*dirqv1.Filter{{
+			Field:    e.Field,
+			Operator: "IN",
+			Value:    strings.Join(e.Values, ","),
+		}}
+	default:
+		return nil
+	}
 }
 
 // ─────────────────────────────────────────────────────────
@@ -118,8 +332,6 @@ func ToFilterProtos(q *Query) []*dirqv1.Filter {
 // ─────────────────────────────────────────────────────────
 
 // arrayModuleKeys maps module names to the array key within their collected data.
-// When a WHERE condition references a field like "packages.name", we know that
-// "packages" contains an array at key "packages", and we filter its elements.
 var arrayModuleKeys = map[string]string{
 	"packages": "packages",
 	"services": "services",
@@ -151,14 +363,12 @@ func FilterCollectedData(conditions []*Condition, data map[string]any) map[strin
 	for module, moduleData := range data {
 		conds, hasConds := moduleConditions[module]
 		if !hasConds {
-			// No filters for this module — include as-is.
 			result[module] = moduleData
 			continue
 		}
 
 		arrayKey, isArray := arrayModuleKeys[module]
 		if !isArray {
-			// Scalar module — check conditions against the module data map.
 			if md, ok := moduleData.(map[string]any); ok {
 				if matchesScalarConditions(module, conds, md) {
 					result[module] = moduleData
@@ -167,7 +377,6 @@ func FilterCollectedData(conditions []*Condition, data map[string]any) map[strin
 			continue
 		}
 
-		// Array module — filter the array elements.
 		md, ok := moduleData.(map[string]any)
 		if !ok {
 			continue
@@ -204,8 +413,7 @@ func FilterCollectedData(conditions []*Condition, data map[string]any) map[strin
 }
 
 // AllFilteredModulesPresent returns true if every module referenced in a WHERE
-// condition still has data after filtering. If a condition targets "packages.name"
-// and the packages module was removed (no matching packages), this returns false.
+// condition still has data after filtering.
 func AllFilteredModulesPresent(conditions []*Condition, data map[string]any) bool {
 	for _, c := range conditions {
 		parts := strings.SplitN(c.Field, ".", 2)
@@ -218,7 +426,6 @@ func AllFilteredModulesPresent(conditions []*Condition, data map[string]any) boo
 	return true
 }
 
-// matchesScalarConditions checks whether a scalar module's data satisfies all conditions.
 func matchesScalarConditions(module string, conds []*Condition, data map[string]any) bool {
 	for _, c := range conds {
 		field := stripModulePrefix(module, c.Field)
@@ -226,14 +433,13 @@ func matchesScalarConditions(module string, conds []*Condition, data map[string]
 		if !ok {
 			return false
 		}
-		if !evalConditionValue(c, val) {
+		if !evalLegacyCondition(c, val) {
 			return false
 		}
 	}
 	return true
 }
 
-// matchesArrayEntry checks whether a single array element satisfies all conditions.
 func matchesArrayEntry(module string, conds []*Condition, entry map[string]any) bool {
 	for _, c := range conds {
 		field := stripModulePrefix(module, c.Field)
@@ -241,16 +447,15 @@ func matchesArrayEntry(module string, conds []*Condition, entry map[string]any) 
 		if !ok {
 			return false
 		}
-		if !evalConditionValue(c, val) {
+		if !evalLegacyCondition(c, val) {
 			return false
 		}
 	}
 	return true
 }
 
-// evalConditionValue checks a single condition against a value.
-func evalConditionValue(c *Condition, actual any) bool {
-	// IN clause.
+// evalLegacyCondition checks a single flat Condition against a value.
+func evalLegacyCondition(c *Condition, actual any) bool {
 	if c.In != nil {
 		actualStr := fmt.Sprintf("%v", actual)
 		for _, v := range c.In.Values {
@@ -261,7 +466,6 @@ func evalConditionValue(c *Condition, actual any) bool {
 		return false
 	}
 
-	// Standard operators.
 	op := c.Operator
 	if c.Value == nil {
 		return false
@@ -287,27 +491,12 @@ func evalConditionValue(c *Condition, actual any) bool {
 		if err != nil {
 			return false
 		}
-		switch op {
-		case "=":
-			return actualNum == expected
-		case "!=":
-			return actualNum != expected
-		case ">":
-			return actualNum > expected
-		case "<":
-			return actualNum < expected
-		case ">=":
-			return actualNum >= expected
-		case "<=":
-			return actualNum <= expected
-		}
+		return compareNumbers(actualNum, op, expected)
 	}
 
 	return false
 }
 
-// stripModulePrefix removes the module prefix from a dotted field path.
-// "packages.name" with module "packages" returns "name".
 func stripModulePrefix(module, field string) string {
 	prefix := module + "."
 	if strings.HasPrefix(field, prefix) {
@@ -317,109 +506,174 @@ func stripModulePrefix(module, field string) string {
 }
 
 // ─────────────────────────────────────────────────────────
-// Row-based evaluation (used for server-side aggregation)
+// Expression-tree evaluation
 // ─────────────────────────────────────────────────────────
 
 // Row is a map of field names to values used for in-memory filtering and aggregation.
 type Row map[string]any
 
-// MatchesWhere returns true if the row satisfies all WHERE conditions in the query.
+// MatchesWhere returns true if the row satisfies the WHERE expression.
 func MatchesWhere(q *Query, row Row) (bool, error) {
 	if q.Where == nil {
 		return true, nil
 	}
-	for _, cond := range q.Where.Conditions {
-		if cond.In != nil {
-			val, ok := row[cond.Field]
-			if !ok {
-				return false, nil
-			}
-			if !evalConditionValue(cond, val) {
-				return false, nil
-			}
-			continue
-		}
-		val, ok := row[cond.Field]
-		if !ok {
-			return false, nil
-		}
-		match, err := evalCondition(cond, val)
+	return evalExpr(q.Where, row)
+}
+
+func evalExpr(expr Expr, row Row) (bool, error) {
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		left, err := evalExpr(e.Left, row)
 		if err != nil {
 			return false, err
 		}
-		if !match {
+		if e.Op == "AND" {
+			if !left {
+				return false, nil // short-circuit
+			}
+			return evalExpr(e.Right, row)
+		}
+		// OR
+		if left {
+			return true, nil // short-circuit
+		}
+		return evalExpr(e.Right, row)
+
+	case *NotExpr:
+		val, err := evalExpr(e.Expr, row)
+		if err != nil {
+			return false, err
+		}
+		return !val, nil
+
+	case *CompareExpr:
+		val, ok := row[e.Field]
+		if !ok {
 			return false, nil
 		}
+		return evalCompare(e, val)
+
+	case *LikeExpr:
+		val, ok := row[e.Field]
+		if !ok {
+			return false, nil
+		}
+		actualStr := fmt.Sprintf("%v", val)
+		result := matchLike(actualStr, e.Pattern)
+		if e.Negated {
+			return !result, nil
+		}
+		return result, nil
+
+	case *InExpr:
+		val, ok := row[e.Field]
+		if !ok {
+			return false, nil
+		}
+		actualStr := fmt.Sprintf("%v", val)
+		found := false
+		for _, v := range e.Values {
+			if actualStr == v {
+				found = true
+				break
+			}
+		}
+		if e.Negated {
+			return !found, nil
+		}
+		return found, nil
+
+	case *IsNullExpr:
+		_, ok := row[e.Field]
+		if e.Negated {
+			return ok, nil // IS NOT NULL → field exists
+		}
+		return !ok, nil // IS NULL → field missing
+
+	default:
+		return false, fmt.Errorf("unknown expression type %T", expr)
 	}
-	return true, nil
 }
 
-func evalCondition(cond *Condition, actual any) (bool, error) {
-	op := cond.Operator
-
-	if cond.Value == nil {
-		return false, fmt.Errorf("condition has no value")
-	}
-
-	// String comparison.
-	if cond.Value.String != nil {
-		expected := *cond.Value.String
+func evalCompare(e *CompareExpr, actual any) (bool, error) {
+	if e.Value.String != nil {
+		expected := *e.Value.String
 		actualStr := fmt.Sprintf("%v", actual)
-		switch op {
+		switch e.Operator {
 		case "=":
 			return actualStr == expected, nil
 		case "!=":
 			return actualStr != expected, nil
-		case "LIKE":
-			return matchLike(actualStr, expected), nil
 		default:
-			return false, fmt.Errorf("unsupported string operator: %s", op)
+			return false, fmt.Errorf("unsupported string operator: %s", e.Operator)
 		}
 	}
 
-	// Numeric comparison.
-	if cond.Value.Number != nil {
-		expected := *cond.Value.Number
+	if e.Value.Number != nil {
+		expected := *e.Value.Number
 		actualNum, err := toFloat64(actual)
 		if err != nil {
-			return false, fmt.Errorf("field %s: %w", cond.Field, err)
+			return false, fmt.Errorf("field %s: %w", e.Field, err)
 		}
-		switch op {
-		case "=":
-			return actualNum == expected, nil
-		case "!=":
-			return actualNum != expected, nil
-		case ">":
-			return actualNum > expected, nil
-		case "<":
-			return actualNum < expected, nil
-		case ">=":
-			return actualNum >= expected, nil
-		case "<=":
-			return actualNum <= expected, nil
-		default:
-			return false, fmt.Errorf("unsupported numeric operator: %s", op)
-		}
+		return compareNumbers(actualNum, e.Operator, expected), nil
 	}
 
 	return false, fmt.Errorf("condition has no value")
 }
 
-// matchLike provides basic SQL LIKE matching where % matches any sequence of characters.
-func matchLike(s, pattern string) bool {
-	pattern = strings.ToLower(pattern)
-	s = strings.ToLower(s)
+func compareNumbers(actual float64, op string, expected float64) bool {
+	switch op {
+	case "=":
+		return actual == expected
+	case "!=":
+		return actual != expected
+	case ">":
+		return actual > expected
+	case "<":
+		return actual < expected
+	case ">=":
+		return actual >= expected
+	case "<=":
+		return actual <= expected
+	default:
+		return false
+	}
+}
 
-	if strings.HasPrefix(pattern, "%") && strings.HasSuffix(pattern, "%") {
-		return strings.Contains(s, pattern[1:len(pattern)-1])
+// matchLike provides SQL LIKE matching where % matches any sequence and _ matches one character.
+func matchLike(s, pattern string) bool {
+	return matchLikeDP(strings.ToLower(s), strings.ToLower(pattern), 0, 0)
+}
+
+func matchLikeDP(s, p string, si, pi int) bool {
+	for pi < len(p) {
+		if p[pi] == '%' {
+			pi++
+			// Skip consecutive %
+			for pi < len(p) && p[pi] == '%' {
+				pi++
+			}
+			if pi == len(p) {
+				return true
+			}
+			for i := si; i <= len(s); i++ {
+				if matchLikeDP(s, p, i, pi) {
+					return true
+				}
+			}
+			return false
+		}
+		if si >= len(s) {
+			return false
+		}
+		if p[pi] == '_' || p[pi] == s[si] {
+			si++
+			pi++
+		} else {
+			return false
+		}
 	}
-	if strings.HasPrefix(pattern, "%") {
-		return strings.HasSuffix(s, pattern[1:])
-	}
-	if strings.HasSuffix(pattern, "%") {
-		return strings.HasPrefix(s, pattern[:len(pattern)-1])
-	}
-	return s == pattern
+	return si == len(s)
 }
 
 func toFloat64(v any) (float64, error) {
@@ -608,18 +862,47 @@ func computeAgg(fn *AggFunc, rows []Row) (any, error) {
 
 // SortRows sorts rows according to the ORDER BY clause.
 func SortRows(q *Query, rows []Row) {
-	if q.OrderBy == nil {
+	if len(q.OrderBy) == 0 {
 		return
 	}
-	field := q.OrderBy.Field
-	desc := q.OrderBy.Desc
 
 	sort.SliceStable(rows, func(i, j int) bool {
-		vi, _ := toFloat64(rows[i][field])
-		vj, _ := toFloat64(rows[j][field])
-		if desc {
-			return vi > vj
+		for _, ob := range q.OrderBy {
+			cmp := compareRowValues(rows[i][ob.Field], rows[j][ob.Field])
+			if cmp == 0 {
+				continue
+			}
+			if ob.Desc {
+				return cmp > 0
+			}
+			return cmp < 0
 		}
-		return vi < vj
+		return false
 	})
+}
+
+// compareRowValues compares two values for sorting. Supports both strings and numbers.
+func compareRowValues(a, b any) int {
+	// Try numeric comparison first.
+	na, errA := toFloat64(a)
+	nb, errB := toFloat64(b)
+	if errA == nil && errB == nil {
+		if na < nb {
+			return -1
+		}
+		if na > nb {
+			return 1
+		}
+		return 0
+	}
+	// Fall back to string comparison.
+	sa := fmt.Sprintf("%v", a)
+	sb := fmt.Sprintf("%v", b)
+	if sa < sb {
+		return -1
+	}
+	if sa > sb {
+		return 1
+	}
+	return 0
 }

@@ -91,8 +91,8 @@ tools that don't integrate natively with Ansible.
     - Field selection: `SELECT hostname, disk.pct_used, cpu.cores`
     - Filtering: `WHERE disk.pct_used > 90 AND os = 'linux'`
     - Aggregation: `GROUP BY os`, `COUNT`, `AVG`, `MIN`, `MAX`
-    - Target scoping: `FROM group:webservers` or `FROM tag:datacenter=us-east`
-    - Example query: `SELECT hostname, disk.mount, disk.pct_used FROM tag:prod WHERE disk.pct_used > 80 ORDER BY disk.pct_used DESC`
+    - Target scoping: `WHERE tag.group = 'webservers'` or `WHERE tag.datacenter = 'us-east'`
+    - Example query: `SELECT hostname, disk.mount, disk.pct_used WHERE tag.prod IS NOT NULL AND disk.pct_used > 80 ORDER BY disk.pct_used DESC`
     - Syntax errors return clear error messages with position indicators.
     - The DSL is documented with examples in CLI help and user docs.
 

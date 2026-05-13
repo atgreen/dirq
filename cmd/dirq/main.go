@@ -34,8 +34,8 @@ func main() {
 
 	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("DIRQ_SERVER_URL"), "DirQ server URL (or set DIRQ_SERVER_URL)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		// Allow tls generate to run without a server URL.
-		if cmd.Name() == "generate" {
+		// Allow tls generate and skill to run without a server URL.
+		if cmd.Name() == "generate" || cmd.Name() == "skill" {
 			return nil
 		}
 		if serverURL == "" {
@@ -52,6 +52,7 @@ func main() {
 	root.AddCommand(queriesCmd())
 	root.AddCommand(tlsCmd())
 	root.AddCommand(runCmd())
+	root.AddCommand(skillCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -71,9 +72,9 @@ func queryCmd() *cobra.Command {
 		Long: `Run a DirQ query and display results.
 
 Examples:
-  dirq query "SELECT hostname, disk.pct_used FROM * WHERE disk.pct_used > 80"
-  dirq query "SELECT hostname, cpu.cores FROM tag:prod"
-  dirq query "SELECT os, COUNT(hostname) FROM * GROUP BY os"`,
+  dirq query "SELECT hostname, disk.pct_used WHERE disk.pct_used > 80"
+  dirq query "SELECT hostname, cpu.cores WHERE tag.prod IS NOT NULL"
+  dirq query "SELECT os, COUNT(hostname) GROUP BY os"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, _ := json.Marshal(map[string]any{
@@ -476,19 +477,19 @@ module, or ad-hoc command against exactly those hosts.
 
 Examples:
   # Run a playbook against hosts with full disks
-  dirq run --query "SELECT os_info.hostname FROM * WHERE disk.pct_used > 90" \
+  dirq run --query "SELECT os_info.hostname WHERE disk.pct_used > 90" \
     --playbook cleanup-disks.yml
 
   # Ad-hoc command against hosts with a vulnerable package
-  dirq run --query "SELECT os_info.hostname FROM * WHERE packages.name = 'openssl' AND packages.version LIKE '1.%%'" \
+  dirq run --query "SELECT os_info.hostname WHERE packages.name = 'openssl' AND packages.version LIKE '1.%%'" \
     --command "yum update -y openssl"
 
   # Run a module against hosts where sshd is stopped
-  dirq run --query "SELECT os_info.hostname FROM * WHERE services.name = 'sshd' AND services.state = 'stopped'" \
+  dirq run --query "SELECT os_info.hostname WHERE services.name = 'sshd' AND services.state = 'stopped'" \
     --module service --module-args "name=sshd state=started"
 
   # Ping all linux hosts
-  dirq run --query "SELECT os_info.hostname FROM * WHERE os_info.os = 'linux'" \
+  dirq run --query "SELECT os_info.hostname WHERE os_info.os = 'linux'" \
     --module ping`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if queryStr == "" {
@@ -614,6 +615,134 @@ Examples:
 
 	return cmd
 }
+
+// ─────────────────────────────────────────────────────────
+// dirq skill
+// ─────────────────────────────────────────────────────────
+
+func skillCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "skill",
+		Short: "Print an AI-readable reference for the DirQ query language",
+		Long:  "Outputs a concise prompt that teaches an AI assistant how to use DirQ. Pipe it into your AI tool's context.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Print(skillText)
+			return nil
+		},
+	}
+}
+
+const skillText = `# DirQ — Fleet Query & Management Tool
+
+DirQ queries a fleet of agents using a SQL-like DSL. Every agent runs a
+lightweight daemon that collects system data (CPU, memory, disk, packages,
+services, network) and reports through a relay mesh to a central server.
+
+## Query syntax
+
+    SELECT <fields | *>
+    [WHERE <expression>]
+    [GROUP BY <field>, ...]
+    [ORDER BY <field> [ASC|DESC], ...]
+    [LIMIT <n>]
+
+Keywords are case-insensitive. Only SELECT is required.
+
+## Fields
+
+Dotted notation: module.field. Available modules and their fields:
+
+  cpu          — physical_cores, logical_cores, model_name, mhz
+  memory       — total_bytes, available_bytes, used_bytes, pct_used
+  disk         — (array of partitions) device, mount_point, fs_type,
+                 total_bytes, used_bytes, free_bytes, pct_used
+  os_info      — hostname, os, os_version, kernel_version, arch, uptime_seconds
+  packages     — (array) name, version, arch, source
+  services     — (array) name, display_name, state, start_type
+  network      — (array of interfaces) name, mac, mtu, flags, addresses
+
+Top-level fields (no module prefix): hostname, os, arch, role, online.
+
+Array modules (disk, packages, services, network): WHERE conditions filter
+the array elements — only matching entries are returned.
+
+## Tag targeting
+
+Agent tags are available as tag.* fields:
+
+    WHERE tag.env = 'prod'
+    WHERE tag.group = 'webservers'
+    WHERE tag.env IN ('prod', 'staging')
+
+Tag conditions are evaluated server-side before dispatching. Only matching
+agents receive the query.
+
+## WHERE operators
+
+  =  !=  >  <  >=  <=
+  LIKE / NOT LIKE     — % matches any chars, _ matches one char
+  IN / NOT IN         — field IN ('a', 'b', 'c')
+  IS NULL / IS NOT NULL
+
+Combine with AND, OR, NOT, and parentheses. AND binds tighter than OR.
+
+## Aggregation
+
+  COUNT(field)  SUM(field)  AVG(field)  MIN(field)  MAX(field)
+
+Used with GROUP BY for fleet-wide summaries.
+
+## CLI commands
+
+    # Ad-hoc query
+    dirq query "SELECT hostname, disk.pct_used WHERE disk.pct_used > 80"
+
+    # JSON output
+    dirq query "SELECT *" --json
+
+    # Run a command on matching hosts
+    dirq run --query "SELECT hostname WHERE tag.env = 'prod'" \
+             --command "systemctl restart nginx"
+
+    # Run an Ansible playbook on matching hosts
+    dirq run --query "SELECT hostname WHERE packages.name = 'openssl'" \
+             --playbook update-openssl.yml
+
+    # List all agents
+    dirq hosts list
+
+    # Tag an agent
+    dirq hosts tag <agent-id> env=prod group=webservers
+
+## Example queries
+
+    -- Full disks in production
+    SELECT hostname, disk.mount_point, disk.pct_used
+    WHERE tag.env = 'prod' AND disk.pct_used > 80
+    ORDER BY disk.pct_used DESC
+
+    -- Hosts running Linux or FreeBSD with many cores
+    SELECT hostname, os_info.os, cpu.logical_cores
+    WHERE (os_info.os = 'linux' OR os_info.os = 'freebsd') AND cpu.logical_cores >= 16
+
+    -- Check for vulnerable packages
+    SELECT hostname, packages.name, packages.version
+    WHERE packages.name = 'openssl' AND packages.version LIKE '1.%'
+
+    -- Count hosts by OS
+    SELECT os_info.os, COUNT(hostname) GROUP BY os_info.os
+
+    -- Find stopped services
+    SELECT hostname, services.name, services.state
+    WHERE services.name = 'sshd' AND services.state = 'stopped'
+
+    -- Hosts missing a tag
+    SELECT hostname WHERE tag.env IS NULL
+
+    -- Everything about all hosts
+    SELECT *
+`
 
 // ─────────────────────────────────────────────────────────
 // HTTP client helpers

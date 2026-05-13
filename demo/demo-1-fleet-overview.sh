@@ -19,20 +19,20 @@ echo ""
 
 read -p "Press Enter to query CPU and memory across the fleet..."
 echo ""
-echo '$ dirq query "SELECT os_info.hostname, cpu.logical_cores, memory.pct_used FROM *"'
-$DIRQ query "SELECT os_info.hostname, cpu.logical_cores, memory.pct_used FROM *"
+echo '$ dirq query "SELECT os_info.hostname, cpu.logical_cores, memory.pct_used"'
+$DIRQ query "SELECT os_info.hostname, cpu.logical_cores, memory.pct_used"
 echo ""
 
 read -p "Press Enter to see what packages are installed across the fleet..."
 echo ""
-echo '$ dirq query "SELECT os_info.hostname, packages.name, packages.version FROM * WHERE packages.name IN ('"'"'nginx'"'"', '"'"'postgresql'"'"', '"'"'curl'"'"')"'
-$DIRQ query "SELECT os_info.hostname, packages.name, packages.version FROM * WHERE packages.name IN ('nginx', 'postgresql', 'curl')"
+echo '$ dirq query "SELECT os_info.hostname, packages.name, packages.version WHERE packages.name IN ('"'"'nginx'"'"', '"'"'postgresql'"'"', '"'"'curl'"'"')"'
+$DIRQ query "SELECT os_info.hostname, packages.name, packages.version WHERE packages.name IN ('nginx', 'postgresql', 'curl')"
 echo ""
 
 read -p "Press Enter to check network interfaces..."
 echo ""
-echo '$ dirq query "SELECT os_info.hostname, network.name, network.addresses FROM *"'
-$DIRQ query "SELECT os_info.hostname, network.name, network.addresses FROM *"
+echo '$ dirq query "SELECT os_info.hostname, network.name, network.addresses"'
+$DIRQ query "SELECT os_info.hostname, network.name, network.addresses"
 echo ""
 
 echo "✓ Fleet overview complete — queried $(curl -s $DIRQ_SERVER_URL/api/v1/hosts | python3 -c 'import sys,json; h=json.load(sys.stdin); print(len([x for x in h if x["online"]]))')  hosts in seconds."

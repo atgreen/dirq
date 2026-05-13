@@ -128,17 +128,22 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Determine target agents (online only — offline agents can't respond).
 	ctx := r.Context()
-	target := query.ExtractTarget(parsed)
 	online := true
-	agentFilter := db.ListAgentsFilter{Online: &online}
-	if !target.All {
-		agentFilter.Tag = target.TagKey
-		agentFilter.TagValue = target.TagValue
-	}
-	agents, err := s.db.ListAgents(ctx, agentFilter)
+	allAgents, err := s.db.ListAgents(ctx, db.ListAgentsFilter{Online: &online})
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "failed to list agents: "+err.Error())
 		return
+	}
+
+	// Pre-filter by tag.* conditions in WHERE (avoids dispatching to irrelevant agents).
+	agents := allAgents
+	if query.HasTagConditions(parsed.Where) {
+		agents = make([]db.Agent, 0, len(allAgents))
+		for _, a := range allAgents {
+			if query.MatchesAgentTags(parsed.Where, a.Tags) {
+				agents = append(agents, a)
+			}
+		}
 	}
 
 	if len(agents) == 0 {

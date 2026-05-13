@@ -70,7 +70,7 @@ server_url: http://dirq-server:8080
 # Query-filtered:
 plugin: atgreen.dirq.dirq
 server_url: http://dirq-server:8080
-query: "SELECT os_info.hostname FROM * WHERE packages.name = 'openssl' AND packages.version LIKE '1.%'"
+query: "SELECT os_info.hostname WHERE packages.name = 'openssl' AND packages.version LIKE '1.%'"
 
 # Disable auto-connection (use SSH/WinRM instead of DirQ for execution):
 plugin: atgreen.dirq.dirq

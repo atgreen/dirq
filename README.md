@@ -185,8 +185,8 @@ export DIRQ_TOKEN=<bootstrap-token-from-step-1>
 export DIRQ_SERVER_URL=http://localhost:8090
 
 ./bin/dirq hosts list
-./bin/dirq query "SELECT os_info.hostname, cpu.logical_cores, memory.pct_used FROM *"
-./bin/dirq query "SELECT os_info.hostname, packages.name, packages.version FROM * WHERE packages.name IN ('openssl', 'curl')"
+./bin/dirq query "SELECT os_info.hostname, cpu.logical_cores, memory.pct_used"
+./bin/dirq query "SELECT os_info.hostname, packages.name, packages.version WHERE packages.name IN ('openssl', 'curl')"
 ./bin/dirq hosts tag <agent-id> env=dev role=workstation
 ```
 
@@ -219,14 +219,16 @@ A SQL-like language for ad-hoc fleet queries. Queries are parsed on the server, 
 ### Syntax
 
 ```
-SELECT <fields>
-[FROM <scope>]
-[WHERE <conditions>]
-[GROUP BY <field>]
-[ORDER BY <field> [DESC]]
+SELECT <fields | *>
+[WHERE <expression>]
+[GROUP BY <field>, ...]
+[ORDER BY <field> [ASC|DESC], ...]
+[LIMIT <n>]
 ```
 
-Every clause except `SELECT` is optional. Omitting `FROM` targets all online hosts.
+Every clause except `SELECT` is optional. Queries always target all online hosts;
+use `tag.*` conditions in WHERE to narrow the target (see below).
+Keywords are case-insensitive (`select`, `SELECT`, and `Select` all work).
 
 ### Fields
 
@@ -237,29 +239,45 @@ Each package contains: `name`, `version`, `arch`, `source`.
 Each network interface contains: `name`, `mac`, `mtu`, `flags`, `addresses` (array of `{addr, family}`).
 Each service contains: `name`, `display_name`, `state`, `start_type`.
 
-### FROM — target scope
-
-```sql
-FROM *                    -- all online hosts (default)
-FROM tag:env=prod         -- hosts with tag env=prod
-FROM tag:env              -- hosts with any value for tag "env"
-FROM group:webservers     -- hosts with tag group=webservers
-```
-
 ### WHERE — filtering
 
-Conditions joined with `AND`. Filtering happens agent-side.
+Conditions support `AND`, `OR`, `NOT`, and parenthesized grouping with proper precedence (`AND` binds tighter than `OR`). Simple AND-only filters are pushed to agents; complex expressions (OR, NOT) are evaluated server-side.
 
 ```sql
 WHERE disk.pct_used > 80
 WHERE cpu.logical_cores >= 8 AND memory.pct_used > 50
-WHERE os_info.os = 'linux'
+WHERE os_info.os = 'linux' OR os_info.os = 'freebsd'
+WHERE (os_info.os = 'linux' OR os_info.os = 'freebsd') AND cpu.logical_cores > 4
+WHERE NOT os_info.os = 'windows'
 WHERE os_info.kernel_version LIKE '7.0%'
+WHERE os_info.kernel_version NOT LIKE '%debug%'
 WHERE packages.name IN ('openssl', 'nginx', 'curl')
+WHERE packages.name NOT IN ('telnet', 'rsh')
 WHERE services.name = 'sshd' AND services.state = 'stopped'
+WHERE cpu.model IS NOT NULL
 ```
 
-**Operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `IN`
+**Operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `NOT LIKE`, `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`
+
+### Tag targeting
+
+Agent tags are available as `tag.*` fields in WHERE conditions. The server evaluates tag conditions before dispatching — only matching agents receive the query.
+
+```sql
+-- Only prod hosts
+WHERE tag.env = 'prod' AND disk.pct_used > 80
+
+-- Multiple environments
+WHERE tag.env IN ('prod', 'staging')
+
+-- Group targeting
+WHERE tag.group = 'webservers'
+
+-- Complex targeting
+WHERE (tag.env = 'prod' OR tag.env = 'staging') AND tag.group = 'webservers'
+```
+
+Tag conditions can be freely mixed with data conditions using AND/OR.
 
 ### Array-aware filtering
 
@@ -273,13 +291,16 @@ WHERE packages.name IN ('openssl', 'nginx', 'curl')
 WHERE disk.pct_used > 80
 ```
 
-### GROUP BY and ORDER BY
+### GROUP BY, ORDER BY, and LIMIT
 
 ```sql
 SELECT os_info.os, COUNT(os_info.hostname), AVG(memory.total_bytes)
-FROM * GROUP BY os_info.os
+GROUP BY os_info.os
 
 ORDER BY disk.pct_used DESC
+ORDER BY os_info.os ASC, os_info.hostname DESC
+
+LIMIT 10
 ```
 
 **Aggregation functions:** `COUNT`, `AVG`, `SUM`, `MIN`, `MAX`
@@ -287,37 +308,48 @@ ORDER BY disk.pct_used DESC
 ### Examples
 
 ```sql
--- Hosts with full disks (only matching partitions returned)
+-- Hosts with full disks in prod (only matching partitions returned)
 SELECT os_info.hostname, disk.mount_point, disk.pct_used
-FROM tag:env=prod WHERE disk.pct_used > 80 ORDER BY disk.pct_used DESC
+WHERE tag.env = 'prod' AND disk.pct_used > 80 ORDER BY disk.pct_used DESC
 
 -- Check specific package versions
 SELECT os_info.hostname, packages.name, packages.version
-FROM * WHERE packages.name IN ('openssl', 'nginx', 'curl')
+WHERE packages.name IN ('openssl', 'nginx', 'curl')
 
 -- Find hosts where sshd is stopped
 SELECT os_info.hostname, services.name, services.state
-FROM * WHERE services.name = 'sshd' AND services.state = 'stopped'
+WHERE services.name = 'sshd' AND services.state = 'stopped'
 
 -- Count hosts by OS
 SELECT os_info.os, COUNT(os_info.hostname), AVG(memory.total_bytes)
-FROM * GROUP BY os_info.os
+GROUP BY os_info.os
 
 -- Find beefy hosts
 SELECT os_info.hostname, cpu.logical_cores, memory.total_bytes
-FROM * WHERE cpu.logical_cores >= 16
+WHERE cpu.logical_cores >= 16
 
 -- Packages matching a pattern
 SELECT os_info.hostname, packages.name, packages.version
-FROM * WHERE packages.name LIKE 'openssl%'
+WHERE packages.name LIKE 'openssl%'
+
+-- OR and parentheses
+SELECT os_info.hostname, os_info.os
+WHERE (os_info.os = 'linux' OR os_info.os = 'freebsd') AND cpu.logical_cores > 4
+
+-- Exclude specific packages, limit results
+SELECT os_info.hostname, packages.name
+WHERE packages.name NOT IN ('telnet', 'rsh') LIMIT 50
+
+-- Everything about all hosts
+SELECT *
 ```
 
 ### CLI usage
 
 ```bash
-dirq query "SELECT os_info.hostname, cpu.logical_cores FROM *"
-dirq query "SELECT os_info.hostname, disk.pct_used FROM * WHERE disk.pct_used > 80" --timeout 30
-dirq query "SELECT os_info.os, COUNT(os_info.hostname) FROM * GROUP BY os_info.os" --json
+dirq query "SELECT os_info.hostname, cpu.logical_cores"
+dirq query "SELECT os_info.hostname, disk.pct_used WHERE disk.pct_used > 80" --timeout 30
+dirq query "SELECT os_info.os, COUNT(os_info.hostname) GROUP BY os_info.os" --json
 ```
 
 ---
@@ -375,12 +407,12 @@ The inventory plugin accepts an optional `query` parameter. Only hosts matching 
 # inventories/vulnerable-openssl.yml
 plugin: atgreen.dirq.dirq
 server_url: http://dirq-server:8080
-query: "SELECT os_info.hostname FROM * WHERE packages.name = 'openssl' AND packages.version LIKE '1.%'"
+query: "SELECT os_info.hostname WHERE packages.name = 'openssl' AND packages.version LIKE '1.%'"
 
 # inventories/disks-full.yml
 plugin: atgreen.dirq.dirq
 server_url: http://dirq-server:8080
-query: "SELECT os_info.hostname FROM * WHERE disk.pct_used > 90"
+query: "SELECT os_info.hostname WHERE disk.pct_used > 90"
 ```
 
 In AAP, each file becomes an Inventory Source. Job templates pair each inventory with a remediation playbook:
@@ -394,7 +426,7 @@ The query runs in real time during inventory sync — the host list is always cu
 
 **Standalone:**
 ```bash
-DIRQ_QUERY="SELECT os_info.hostname FROM * WHERE disk.pct_used > 90" \
+DIRQ_QUERY="SELECT os_info.hostname WHERE disk.pct_used > 90" \
   ansible-playbook -i ansible/dirq_inventory.py cleanup-disks.yml
 ```
 
@@ -686,7 +718,7 @@ proto/dirq/v1/            Protobuf definitions
 internal/
   server/                 gRPC, REST API, query dispatch, exec routing
   agent/                  Registration, relay mesh, query execution, exec
-  query/                  DirQ DSL parser (participle) and evaluator
+  query/                  DirQ DSL parser and evaluator
   modules/                System data collectors (7 modules)
   db/                     PostgreSQL schema and data access
   tlsutil/                TLS configuration, cert generation

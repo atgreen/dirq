@@ -6,75 +6,115 @@ package query
 
 // Query is the top-level AST node for a DirQ query.
 //
-// Example: SELECT hostname, disk.pct_used FROM tag:prod WHERE disk.pct_used > 80 ORDER BY disk.pct_used DESC
+// Example: SELECT hostname, disk.pct_used WHERE tag.env = 'prod' AND disk.pct_used > 80 ORDER BY disk.pct_used DESC LIMIT 10
 type Query struct {
-	Select  []*SelectExpr  `parser:"'SELECT' @@ (',' @@)*"`
-	From    *FromClause    `parser:"('FROM' @@)?"`
-	Where   *WhereClause   `parser:"('WHERE' @@)?"`
-	GroupBy *GroupByClause `parser:"('GROUP' 'BY' @@)?"`
-	OrderBy *OrderByClause `parser:"('ORDER' 'BY' @@)?"`
+	Select  []*SelectExpr
+	Where   Expr // nil means no WHERE clause
+	GroupBy *GroupByClause
+	OrderBy []*OrderByField
+	Limit   int // 0 means no limit
 }
 
-// SelectExpr is either a bare field name or an aggregation function call.
+// SelectExpr is either a bare field name, a wildcard (*), or an aggregation function.
 type SelectExpr struct {
-	AggFunc *AggFunc `parser:"( @@"`
-	Field   string   `parser:"| @(Ident ('.' Ident)*) )"`
+	Star    bool     // SELECT *
+	AggFunc *AggFunc // COUNT(field), etc.
+	Field   string   // bare field: hostname, disk.pct_used
 }
 
 // AggFunc represents COUNT(field), AVG(field), etc.
 type AggFunc struct {
-	Name string `parser:"@('COUNT' | 'AVG' | 'MIN' | 'MAX' | 'SUM')"`
-	Arg  string `parser:"'(' @(Ident ('.' Ident)*) ')'"`
+	Name string // COUNT, AVG, MIN, MAX, SUM
+	Arg  string // field name
 }
 
-// FromClause represents the target scope: tag:value, group:value, or *.
-type FromClause struct {
-	All   bool   `parser:"( @'*'"`
-	Scope *Scope `parser:"| @@ )"`
+// ─────────────────────────────────────────────────────────
+// Expression tree (WHERE clause)
+// ─────────────────────────────────────────────────────────
+
+// Expr is a WHERE clause expression node.
+type Expr interface {
+	exprNode()
 }
 
-// Scope is a scoped target like tag:env=prod, tag:env, or group:webservers.
-//
-//	FROM tag:env=prod    → agents with tag key "env" and value "prod"
-//	FROM tag:env         → agents with tag key "env" (any value)
-//	FROM group:webservers → agents with tag key "group" and value "webservers"
-type Scope struct {
-	Kind  string `parser:"@('tag' | 'group') ':'"`
-	Key   string `parser:"@Ident"`
-	Value string `parser:"( '=' @Ident )?"`
+// BinaryExpr represents AND / OR.
+type BinaryExpr struct {
+	Op    string // "AND" or "OR"
+	Left  Expr
+	Right Expr
 }
 
-// WhereClause is a list of conditions joined by AND.
-type WhereClause struct {
-	Conditions []*Condition `parser:"@@ ('AND' @@)*"`
+// NotExpr represents NOT expr.
+type NotExpr struct {
+	Expr Expr
 }
 
-// Condition is a single comparison: field op value, or field IN ('a', 'b').
-type Condition struct {
-	Field    string    `parser:"@(Ident ('.' Ident)*)"`
-	In       *InClause `parser:"( @@"`
-	Operator string    `parser:"| @( CompOp | '>' | '<' | '=' | 'LIKE' )"`
-	Value    *Value    `parser:"@@ )"`
+// CompareExpr represents field op value (e.g. disk.pct_used > 80).
+type CompareExpr struct {
+	Field    string
+	Operator string // =, !=, >, <, >=, <=
+	Value    Value
 }
 
-// InClause represents the IN ('val1', 'val2', ...) syntax.
-type InClause struct {
-	Values []string `parser:"'IN' '(' @String (',' @String)* ')'"`
+// LikeExpr represents field LIKE pattern or field NOT LIKE pattern.
+type LikeExpr struct {
+	Field   string
+	Pattern string
+	Negated bool
 }
+
+// InExpr represents field IN ('a', 'b') or field NOT IN ('a', 'b').
+type InExpr struct {
+	Field   string
+	Values  []string
+	Negated bool
+}
+
+// IsNullExpr represents field IS NULL or field IS NOT NULL.
+type IsNullExpr struct {
+	Field   string
+	Negated bool // true = IS NOT NULL
+}
+
+func (*BinaryExpr) exprNode()  {}
+func (*NotExpr) exprNode()     {}
+func (*CompareExpr) exprNode() {}
+func (*LikeExpr) exprNode()    {}
+func (*InExpr) exprNode()      {}
+func (*IsNullExpr) exprNode()  {}
 
 // Value holds either a number or a string literal.
 type Value struct {
-	Number *float64 `parser:"( @Number"`
-	String *string  `parser:"| @String )"`
+	Number *float64
+	String *string
 }
 
 // GroupByClause lists the fields to group by.
 type GroupByClause struct {
-	Fields []string `parser:"@(Ident ('.' Ident)*) (',' @(Ident ('.' Ident)*))*"`
+	Fields []string
 }
 
-// OrderByClause specifies ordering.
-type OrderByClause struct {
-	Field string `parser:"@(Ident ('.' Ident)*)"`
-	Desc  bool   `parser:"@'DESC'?"`
+// OrderByField specifies a single ordering field with direction.
+type OrderByField struct {
+	Field string
+	Desc  bool
+}
+
+// ─────────────────────────────────────────────────────────
+// Legacy compatibility types
+// ─────────────────────────────────────────────────────────
+
+// Condition is a flat filter condition used for proto-based agent pushdown.
+// Complex expressions (OR, NOT) cannot be represented here — they are
+// evaluated server-side instead.
+type Condition struct {
+	Field    string
+	Operator string
+	Value    *Value
+	In       *InClause
+}
+
+// InClause holds values for an IN expression.
+type InClause struct {
+	Values []string
 }
