@@ -542,15 +542,21 @@ Examples:
 			fmt.Printf("Query matched %d host(s): %s\n\n", len(hosts), strings.Join(names, ", "))
 
 			// Write ephemeral inventory with DirQ connection settings.
-			tmpInv, err := os.CreateTemp("", "dirq-inventory-*.ini")
+			// Write YAML inventory — host vars are more reliably available
+			// to connection plugins than INI host vars.
+			tmpInv, err := os.CreateTemp("", "dirq-inventory-*.yml")
 			if err != nil {
 				return fmt.Errorf("create temp inventory: %w", err)
 			}
 			defer os.Remove(tmpInv.Name())
 
+			fmt.Fprintf(tmpInv, "all:\n  hosts:\n")
 			for _, h := range hosts {
-				fmt.Fprintf(tmpInv, "%s dirq_agent_id=%s dirq_server_url=%s ansible_connection=dirq\n",
-					h.hostname, h.agentID, serverURL)
+				fmt.Fprintf(tmpInv, "    %s:\n", h.hostname)
+				fmt.Fprintf(tmpInv, "      dirq_agent_id: %s\n", h.agentID)
+				fmt.Fprintf(tmpInv, "      dirq_server_url: %s\n", serverURL)
+				fmt.Fprintf(tmpInv, "      ansible_connection: dirq\n")
+				fmt.Fprintf(tmpInv, "      ansible_python_interpreter: /usr/bin/python3\n")
 			}
 			tmpInv.Close()
 
