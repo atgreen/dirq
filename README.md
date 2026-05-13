@@ -1,6 +1,6 @@
 # DirQ — Direct Query Platform for Fleet Management & Ansible Execution
 
-DirQ ("Direct Query") is an agent-based platform for querying and managing large Windows/Linux fleets. Agents form a peer-to-peer relay mesh and report data back to a central server. The server acts as an Ansible Automation Platform (AAP) inventory source, exposes collected data as structured facts, and can route Ansible execution through the mesh itself.
+DirQ ("Direct Query") is an agent-based platform for querying and managing large Windows/Linux fleets as an alternative to SSH/WinRM connectivity. Agents form a peer-to-peer relay mesh and report data back to a central server. The server acts as an Ansible Automation Platform (AAP) inventory source, exposes collected data as structured facts, and can route Ansible execution through the mesh itself.
 
 The key idea is simple:
 
