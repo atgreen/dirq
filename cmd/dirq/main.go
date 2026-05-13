@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -49,6 +50,7 @@ func main() {
 	root.AddCommand(tokenCmd())
 	root.AddCommand(queriesCmd())
 	root.AddCommand(tlsCmd())
+	root.AddCommand(runCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -447,6 +449,143 @@ For self-signed certs without distributing the CA, agents can use:
 
 	generateCmd.Flags().StringVar(&dir, "dir", "./certs", "output directory for certificates")
 	cmd.AddCommand(generateCmd)
+	return cmd
+}
+
+// ─────────────────────────────────────────────────────────
+// dirq run
+// ─────────────────────────────────────────────────────────
+
+func runCmd() *cobra.Command {
+	var (
+		queryStr    string
+		playbook    string
+		module      string
+		moduleArgs  string
+		command     string
+		forks       int
+		extraArgs   []string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Query the fleet and run Ansible against the results",
+		Long: `Run a DirQ query to select hosts, then execute an Ansible playbook,
+module, or ad-hoc command against exactly those hosts.
+
+Examples:
+  # Run a playbook against hosts with full disks
+  dirq run --query "SELECT os_info.hostname FROM * WHERE disk.pct_used > 90" \
+    --playbook cleanup-disks.yml
+
+  # Ad-hoc command against hosts with a vulnerable package
+  dirq run --query "SELECT os_info.hostname FROM * WHERE packages.name = 'openssl' AND packages.version LIKE '1.%%'" \
+    --command "yum update -y openssl"
+
+  # Run a module against hosts where sshd is stopped
+  dirq run --query "SELECT os_info.hostname FROM * WHERE services.name = 'sshd' AND services.state = 'stopped'" \
+    --module service --module-args "name=sshd state=started"
+
+  # Ping all linux hosts
+  dirq run --query "SELECT os_info.hostname FROM * WHERE os_info.os = 'linux'" \
+    --module ping`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if queryStr == "" {
+				return fmt.Errorf("--query is required")
+			}
+			if playbook == "" && module == "" && command == "" {
+				return fmt.Errorf("one of --playbook, --module, or --command is required")
+			}
+
+			// Run the query to get matching hostnames.
+			body, _ := json.Marshal(map[string]any{
+				"query":   queryStr,
+				"timeout": 60,
+			})
+			resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
+			if err != nil {
+				return fmt.Errorf("query failed: %w", err)
+			}
+
+			var result struct {
+				Results []struct {
+					Hostname string `json:"hostname"`
+					Success  bool   `json:"success"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(resp, &result); err != nil {
+				return fmt.Errorf("parse query result: %w", err)
+			}
+
+			var hosts []string
+			for _, r := range result.Results {
+				if r.Success && r.Hostname != "" {
+					hosts = append(hosts, r.Hostname)
+				}
+			}
+
+			if len(hosts) == 0 {
+				fmt.Println("No hosts matched the query.")
+				return nil
+			}
+
+			fmt.Printf("Query matched %d host(s): %s\n\n", len(hosts), strings.Join(hosts, ", "))
+
+			// Write ephemeral inventory file.
+			tmpInv, err := os.CreateTemp("", "dirq-inventory-*.ini")
+			if err != nil {
+				return fmt.Errorf("create temp inventory: %w", err)
+			}
+			defer os.Remove(tmpInv.Name())
+
+			for _, h := range hosts {
+				fmt.Fprintf(tmpInv, "%s dirq_server_url=%s\n", h, serverURL)
+			}
+			tmpInv.Close()
+
+			// Build the ansible command.
+			var ansibleCmd []string
+
+			if playbook != "" {
+				ansibleCmd = []string{"ansible-playbook", "-i", tmpInv.Name(), playbook}
+			} else if module != "" {
+				ansibleCmd = []string{"ansible", "all", "-i", tmpInv.Name(), "-m", module}
+				if moduleArgs != "" {
+					ansibleCmd = append(ansibleCmd, "-a", moduleArgs)
+				}
+			} else {
+				ansibleCmd = []string{"ansible", "all", "-i", tmpInv.Name(), "-m", "raw", "-a", command}
+			}
+
+			if forks > 0 {
+				ansibleCmd = append(ansibleCmd, "-f", fmt.Sprintf("%d", forks))
+			}
+
+			ansibleCmd = append(ansibleCmd, extraArgs...)
+
+			fmt.Printf("Running: %s\n\n", strings.Join(ansibleCmd, " "))
+
+			// Execute ansible.
+			proc := exec.Command(ansibleCmd[0], ansibleCmd[1:]...)
+			proc.Stdout = os.Stdout
+			proc.Stderr = os.Stderr
+			proc.Stdin = os.Stdin
+
+			// Pass through DirQ env vars.
+			proc.Env = os.Environ()
+
+			return proc.Run()
+		},
+	}
+
+	cmd.Flags().StringVar(&queryStr, "query", "", "DirQ query to select hosts (required)")
+	cmd.Flags().StringVar(&playbook, "playbook", "", "Ansible playbook to run")
+	cmd.Flags().StringVar(&module, "module", "", "Ansible module to run")
+	cmd.Flags().StringVar(&moduleArgs, "module-args", "", "Arguments for the module")
+	cmd.Flags().StringVar(&command, "command", "", "Ad-hoc command to run (uses raw module)")
+	cmd.Flags().IntVar(&forks, "forks", 0, "Number of parallel processes (default: Ansible default)")
+	cmd.Flags().StringArrayVar(&extraArgs, "extra", nil, "Extra arguments passed to ansible/ansible-playbook")
+
 	return cmd
 }
 
