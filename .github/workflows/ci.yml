@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: MIT
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./... -v -race
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Cross-compile Linux amd64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./cmd/dirq-server ./cmd/dirq-agent ./cmd/dirq
+
+      - name: Cross-compile Windows amd64
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/dirq-agent
+
+  collection-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: pip install ansible-core
+
+      - name: Build collection
+        working-directory: collection/atgreen/dirq
+        run: ansible-galaxy collection build --force
+
+      - name: Install collection
+        working-directory: collection/atgreen/dirq
+        run: ansible-galaxy collection install atgreen-dirq-*.tar.gz
+
+      - name: Verify collection
+        run: ansible-doc -t connection atgreen.dirq.dirq > /dev/null

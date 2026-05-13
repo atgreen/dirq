@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: MIT
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
+        run: |
+          # Extract the section for this version from CHANGELOG.md.
+          # Matches everything between ## [X.Y.Z] and the next ## [ or EOF.
+          VERSION=${{ steps.version.outputs.VERSION }}
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{found=0} found" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="Release v${VERSION}. See CHANGELOG.md for details."
+          fi
+          # Write to file for gh release.
+          echo "$NOTES" > /tmp/release-notes.md
+
+      - name: Build binaries
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          LDFLAGS="-X main.version=${VERSION}"
+          mkdir -p dist
+
+          # Linux amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-server-linux-amd64 ./cmd/dirq-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-linux-amd64 ./cmd/dirq-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-linux-amd64 ./cmd/dirq
+
+          # Linux arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-server-linux-arm64 ./cmd/dirq-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-linux-arm64 ./cmd/dirq-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-linux-arm64 ./cmd/dirq
+
+          # Windows amd64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-windows-amd64.exe ./cmd/dirq-agent
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-windows-amd64.exe ./cmd/dirq
+
+          # Windows arm64
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-windows-arm64.exe ./cmd/dirq-agent
+
+      - name: Build Ansible collection
+        working-directory: collection/atgreen/dirq
+        run: ansible-galaxy collection build --force
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.version.outputs.VERSION }}" \
+            --title "v${{ steps.version.outputs.VERSION }}" \
+            --notes-file /tmp/release-notes.md \
+            dist/* \
+            collection/atgreen/dirq/atgreen-dirq-*.tar.gz

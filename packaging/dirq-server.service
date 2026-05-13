@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=DirQ Server
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dirq-server
+EnvironmentFile=-/etc/sysconfig/dirq-server
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

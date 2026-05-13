@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: MIT
+name: RPM Repository
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-rpms:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          LDFLAGS="-X main.version=${VERSION}"
+          mkdir -p rpmbuild/SOURCES
+
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o rpmbuild/SOURCES/dirq-server ./cmd/dirq-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o rpmbuild/SOURCES/dirq-agent ./cmd/dirq-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o rpmbuild/SOURCES/dirq ./cmd/dirq
+
+          cp packaging/dirq-server.service rpmbuild/SOURCES/
+          cp packaging/dirq-agent.service rpmbuild/SOURCES/
+
+      - name: Build RPMs
+        run: |
+          sudo apt-get update && sudo apt-get install -y rpm createrepo-c
+
+          VERSION=${{ steps.version.outputs.VERSION }}
+
+          rpmbuild --define "_topdir $(pwd)/rpmbuild" \
+                   --define "_version ${VERSION}" \
+                   --define "_sourcedir $(pwd)/rpmbuild/SOURCES" \
+                   -bb packaging/dirq-server.spec
+
+          rpmbuild --define "_topdir $(pwd)/rpmbuild" \
+                   --define "_version ${VERSION}" \
+                   --define "_sourcedir $(pwd)/rpmbuild/SOURCES" \
+                   -bb packaging/dirq-agent.spec
+
+      - name: Create yum repo
+        run: |
+          mkdir -p repo/packages
+          cp rpmbuild/RPMS/*/*.rpm repo/packages/
+          createrepo_c repo/
+
+          # Generate repo config file.
+          cat > repo/dirq.repo <<'REPO'
+          [dirq]
+          name=DirQ Repository
+          baseurl=https://atgreen.github.io/dirq/packages
+          enabled=1
+          gpgcheck=0
+          REPO
+
+          # Generate index page.
+          cat > repo/index.html <<EOF
+          <!DOCTYPE html>
+          <html><head><title>DirQ RPM Repository</title></head>
+          <body>
+          <h1>DirQ RPM Repository</h1>
+          <p>Add this repo to your system:</p>
+          <pre>sudo curl -o /etc/yum.repos.d/dirq.repo https://atgreen.github.io/dirq/dirq.repo
+          sudo dnf install dirq-server dirq-agent</pre>
+          <h2>Packages</h2>
+          <ul>
+          $(for f in repo/packages/*.rpm; do echo "<li><a href=\"packages/$(basename $f)\">$(basename $f)</a></li>"; done)
+          </ul>
+          </body></html>
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: repo/
+
+  deploy:
+    needs: build-rpms
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
