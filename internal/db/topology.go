@@ -71,6 +71,81 @@ func (db *DB) FindRelaysWithChildren(ctx context.Context) ([]Agent, error) {
 // SetAgentParent sets the parent_id for an agent. Empty string clears it.
 // (Note: this overload handles empty string → NULL for zone leader promotion.)
 
+// NodeLoad represents an agent and its child count.
+type NodeLoad struct {
+	Agent      Agent
+	ChildCount int
+	Depth      int
+}
+
+// FindImbalancedNodes returns the most overloaded node and the most underloaded
+// node with room. Used by the rebalancer to redistribute subtrees.
+// Returns (heavy, light, found). If the imbalance ratio is < 2x, found is false.
+func (db *DB) FindImbalancedNodes(ctx context.Context, maxChildren int) (heavy NodeLoad, light NodeLoad, found bool, err error) {
+	// Find the node with the most children.
+	row := db.pool.QueryRow(ctx, `
+		SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
+		       a.listen_addr, a.role, a.capabilities, a.tags,
+		       a.parent_id, a.server_pod, a.online, a.exec_enabled,
+		       a.registered_at, a.last_seen_at,
+		       (SELECT COUNT(*) FROM agents c WHERE c.parent_id = a.id AND c.online = true) AS child_count
+		FROM agents a
+		WHERE a.online = true AND a.listen_addr != ''
+		  AND (SELECT COUNT(*) FROM agents c WHERE c.parent_id = a.id AND c.online = true) > 1
+		ORDER BY child_count DESC
+		LIMIT 1`)
+
+	var heavyAgent Agent
+	var heavyCount int
+	var tagsJSON []byte
+	scanErr := row.Scan(
+		&heavyAgent.ID, &heavyAgent.Hostname, &heavyAgent.OS, &heavyAgent.OSVersion,
+		&heavyAgent.Arch, &heavyAgent.AgentVersion, &heavyAgent.ListenAddr, &heavyAgent.Role,
+		&heavyAgent.Capabilities, &tagsJSON,
+		&heavyAgent.ParentID, &heavyAgent.ServerPod, &heavyAgent.Online, &heavyAgent.ExecEnabled,
+		&heavyAgent.RegisteredAt, &heavyAgent.LastSeenAt,
+		&heavyCount,
+	)
+	if scanErr != nil {
+		return heavy, light, false, nil // no nodes with children
+	}
+
+	// Find the shallowest node with the fewest children that has room.
+	lightAgent, lightErr := db.FindShallowestParentWithRoom(ctx, maxChildren)
+	if lightErr != nil || lightAgent.ID == "" || lightAgent.ID == heavyAgent.ID {
+		return heavy, light, false, nil
+	}
+
+	lightCount, _ := db.CountChildren(ctx, lightAgent.ID)
+
+	// Only rebalance if the heavy node has at least 2x the children of the light node.
+	if heavyCount < (lightCount+1)*2 {
+		return heavy, light, false, nil
+	}
+
+	heavy = NodeLoad{Agent: heavyAgent, ChildCount: heavyCount}
+	light = NodeLoad{Agent: lightAgent, ChildCount: lightCount}
+	return heavy, light, true, nil
+}
+
+// FindChildOfParent returns one online child of the given parent, preferring
+// children that themselves have children (moving a subtree is more efficient
+// than moving a leaf).
+func (db *DB) FindChildOfParent(ctx context.Context, parentID string) (Agent, error) {
+	row := db.pool.QueryRow(ctx, `
+		SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
+		       a.listen_addr, a.role, a.capabilities, a.tags,
+		       a.parent_id, a.server_pod, a.online, a.exec_enabled,
+		       a.registered_at, a.last_seen_at
+		FROM agents a
+		WHERE a.parent_id = $1 AND a.online = true AND a.listen_addr != ''
+		ORDER BY (SELECT COUNT(*) FROM agents c WHERE c.parent_id = a.id AND c.online = true) DESC
+		LIMIT 1`,
+		parentID,
+	)
+	return scanAgent(row)
+}
+
 // CountAgentsByRole returns the number of online agents with the given role.
 func (db *DB) CountAgentsByRole(ctx context.Context, role string) (int, error) {
 	var count int

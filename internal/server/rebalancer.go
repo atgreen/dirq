@@ -60,6 +60,9 @@ func (s *Server) rebalanceOnce(ctx context.Context) {
 	if directConns > cfg.MaxZoneLeaders {
 		s.demoteExcess(ctx, directConns-cfg.MaxZoneLeaders)
 	}
+
+	// Scenario 3: Tree imbalance — redistribute subtrees from heavy to light.
+	s.redistributeSubtrees(ctx)
 }
 
 // promoteRelay finds a relay agent with children and promotes it to zone
@@ -233,5 +236,99 @@ func (s *Server) demoteExcess(ctx context.Context, excess int) {
 			moved++
 		default:
 		}
+	}
+}
+
+// redistributeSubtrees moves a child subtree from a heavy node to a light node.
+// "Heavy" = node with the most children. "Light" = shallowest node with room.
+// Only acts when the imbalance is >= 2x. Moves one subtree per cycle.
+//
+// The moved child keeps its own children — they don't need to reconnect.
+// Only the moved child itself reconnects to the new parent.
+func (s *Server) redistributeSubtrees(ctx context.Context) {
+	cfg := s.topoCfg
+
+	heavy, light, found, err := s.db.FindImbalancedNodes(ctx, cfg.MaxChildrenPerNode)
+	if err != nil || !found {
+		return
+	}
+
+	s.log.Info("rebalancer: imbalance detected",
+		"heavy", heavy.Agent.Hostname,
+		"heavy_children", heavy.ChildCount,
+		"light", light.Agent.Hostname,
+		"light_children", light.ChildCount,
+	)
+
+	// Pick a child of the heavy node to move. Prefer children with their own
+	// children (subtrees) — moving a subtree is more efficient than a leaf.
+	child, err := s.db.FindChildOfParent(ctx, heavy.Agent.ID)
+	if err != nil || child.ID == "" {
+		return
+	}
+
+	childChildren, _ := s.db.CountChildren(ctx, child.ID)
+
+	// Build fallbacks for the new parent.
+	var fallbacks []string
+	fbAgents, _ := s.db.FindFallbackParents(ctx, light.Agent.ID, cfg.MaxChildrenPerNode, 2)
+	for _, fb := range fbAgents {
+		fallbacks = append(fallbacks, fb.ListenAddr)
+	}
+
+	msg := &pb.ServerMessage{
+		Payload: &pb.ServerMessage_PeerUpdate{
+			PeerUpdate: &pb.PeerUpdate{
+				NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
+				NewParentAddr:    light.Agent.ListenAddr,
+				NewFallbackAddrs: fallbacks,
+			},
+		},
+	}
+
+	if s.signer != nil {
+		s.signServerMessage(msg)
+	}
+
+	// Route the PeerUpdate to the child. It might be directly connected
+	// to the server (unlikely for a deep node) or reachable through the mesh.
+	sent := false
+
+	// Try direct stream first.
+	s.mu.RLock()
+	if as, ok := s.streams[child.ID]; ok {
+		select {
+		case as.send <- msg:
+			sent = true
+		default:
+		}
+	}
+	s.mu.RUnlock()
+
+	if !sent {
+		// Route through the child's zone leader.
+		zl, err := s.db.FindZoneLeader(ctx, child.ID)
+		if err == nil && zl.ID != "" {
+			s.mu.RLock()
+			if as, ok := s.streams[zl.ID]; ok {
+				select {
+				case as.send <- msg:
+					sent = true
+				default:
+				}
+			}
+			s.mu.RUnlock()
+		}
+	}
+
+	if sent {
+		s.db.SetAgentParent(ctx, child.ID, light.Agent.ID)
+
+		s.log.Info("rebalancer: redistributed subtree",
+			"child", child.Hostname,
+			"child_subtree_size", childChildren,
+			"from", heavy.Agent.Hostname,
+			"to", light.Agent.Hostname,
+		)
 	}
 }
