@@ -146,6 +146,16 @@ func (db *DB) FindChildOfParent(ctx context.Context, parentID string) (Agent, er
 	return scanAgent(row)
 }
 
+// CountOnlineZoneLeaders returns the number of agents that are both
+// role=zone_leader AND online=true.
+func (db *DB) CountOnlineZoneLeaders(ctx context.Context) (int, error) {
+	var count int
+	err := db.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM agents WHERE role = 'zone_leader' AND online = true`,
+	).Scan(&count)
+	return count, err
+}
+
 // CountAgentsByRole returns the number of online agents with the given role.
 func (db *DB) CountAgentsByRole(ctx context.Context, role string) (int, error) {
 	var count int
