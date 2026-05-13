@@ -46,7 +46,7 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 	// Set up timeout.
 	timeout := time.Duration(req.GetTimeoutSeconds()) * time.Second
 	if timeout <= 0 {
-		timeout = 60 * time.Second
+		timeout = 300 * time.Second
 	}
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

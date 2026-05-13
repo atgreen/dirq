@@ -48,7 +48,7 @@ DOCUMENTATION = """
                 - name: DIRQ_TOKEN
         dirq_exec_timeout:
             description: Timeout in seconds for exec operations.
-            default: 60
+            default: 300
             type: int
             vars:
                 - name: dirq_exec_timeout
@@ -133,7 +133,7 @@ class Connection(ConnectionBase):
         become_user = self._play_context.become_user or "root"
         become_method = self._play_context.become_method or "sudo"
 
-        timeout = self.get_option("dirq_exec_timeout") or 60
+        timeout = self.get_option("dirq_exec_timeout") or 300
 
         payload = {
             "agent_id": self._agent_id,

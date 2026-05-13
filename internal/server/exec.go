@@ -209,7 +209,7 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 
 	timeout := req.Timeout
 	if timeout == 0 {
-		timeout = 60
+		timeout = 300
 	}
 
 	requestID := fmt.Sprintf("exec-%d", time.Now().UnixNano())

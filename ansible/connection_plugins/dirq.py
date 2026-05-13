@@ -121,7 +121,7 @@ class Connection(ConnectionBase):
             "become": become and sudoable,
             "become_user": become_user,
             "become_method": become_method,
-            "timeout": 60,
+            "timeout": 300,
         }
 
         # AAP attribution.
