@@ -203,6 +203,21 @@ func FilterCollectedData(conditions []*Condition, data map[string]any) map[strin
 	return result
 }
 
+// AllFilteredModulesPresent returns true if every module referenced in a WHERE
+// condition still has data after filtering. If a condition targets "packages.name"
+// and the packages module was removed (no matching packages), this returns false.
+func AllFilteredModulesPresent(conditions []*Condition, data map[string]any) bool {
+	for _, c := range conditions {
+		parts := strings.SplitN(c.Field, ".", 2)
+		if len(parts) == 2 {
+			if _, ok := data[parts[0]]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // matchesScalarConditions checks whether a scalar module's data satisfies all conditions.
 func matchesScalarConditions(module string, conds []*Condition, data map[string]any) bool {
 	for _, c := range conds {

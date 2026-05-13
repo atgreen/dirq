@@ -65,6 +65,39 @@ def fetch_inventory(server_url, token=None):
         sys.exit(1)
 
 
+def run_query(server_url, token, query_str):
+    """Run a DirQ query and return the set of matching hostnames."""
+    url = server_url.rstrip("/") + "/api/v1/query"
+    payload = json.dumps({"query": query_str, "timeout": 60}).encode("utf-8")
+    req = Request(url, data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+
+    try:
+        resp = urlopen(req, timeout=120)
+        result = json.loads(resp.read().decode("utf-8"))
+        return {r["hostname"] for r in result.get("results", []) if r.get("success")}
+    except URLError as e:
+        print(f"ERROR: DirQ query failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def filter_inventory(inventory, matched_hosts):
+    """Filter an inventory to only include hosts in matched_hosts."""
+    hostvars = inventory.get("_meta", {}).get("hostvars", {})
+    filtered_hostvars = {h: v for h, v in hostvars.items() if h in matched_hosts}
+    inventory["_meta"]["hostvars"] = filtered_hostvars
+
+    for group_name, group_data in list(inventory.items()):
+        if group_name == "_meta" or not isinstance(group_data, dict):
+            continue
+        if "hosts" in group_data:
+            group_data["hosts"] = [h for h in group_data["hosts"] if h in matched_hosts]
+
+    return inventory
+
+
 def main():
     """Entry point for standalone dynamic inventory script."""
     import argparse
@@ -72,6 +105,8 @@ def main():
     parser = argparse.ArgumentParser(description="DirQ Ansible dynamic inventory")
     parser.add_argument("--list", action="store_true", help="List all hosts")
     parser.add_argument("--host", type=str, help="Get vars for a specific host")
+    parser.add_argument("--query", type=str, help="DirQ query to filter hosts",
+                        default=os.environ.get("DIRQ_QUERY", ""))
     args = parser.parse_args()
 
     server_url = os.environ.get("DIRQ_SERVER_URL", "http://localhost:8080")
@@ -79,6 +114,9 @@ def main():
 
     if args.list:
         inventory = fetch_inventory(server_url, token)
+        if args.query:
+            matched = run_query(server_url, token, args.query)
+            inventory = filter_inventory(inventory, matched)
         print(json.dumps(inventory, indent=2))
     elif args.host:
         inventory = fetch_inventory(server_url, token)

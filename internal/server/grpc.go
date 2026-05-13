@@ -253,20 +253,33 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 		"zone_leaders", sent,
 	)
 
-	// Collect results until timeout or all responded.
+	// Collect results until the hard timeout expires or no new results arrive
+	// for 3 seconds (idle timeout). Agents that don't match the WHERE clause
+	// won't respond at all, so we can't wait for a fixed count.
 	var results []*pb.QueryResult
-	timer := time.NewTimer(qs.timeout)
-	defer timer.Stop()
+	hardTimeout := time.NewTimer(qs.timeout)
+	defer hardTimeout.Stop()
+	idleTimeout := time.NewTimer(3 * time.Second)
+	defer idleTimeout.Stop()
 
-	// Wait for results from individual agents (not zone leaders).
-	// Each agent in the mesh sends its own result back.
-	expectedResults := len(targetIDs)
-	for len(results) < expectedResults {
+	maxResults := len(targetIDs)
+	for len(results) < maxResults {
 		select {
 		case r := <-qs.results:
 			results = append(results, r)
-		case <-timer.C:
-			s.log.Warn("query timed out", "query_id", qr.QueryId, "received", len(results), "expected", expectedResults)
+			// Reset idle timer — more results may be coming.
+			if !idleTimeout.Stop() {
+				select {
+				case <-idleTimeout.C:
+				default:
+				}
+			}
+			idleTimeout.Reset(3 * time.Second)
+		case <-idleTimeout.C:
+			// No results for 3s — assume all matching agents have responded.
+			return results, nil
+		case <-hardTimeout.C:
+			s.log.Warn("query timed out", "query_id", qr.QueryId, "received", len(results), "targets", maxResults)
 			return results, nil
 		case <-ctx.Done():
 			return results, ctx.Err()

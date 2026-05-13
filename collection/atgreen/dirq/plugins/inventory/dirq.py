@@ -48,6 +48,15 @@ DOCUMENTATION = """
             type: str
             env:
                 - name: DIRQ_TOKEN
+        query:
+            description: >
+                Optional DirQ query to filter which hosts appear in the inventory.
+                Only hosts that match the query will be included. The query must
+                SELECT os_info.hostname (or any fields — the hostname is extracted
+                from the result metadata). Example:
+                "SELECT os_info.hostname FROM * WHERE packages.name = 'openssl' AND packages.version LIKE '1.%'"
+            required: false
+            type: str
 """
 
 EXAMPLES = """
@@ -59,6 +68,21 @@ server_url: http://dirq-server:8080
 plugin: atgreen.dirq.dirq
 server_url: http://dirq-server:8080
 token: my-secret-token
+
+# Query-filtered inventory — only hosts with full disks:
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-server:8080
+query: "SELECT os_info.hostname FROM * WHERE disk.pct_used > 80"
+
+# Only hosts running a vulnerable package:
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-server:8080
+query: "SELECT os_info.hostname FROM * WHERE packages.name = 'openssl' AND packages.version LIKE '1.%'"
+
+# Only hosts where sshd is stopped:
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-server:8080
+query: "SELECT os_info.hostname FROM * WHERE services.name = 'sshd' AND services.state = 'stopped'"
 """
 
 
@@ -93,6 +117,17 @@ class InventoryModule(BaseInventoryPlugin):
 
         hostvars = inv.get("_meta", {}).get("hostvars", {})
 
+        # If a query is specified, run it and restrict the inventory to
+        # only hosts that appear in the query results.
+        query_filter = self.get_option("query")
+        if query_filter:
+            try:
+                result = client.post("/api/v1/query", {"query": query_filter, "timeout": 60})
+                matched = {r["hostname"] for r in result.get("results", []) if r.get("success")}
+                hostvars = {h: v for h, v in hostvars.items() if h in matched}
+            except Exception as e:
+                raise AnsibleParserError(f"DirQ query filter failed: {e}")
+
         # Add hosts and their vars.
         for hostname, vars_dict in hostvars.items():
             self.inventory.add_host(hostname)
@@ -114,9 +149,10 @@ class InventoryModule(BaseInventoryPlugin):
 
             self.inventory.add_group(group_name)
 
-            # Add hosts to this group.
+            # Add hosts to this group (only if they passed the query filter).
             for host in group_data.get("hosts", []):
-                self.inventory.add_host(host, group=group_name)
+                if host in hostvars:
+                    self.inventory.add_host(host, group=group_name)
 
             # Add child groups.
             for child in group_data.get("children", []):

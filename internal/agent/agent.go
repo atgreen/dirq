@@ -431,7 +431,15 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 
 	// Apply agent-side filtering (array-aware: filters into packages, services, etc.)
 	if len(qr.Filters) > 0 {
-		collected = query.FilterCollectedData(protoFiltersToConditions(qr.Filters), collected)
+		conds := protoFiltersToConditions(qr.Filters)
+		collected = query.FilterCollectedData(conds, collected)
+
+		// Check if all WHERE-referenced modules survived filtering.
+		// If a module was referenced in a condition but is missing from the
+		// result, this agent didn't match the query — don't send a response.
+		if !query.AllFilteredModulesPresent(conds, collected) {
+			return
+		}
 	}
 
 	data, err := structpb.NewStruct(collected)
