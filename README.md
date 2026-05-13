@@ -40,31 +40,46 @@ All links in the mesh are **gRPC over mTLS**. Agents connect outbound — no inb
 
 ### Scaling the Mesh
 
-The topology manager builds a 3-level tree. Capacity is controlled by two
-environment variables on the server:
+The server holds a fixed number of zone leader connections (default 5). All
+other agents are placed in a tree below those zone leaders, which grows as
+deep as needed. There is no fixed depth limit — the tree fills in BFS order
+(shallowest available node gets the next child).
 
-| Setting | Zone Leaders | Children/Node | Capacity | Server Connections |
-|---------|-------------|---------------|----------|--------------------|
-| Default | 50 | 50 | 125,000 | 50 |
-| 200k | 80 | 50 | 200,000 | 80 |
-| 500k | 100 | 70 | 490,000 | 100 |
+Two environment variables control the shape:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DIRQ_MAX_ZONE_LEADERS` | `5` | Direct server connections (caps server load) |
+| `DIRQ_MAX_CHILDREN` | `50` | Max children per node (fan-out ratio) |
+
+Capacity with defaults (5 ZLs, fan-out 50):
+
+| Fleet size | Tree depth | Server connections |
+|-----------|-----------|-------------------|
+| 250 | 2 | 5 |
+| 12,500 | 3 | 5 |
+| 625,000 | 4 | 5 |
+| 31,250,000 | 5 | 5 |
+
+The server always holds exactly `DIRQ_MAX_ZONE_LEADERS` connections regardless
+of fleet size. To handle more agents, the tree simply gets deeper — not wider
+at the server.
 
 ```bash
-# 200k deployment
-DIRQ_MAX_ZONE_LEADERS=80 DIRQ_MAX_CHILDREN=50
+# Default (625k capacity at depth 4)
+DIRQ_MAX_ZONE_LEADERS=5 DIRQ_MAX_CHILDREN=50
 
-# 500k deployment
-DIRQ_MAX_ZONE_LEADERS=100 DIRQ_MAX_CHILDREN=70
+# More zone leaders for lower latency at scale
+DIRQ_MAX_ZONE_LEADERS=10 DIRQ_MAX_CHILDREN=50  # 1.25M at depth 4
+
+# Higher fan-out for flatter tree
+DIRQ_MAX_ZONE_LEADERS=5 DIRQ_MAX_CHILDREN=100  # 5M at depth 4
 ```
 
-The tree fills bottom-up:
-1. New agents become **zone leaders** until `DIRQ_MAX_ZONE_LEADERS` is reached
-2. Then they become **relays** under zone leaders (up to `DIRQ_MAX_CHILDREN` each)
-3. Then **leafs** under relays (up to `DIRQ_MAX_CHILDREN` each)
-4. If the tree is completely full, extra zone leaders are added (soft limit)
-
-Max hops from any leaf to the server is always 3 regardless of fleet size.
-The server only holds zone leader connections — the mesh absorbs the rest.
+The algorithm:
+1. First `DIRQ_MAX_ZONE_LEADERS` agents become **zone leaders** (connect to server)
+2. All subsequent agents are placed under the shallowest node with room
+3. If the entire tree is full, an extra zone leader is added (soft limit)
 
 ## Query DSL
 
@@ -376,7 +391,7 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | `DIRQ_HTTP_ADDR` | `:8080` | HTTP/REST listen address |
 | `DIRQ_DB_URL` | `postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable` | PostgreSQL connection string |
 | `DIRQ_POD_ID` | hostname | Unique pod identifier (for multi-pod deployments) |
-| `DIRQ_MAX_ZONE_LEADERS` | `50` | Max agents connecting directly to the server |
+| `DIRQ_MAX_ZONE_LEADERS` | `5` | Max agents connecting directly to the server |
 | `DIRQ_MAX_CHILDREN` | `50` | Max children per relay or zone leader node |
 
 ### Agent (environment variables)
