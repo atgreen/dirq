@@ -413,6 +413,15 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 }
 
 func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
+	// Always relay to downstream peers first (they may be targets even if we're not).
+	a.relayQueryToDownstreams(qr)
+
+	// Check if this agent is a target. If target_agent_ids is empty, it's a
+	// broadcast (all agents execute). If populated, only listed agents execute.
+	if len(qr.TargetAgentIds) > 0 && !a.isTargeted(qr.TargetAgentIds) {
+		return // not a target — just relay, don't execute
+	}
+
 	a.log.Info("executing query", "query_id", qr.QueryId, "modules", qr.Modules)
 
 	hostname, _ := os.Hostname()
@@ -433,9 +442,16 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 	}
 
 	a.sendQueryResult(qr.QueryId, hostname, true, "", data)
+}
 
-	// Also relay query to downstream peers.
-	a.relayQueryToDownstreams(qr)
+// isTargeted checks if this agent's ID is in the target list.
+func (a *Agent) isTargeted(targetIDs []string) bool {
+	for _, id := range targetIDs {
+		if id == a.agentID {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) sendQueryResult(queryID, hostname string, success bool, errMsg string, data *structpb.Struct) {
@@ -555,7 +571,7 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 		}
 	}()
 
-	// Receiver loop — forward results upstream.
+	// Receiver loop — forward ALL responses from downstream peers upstream.
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
@@ -565,9 +581,10 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 			return err
 		}
 
-		// Forward query results upstream.
-		if result := msg.GetQueryResult(); result != nil {
-			a.upstreamStream.Send(msg)
+		// Forward everything upstream (query results, exec responses, file chunks).
+		if err := a.upstreamStream.Send(msg); err != nil {
+			a.log.Error("failed to relay upstream", "peer_id", peerID, "error", err)
+			return err
 		}
 	}
 }

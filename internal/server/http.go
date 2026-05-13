@@ -156,18 +156,19 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	modules := query.ExtractModules(parsed)
 	pbFilters := query.ToFilterProtos(parsed)
 
+	// Build target agent ID list.
+	targetIDs := make([]string, len(agents))
+	for i, a := range agents {
+		targetIDs[i] = a.ID
+	}
+
 	qr := &pb.QueryRequest{
 		QueryId:        fmt.Sprintf("q-%d", time.Now().UnixNano()),
 		RawQuery:       req.Query,
 		Modules:        modules,
 		Filters:        pbFilters,
 		TimeoutSeconds: int32(timeout),
-	}
-
-	// Record query in DB.
-	targetIDs := make([]string, len(agents))
-	for i, a := range agents {
-		targetIDs[i] = a.ID
+		TargetAgentIds: targetIDs,
 	}
 
 	dbQuery, err := s.db.CreateQuery(ctx, req.Query, "", len(targetIDs))

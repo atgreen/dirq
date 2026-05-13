@@ -132,6 +132,9 @@ message QueryRequest {
   repeated string modules       = 4; // which modules to collect: "disk","cpu","memory"
   repeated Filter filters       = 5;
   int32 timeout_seconds         = 6;
+  // Target agent IDs. If empty, all agents execute (broadcast).
+  // If populated, only agents in this list execute; others just relay.
+  repeated string target_agent_ids = 7;
 }
 
 message Filter {
