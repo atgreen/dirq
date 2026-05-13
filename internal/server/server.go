@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/atgreen/dirq/internal/db"
+	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -78,17 +79,32 @@ func New(cfg Config, database *db.DB, log *slog.Logger) *Server {
 
 // Start starts the gRPC and HTTP servers.
 func (s *Server) Start(ctx context.Context) error {
-	// gRPC server with keepalive to detect dead connections.
-	s.grpcSv = grpc.NewServer(
+	// Build gRPC server options.
+	grpcOpts := []grpc.ServerOption{
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    30 * time.Second, // ping clients every 30s if idle
-			Timeout: 10 * time.Second, // wait 10s for pong before closing
+			Time:    30 * time.Second,
+			Timeout: 10 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second, // minimum time between client pings
-			PermitWithoutStream: true,             // allow pings even with no active streams
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
 		}),
-	)
+	}
+
+	// Add TLS if configured.
+	tlsCfg := tlsutil.ConfigFromEnv()
+	if tlsCfg.Enabled() {
+		creds, err := tlsutil.ServerCredentials(tlsCfg)
+		if err != nil {
+			return fmt.Errorf("TLS setup: %w", err)
+		}
+		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+		s.log.Info("TLS enabled for gRPC", "cert", tlsCfg.CertFile, "ca", tlsCfg.CAFile)
+	} else {
+		s.log.Warn("TLS disabled — gRPC connections are unencrypted")
+	}
+
+	s.grpcSv = grpc.NewServer(grpcOpts...)
 	pb.RegisterDirQServerServer(s.grpcSv, s)
 
 	grpcLis, err := net.Listen("tcp", s.cfg.GRPCAddr)

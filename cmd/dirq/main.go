@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/atgreen/dirq/internal/tlsutil"
 	"github.com/spf13/cobra"
 )
 
@@ -37,6 +38,7 @@ func main() {
 	root.AddCommand(hostsCmd())
 	root.AddCommand(tokenCmd())
 	root.AddCommand(queriesCmd())
+	root.AddCommand(tlsCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -383,6 +385,59 @@ func queriesCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// ─────────────────────────────────────────────────────────
+// dirq tls
+// ─────────────────────────────────────────────────────────
+
+func tlsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "tls",
+		Short: "TLS certificate management",
+	}
+
+	var dir string
+	generateCmd := &cobra.Command{
+		Use:   "generate",
+		Short: "Generate self-signed CA, server, and agent certificates",
+		Long: `Generate a self-signed CA and use it to sign server and agent certificates.
+
+All files are written to the specified directory:
+  ca.crt, ca.key       — Certificate Authority
+  server.crt, server.key — DirQ server
+  agent.crt, agent.key   — DirQ agent
+
+Usage:
+  DIRQ_TLS_CA=./certs/ca.crt DIRQ_TLS_CERT=./certs/server.crt DIRQ_TLS_KEY=./certs/server.key dirq-server
+  DIRQ_TLS_CA=./certs/ca.crt DIRQ_TLS_CERT=./certs/agent.crt DIRQ_TLS_KEY=./certs/agent.key dirq-agent
+
+For self-signed certs without distributing the CA, agents can use:
+  DIRQ_TLS_INSECURE=true dirq-agent`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := tlsutil.GenerateSelfSigned(dir)
+			if err != nil {
+				return err
+			}
+			fmt.Println("Certificates generated:")
+			fmt.Printf("  CA:     %s (key: %s)\n", result.CAFile, result.CAKeyFile)
+			fmt.Printf("  Server: %s (key: %s)\n", result.ServerCertFile, result.ServerKeyFile)
+			fmt.Printf("  Agent:  %s (key: %s)\n", result.AgentCertFile, result.AgentKeyFile)
+			fmt.Println()
+			fmt.Println("Server:")
+			fmt.Printf("  DIRQ_TLS_CA=%s DIRQ_TLS_CERT=%s DIRQ_TLS_KEY=%s\n",
+				result.CAFile, result.ServerCertFile, result.ServerKeyFile)
+			fmt.Println()
+			fmt.Println("Agent:")
+			fmt.Printf("  DIRQ_TLS_CA=%s DIRQ_TLS_CERT=%s DIRQ_TLS_KEY=%s\n",
+				result.CAFile, result.AgentCertFile, result.AgentKeyFile)
+			return nil
+		},
+	}
+
+	generateCmd.Flags().StringVar(&dir, "dir", "./certs", "output directory for certificates")
+	cmd.AddCommand(generateCmd)
+	return cmd
 }
 
 // ─────────────────────────────────────────────────────────

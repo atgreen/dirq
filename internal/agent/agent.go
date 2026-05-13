@@ -24,6 +24,7 @@ import (
 
 	"github.com/atgreen/dirq/internal/modules"
 	"github.com/atgreen/dirq/internal/query"
+	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -62,6 +63,28 @@ type downstreamPeer struct {
 	agentID string
 	send    chan *pb.ServerMessage
 	cancel  context.CancelFunc
+}
+
+// grpcDialOpts returns the standard gRPC dial options including TLS if configured.
+func grpcDialOpts() []grpc.DialOption {
+	tlsCfg := tlsutil.ConfigFromEnv()
+	opts := []grpc.DialOption{
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                20 * time.Second,
+			Timeout:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	}
+	if tlsCfg.Enabled() {
+		creds, err := tlsutil.ClientCredentials(tlsCfg)
+		if err == nil {
+			opts = append(opts, grpc.WithTransportCredentials(creds))
+			return opts
+		}
+		// Fall through to insecure if TLS setup fails.
+	}
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return opts
 }
 
 // New creates a new agent.
@@ -178,9 +201,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 }
 
 func (a *Agent) register(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.cfg.ServerAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, grpcDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
@@ -233,14 +254,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 
 	a.log.Info("connecting upstream", "target", target, "role", a.role)
 
-	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                20 * time.Second, // ping server every 20s if idle
-			Timeout:             10 * time.Second, // wait 10s for pong
-			PermitWithoutStream: true,
-		}),
-	)
+	conn, err := grpc.NewClient(target, grpcDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("connect upstream: %w", err)
 	}
@@ -294,14 +308,7 @@ func (a *Agent) sendHello() error {
 func (a *Agent) connectToServer(ctx context.Context) error {
 	a.log.Info("falling back to direct server connection", "server", a.cfg.ServerAddr)
 
-	conn, err := grpc.NewClient(a.cfg.ServerAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                20 * time.Second,
-			Timeout:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
-	)
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, grpcDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
@@ -509,7 +516,17 @@ func (a *Agent) relayToDownstreams(msg *pb.ServerMessage) {
 // ─────────────────────────────────────────────────────────
 
 func (a *Agent) startRelayServer(ctx context.Context) {
-	a.grpcSv = grpc.NewServer()
+	var serverOpts []grpc.ServerOption
+	tlsCfg := tlsutil.ConfigFromEnv()
+	if tlsCfg.Enabled() {
+		creds, err := tlsutil.ServerCredentials(tlsCfg)
+		if err != nil {
+			a.log.Error("relay TLS setup failed, using insecure", "error", err)
+		} else {
+			serverOpts = append(serverOpts, grpc.Creds(creds))
+		}
+	}
+	a.grpcSv = grpc.NewServer(serverOpts...)
 	pb.RegisterDirQRelayServer(a.grpcSv, a)
 
 	lis, err := net.Listen("tcp", a.cfg.ListenAddr)
