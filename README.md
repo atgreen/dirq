@@ -411,12 +411,15 @@ Tags flow into inventory groups automatically.
 
 ## Execution Transport
 
-The relay mesh doubles as an Ansible connection transport. Use `connection: dirq` (or `connection: atgreen.dirq.dirq` with the collection) to run playbooks through the mesh instead of SSH/WinRM.
+The relay mesh doubles as an Ansible connection transport. The inventory plugin
+automatically sets `ansible_connection` for exec-enabled hosts, so **existing
+playbooks work without modification** — no need to add `connection: dirq` or
+`gather_facts: false`.
 
 ```yaml
+# This just works — no connection: dirq needed.
+# The inventory plugin handles it.
 - hosts: tag_env_prod
-  connection: atgreen.dirq.dirq
-  gather_facts: false
   tasks:
     - command: uptime
     - copy:
@@ -428,9 +431,15 @@ The relay mesh doubles as an Ansible connection transport. Use `connection: dirq
         flat: yes
 ```
 
+The inventory plugin also maps DirQ facts to standard Ansible variables
+(`ansible_os_family`, `ansible_distribution`, `ansible_architecture`,
+`ansible_processor_vcpus`, `ansible_memtotal_mb`, etc.) and sets OS-specific
+shell and interpreter settings (`ansible_shell_type`, `ansible_python_interpreter`
+for Linux, `powershell` for Windows). Most existing roles work without changes.
+
 ### How It Works
 
-1. AAP launches a job template with `connection: dirq`
+1. AAP launches a job template — the inventory already set `ansible_connection`
 2. The connection plugin routes `exec_command` / `put_file` / `fetch_file` to the DirQ server REST API
 3. The server pushes through the relay mesh to the target agent
 4. The agent executes locally and returns results back through the mesh

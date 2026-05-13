@@ -77,15 +77,16 @@ class Connection(ConnectionBase):
             or "http://localhost:8080"
         )
         self._token = (
-            host_vars.get("dirq_token")
-            or os.environ.get("DIRQ_TOKEN")
+            os.environ.get("DIRQ_TOKEN")
             or self.get_option("dirq_token")
             or ""
         )
 
-        # Resolve hostname to agent_id by querying the server.
+        # Route by stable dirq_agent_id (set by inventory), fallback to hostname.
         hostname = self._play_context.remote_addr
-        self._agent_id = self._resolve_agent_id(hostname)
+        self._agent_id = host_vars.get("dirq_agent_id")
+        if not self._agent_id:
+            self._agent_id = self._resolve_agent_id(hostname)
 
         if not self._agent_id:
             raise AnsibleConnectionFailure(

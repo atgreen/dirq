@@ -77,8 +77,7 @@ class Connection(ConnectionBase):
         if self._connected:
             return self
 
-        # Per-host dirq_server_url (set by inventory plugin) takes priority.
-        # This is how multi-DC works: each host knows which DirQ server owns it.
+        # Per-host vars set by the inventory plugin take priority.
         host = self._play_context.remote_addr
         hostvars = self._get_hostvars(host)
 
@@ -89,8 +88,7 @@ class Connection(ConnectionBase):
             or "http://localhost:8080"
         )
         token = (
-            hostvars.get("dirq_token")
-            or os.environ.get("DIRQ_TOKEN")
+            os.environ.get("DIRQ_TOKEN")
             or self.get_option("dirq_token")
             or ""
         )
@@ -98,23 +96,29 @@ class Connection(ConnectionBase):
         from ansible_collections.atgreen.dirq.plugins.module_utils.api import DirQClient
         self._client = DirQClient(server_url, token)
 
-        hostname = host
-        self._agent_id = self._resolve_agent_id(hostname)
+        # Route by stable dirq_agent_id (set by inventory plugin), not hostname.
+        # This supports aliases, FQDN/shortname differences, and renamed hosts.
+        self._agent_id = hostvars.get("dirq_agent_id")
+
+        if not self._agent_id:
+            # Fallback: resolve by hostname if not using the DirQ inventory plugin.
+            self._agent_id = self._resolve_agent_id_by_hostname(host)
 
         if not self._agent_id:
             raise AnsibleConnectionFailure(
-                f"Could not resolve DirQ agent_id for host '{hostname}'. "
-                "Ensure the host is registered in DirQ with exec_enabled=true."
+                f"Could not resolve DirQ agent_id for host '{host}'. "
+                "Ensure the host is registered in DirQ and online."
             )
 
         self._display.vvv(
-            f"DIRQ: connected to {hostname} (agent_id={self._agent_id})",
-            host=hostname,
+            f"DIRQ: connected to {host} (agent_id={self._agent_id})",
+            host=host,
         )
         self._connected = True
         return self
 
-    def _resolve_agent_id(self, hostname):
+    def _resolve_agent_id_by_hostname(self, hostname):
+        """Fallback: scan hosts API to find agent by hostname."""
         try:
             hosts = self._client.get("/api/v1/hosts")
             for host in hosts:

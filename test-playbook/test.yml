@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
+# No need to specify connection: dirq — the inventory plugin sets
+# ansible_connection automatically for exec-enabled hosts.
+
 ---
 - name: Test DirQ connection
   hosts: all
-  connection: dirq
   gather_facts: false
-  vars:
-    dirq_server_url: http://localhost:8090
 
   tasks:
     - name: Run whoami
@@ -33,3 +33,12 @@
     - name: Show kernel
       debug:
         msg: "Kernel: {{ kernel.stdout | trim }}"
+
+    - name: Show standard Ansible vars set by DirQ inventory
+      debug:
+        msg: >
+          OS={{ ansible_os_family }},
+          Distro={{ ansible_distribution }},
+          Arch={{ ansible_architecture }},
+          CPUs={{ ansible_processor_vcpus }},
+          RAM={{ ansible_memtotal_mb }}MB
