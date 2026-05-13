@@ -124,10 +124,11 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine target agents.
+	// Determine target agents (online only — offline agents can't respond).
 	ctx := r.Context()
 	target := query.ExtractTarget(parsed)
-	agentFilter := db.ListAgentsFilter{}
+	online := true
+	agentFilter := db.ListAgentsFilter{Online: &online}
 	if !target.All {
 		agentFilter.Tag = target.TagKey
 		agentFilter.TagValue = target.TagValue
