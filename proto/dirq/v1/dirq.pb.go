@@ -1343,8 +1343,11 @@ type ExecRequest struct {
 	AapJobId       string `protobuf:"bytes,9,opt,name=aap_job_id,json=aapJobId,proto3" json:"aap_job_id,omitempty"`
 	AapJobTemplate string `protobuf:"bytes,10,opt,name=aap_job_template,json=aapJobTemplate,proto3" json:"aap_job_template,omitempty"`
 	AapUser        string `protobuf:"bytes,11,opt,name=aap_user,json=aapUser,proto3" json:"aap_user,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// stdin data piped to the process. Required for Ansible modules — they
+	// send Python module code via stdin.
+	Stdin         []byte `protobuf:"bytes,12,opt,name=stdin,proto3" json:"stdin,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExecRequest) Reset() {
@@ -1452,6 +1455,13 @@ func (x *ExecRequest) GetAapUser() string {
 		return x.AapUser
 	}
 	return ""
+}
+
+func (x *ExecRequest) GetStdin() []byte {
+	if x != nil {
+		return x.Stdin
+	}
+	return nil
 }
 
 // ExecResponse returns the result of command execution.
@@ -2073,7 +2083,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x06binary\x18\x02 \x01(\fR\x06binary\x12\x1c\n" +
 	"\tsignature\x18\x03 \x01(\fR\tsignature\x12\x0e\n" +
 	"\x02os\x18\x04 \x01(\tR\x02os\x12\x12\n" +
-	"\x04arch\x18\x05 \x01(\tR\x04arch\"\xd4\x03\n" +
+	"\x04arch\x18\x05 \x01(\tR\x04arch\"\xea\x03\n" +
 	"\vExecRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
@@ -2089,7 +2099,8 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"aap_job_id\x18\t \x01(\tR\baapJobId\x12(\n" +
 	"\x10aap_job_template\x18\n" +
 	" \x01(\tR\x0eaapJobTemplate\x12\x19\n" +
-	"\baap_user\x18\v \x01(\tR\aaapUser\x1a>\n" +
+	"\baap_user\x18\v \x01(\tR\aaapUser\x12\x14\n" +
+	"\x05stdin\x18\f \x01(\fR\x05stdin\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcc\x02\n" +

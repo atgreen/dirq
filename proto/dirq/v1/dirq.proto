@@ -211,6 +211,9 @@ message ExecRequest {
   string aap_job_id        = 9;
   string aap_job_template  = 10;
   string aap_user          = 11;
+  // stdin data piped to the process. Required for Ansible modules — they
+  // send Python module code via stdin.
+  bytes  stdin = 12;
 }
 
 // ExecResponse returns the result of command execution.

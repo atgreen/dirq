@@ -125,6 +125,9 @@ class Connection(ConnectionBase):
             "timeout": 300,
         }
 
+        if in_data:
+            payload["stdin"] = base64.b64encode(in_data).decode("ascii")
+
         # AAP attribution.
         job_id = os.environ.get("AWX_JOB_ID", os.environ.get("AAP_JOB_ID", ""))
         if job_id:

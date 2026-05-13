@@ -148,6 +148,11 @@ class Connection(ConnectionBase):
             "timeout": timeout,
         }
 
+        # Pass stdin data — required for Ansible modules which pipe Python
+        # module code to the target via stdin.
+        if in_data:
+            payload["stdin"] = base64.b64encode(in_data).decode("ascii")
+
         # AAP attribution from EE environment.
         job_id = os.environ.get("AWX_JOB_ID", os.environ.get("AAP_JOB_ID", ""))
         if job_id:

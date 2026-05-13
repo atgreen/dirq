@@ -61,6 +61,11 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 		}
 	}
 
+	// Pipe stdin if provided. Ansible modules send Python code via stdin.
+	if len(req.GetStdin()) > 0 {
+		cmd.Stdin = bytes.NewReader(req.GetStdin())
+	}
+
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf

@@ -160,6 +160,7 @@ func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.Serve
 type execCommandRequest struct {
 	AgentID      string            `json:"agent_id"`
 	Command      string            `json:"command"`
+	Stdin        string            `json:"stdin"`        // base64-encoded stdin data
 	Become       bool              `json:"become"`
 	BecomeUser   string            `json:"become_user"`
 	BecomeMethod string            `json:"become_method"`
@@ -230,6 +231,17 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		StartedAt:      timePtr(time.Now()),
 	})
 
+	// Decode stdin if provided (base64-encoded from the REST API).
+	var stdinBytes []byte
+	if req.Stdin != "" {
+		var decErr error
+		stdinBytes, decErr = decodeBase64(req.Stdin)
+		if decErr != nil {
+			httpError(w, http.StatusBadRequest, "invalid base64 stdin: "+decErr.Error())
+			return
+		}
+	}
+
 	// Build proto request.
 	pbReq := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_ExecRequest{
@@ -237,6 +249,7 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 				RequestId:      requestID,
 				AgentId:        req.AgentID,
 				Command:        req.Command,
+				Stdin:          stdinBytes,
 				Become:         req.Become,
 				BecomeUser:     req.BecomeUser,
 				BecomeMethod:   req.BecomeMethod,
