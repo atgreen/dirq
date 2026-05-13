@@ -476,7 +476,38 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 		a.relayToDownstreams(msg)
 		go a.executeQuery(ctx, p.QueryRequest)
 	case *pb.ServerMessage_PeerUpdate:
-		a.log.Info("peer update received", "new_role", p.PeerUpdate.NewRole)
+		pu := p.PeerUpdate
+		if pu.NewRole == pb.AgentRole_AGENT_ROLE_ZONE_LEADER && pu.NewParentAddr == "" {
+			// Promotion to zone leader — reconnect directly to the server.
+			// Our children stay connected to us — zero disruption for them.
+			a.log.Info("rebalance: promoted to zone leader, reconnecting to server",
+				"previous_role", a.role,
+			)
+			a.parentAddr = a.cfg.ServerAddr
+			a.fallbackAddrs = nil
+			a.role = pb.AgentRole_AGENT_ROLE_ZONE_LEADER
+			if a.upstreamConn != nil {
+				a.upstreamConn.Close()
+			}
+			return
+		}
+		if pu.NewParentAddr != "" {
+			// Reassignment to a new parent (demotion or rebalance).
+			a.log.Info("rebalance: reconnecting to new parent",
+				"new_parent", pu.NewParentAddr,
+				"new_role", pu.NewRole,
+			)
+			a.parentAddr = pu.NewParentAddr
+			a.fallbackAddrs = pu.NewFallbackAddrs
+			if pu.NewRole != pb.AgentRole_AGENT_ROLE_UNSPECIFIED {
+				a.role = pu.NewRole
+			}
+			if a.upstreamConn != nil {
+				a.upstreamConn.Close()
+			}
+			return
+		}
+		a.log.Info("peer update received", "new_role", pu.NewRole)
 	case *pb.ServerMessage_UpdatePush:
 		a.log.Info("update push received", "version", p.UpdatePush.Version)
 	case *pb.ServerMessage_ExecRequest:

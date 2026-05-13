@@ -179,6 +179,11 @@ message AggregatedQueryResult {
 message PeerUpdate {
   repeated PeerInfo new_peers = 1;
   AgentRole new_role          = 2;
+  // Reconnect to this parent address. Agent should close the current
+  // upstream connection and connect to this address instead.
+  string new_parent_addr = 3;
+  // Fallback addresses for the new parent.
+  repeated string new_fallback_addrs = 4;
 }
 
 // ─────────────────────────────────────────────────────────

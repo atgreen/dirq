@@ -36,6 +36,41 @@ func (db *DB) WithTopologyLock(ctx context.Context, fn func() error) error {
 	return tx.Commit(ctx)
 }
 
+// FindRelaysWithChildren returns online relay agents that have at least one
+// online child. These are candidates for promotion to zone leader — promoting
+// them splits a branch mid-tree and the children stay connected.
+// Ordered by child count descending (prefer relays with more children to
+// maximize the subtree size brought to the new zone leader).
+func (db *DB) FindRelaysWithChildren(ctx context.Context) ([]Agent, error) {
+	rows, err := db.pool.Query(ctx, `
+		SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
+		       a.listen_addr, a.role, a.capabilities, a.tags,
+		       a.parent_id, a.server_pod, a.online, a.exec_enabled,
+		       a.registered_at, a.last_seen_at
+		FROM agents a
+		WHERE a.role = 'relay' AND a.online = true AND a.listen_addr != ''
+		  AND (SELECT COUNT(*) FROM agents c WHERE c.parent_id = a.id AND c.online = true) > 0
+		ORDER BY (SELECT COUNT(*) FROM agents c WHERE c.parent_id = a.id AND c.online = true) DESC
+		LIMIT 5`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var agents []Agent
+	for rows.Next() {
+		a, err := scanAgentRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// SetAgentParent sets the parent_id for an agent. Empty string clears it.
+// (Note: this overload handles empty string → NULL for zone leader promotion.)
+
 // CountAgentsByRole returns the number of online agents with the given role.
 func (db *DB) CountAgentsByRole(ctx context.Context, role string) (int, error) {
 	var count int

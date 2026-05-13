@@ -175,9 +175,13 @@ func (db *DB) SetAgentRole(ctx context.Context, id string, role string) error {
 	return nil
 }
 
-// SetAgentParent sets the parent_id for an agent.
+// SetAgentParent sets the parent_id for an agent. Empty string clears it (sets NULL).
 func (db *DB) SetAgentParent(ctx context.Context, id string, parentID string) error {
-	tag, err := db.pool.Exec(ctx, `UPDATE agents SET parent_id = $1 WHERE id = $2`, parentID, id)
+	var pid any = parentID
+	if parentID == "" {
+		pid = nil
+	}
+	tag, err := db.pool.Exec(ctx, `UPDATE agents SET parent_id = $1 WHERE id = $2`, pid, id)
 	if err != nil {
 		return err
 	}

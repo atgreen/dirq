@@ -1201,11 +1201,16 @@ func (x *AggregatedQueryResult) GetResults() []*QueryResult {
 }
 
 type PeerUpdate struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NewPeers      []*PeerInfo            `protobuf:"bytes,1,rep,name=new_peers,json=newPeers,proto3" json:"new_peers,omitempty"`
-	NewRole       AgentRole              `protobuf:"varint,2,opt,name=new_role,json=newRole,proto3,enum=dirq.v1.AgentRole" json:"new_role,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	NewPeers []*PeerInfo            `protobuf:"bytes,1,rep,name=new_peers,json=newPeers,proto3" json:"new_peers,omitempty"`
+	NewRole  AgentRole              `protobuf:"varint,2,opt,name=new_role,json=newRole,proto3,enum=dirq.v1.AgentRole" json:"new_role,omitempty"`
+	// Reconnect to this parent address. Agent should close the current
+	// upstream connection and connect to this address instead.
+	NewParentAddr string `protobuf:"bytes,3,opt,name=new_parent_addr,json=newParentAddr,proto3" json:"new_parent_addr,omitempty"`
+	// Fallback addresses for the new parent.
+	NewFallbackAddrs []string `protobuf:"bytes,4,rep,name=new_fallback_addrs,json=newFallbackAddrs,proto3" json:"new_fallback_addrs,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *PeerUpdate) Reset() {
@@ -1250,6 +1255,20 @@ func (x *PeerUpdate) GetNewRole() AgentRole {
 		return x.NewRole
 	}
 	return AgentRole_AGENT_ROLE_UNSPECIFIED
+}
+
+func (x *PeerUpdate) GetNewParentAddr() string {
+	if x != nil {
+		return x.NewParentAddr
+	}
+	return ""
+}
+
+func (x *PeerUpdate) GetNewFallbackAddrs() []string {
+	if x != nil {
+		return x.NewFallbackAddrs
+	}
+	return nil
 }
 
 type AgentUpdatePush struct {
@@ -2073,11 +2092,13 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\fcollected_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\vcollectedAt\"b\n" +
 	"\x15AggregatedQueryResult\x12\x19\n" +
 	"\bquery_id\x18\x01 \x01(\tR\aqueryId\x12.\n" +
-	"\aresults\x18\x02 \x03(\v2\x14.dirq.v1.QueryResultR\aresults\"k\n" +
+	"\aresults\x18\x02 \x03(\v2\x14.dirq.v1.QueryResultR\aresults\"\xc1\x01\n" +
 	"\n" +
 	"PeerUpdate\x12.\n" +
 	"\tnew_peers\x18\x01 \x03(\v2\x11.dirq.v1.PeerInfoR\bnewPeers\x12-\n" +
-	"\bnew_role\x18\x02 \x01(\x0e2\x12.dirq.v1.AgentRoleR\anewRole\"\x85\x01\n" +
+	"\bnew_role\x18\x02 \x01(\x0e2\x12.dirq.v1.AgentRoleR\anewRole\x12&\n" +
+	"\x0fnew_parent_addr\x18\x03 \x01(\tR\rnewParentAddr\x12,\n" +
+	"\x12new_fallback_addrs\x18\x04 \x03(\tR\x10newFallbackAddrs\"\x85\x01\n" +
 	"\x0fAgentUpdatePush\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
 	"\x06binary\x18\x02 \x01(\fR\x06binary\x12\x1c\n" +

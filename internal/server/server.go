@@ -157,8 +157,9 @@ func (s *Server) Start(ctx context.Context) error {
 		s.log.Warn("failed to register server peer", "error", err)
 	}
 
-	// Start the stale-agent reaper.
+	// Start the stale-agent reaper and topology rebalancer.
 	go s.startReaper(ctx)
+	go s.startRebalancer(ctx)
 
 	capacity := s.topoCfg.MaxZoneLeaders * s.topoCfg.MaxChildrenPerNode * s.topoCfg.MaxChildrenPerNode
 	s.log.Info("DirQ server starting",
