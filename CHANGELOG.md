@@ -1,0 +1,43 @@
+# Changelog
+
+All notable changes to DirQ will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [0.1.0] - 2026-05-13
+
+### Added
+
+- **Query engine** with SQL-like DSL: SELECT, FROM, WHERE, GROUP BY, ORDER BY
+- **7 query modules:** cpu, memory, disk, os_info, packages, network, services
+- **IN operator** and array-aware filtering (packages, services, disk, network)
+- **P2P relay mesh** with automatic topology management (zone leaders, BFS fill)
+- **Ansible inventory plugin** (`atgreen.dirq.dirq`) with nested group hierarchy
+- **Query-based inventory filtering** — build Ansible inventories from live DirQ queries
+- **Ansible connection plugin** (`connection: atgreen.dirq.dirq`) — run playbooks through the mesh
+- **Ansible collection** (`atgreen.dirq`) for AAP with inventory + connection plugins
+- **Remote execution** (exec_command, put_file, fetch_file) through the relay mesh
+- **Exec audit logging** with AAP job attribution (job ID, template, user)
+- **TLS by default** — auto-generated self-signed certs, user-supplied certs, mTLS support
+- **API authentication** — required by default, bootstrap token on first startup
+- **Message signing** (Ed25519) for server-originated control messages
+- **Agent reconnection** with exponential backoff on connection loss
+- **gRPC keepalive** and server-side reaper for dead connection detection
+- **Host tag management** — REST API and CLI for add/remove/merge tags
+- **Multi-datacenter support** — per-DC servers with automatic per-host routing
+- **Windows agent** — Windows Service support, PowerShell privilege escalation
+- **CLI tool** (`dirq`) — query, hosts, tokens, tags, TLS cert generation
+- **Containerfile** — multi-stage build for server and agent images
+- **podman-compose** — dev environment with server + PostgreSQL
+- **Execution Environment definition** for ansible-builder
+- **AAP credential type definition**
+
+### Components
+
+- `dirq-server` — Go, gRPC + REST API, PostgreSQL-backed
+- `dirq-agent` — Go, single static binary, Linux + Windows
+- `dirq` — Go, CLI tool
+- `atgreen.dirq` — Python, Ansible collection
+
+[0.1.0]: https://github.com/atgreen/dirq/releases/tag/v0.1.0
