@@ -200,7 +200,10 @@ var (
 	querySessionsMu sync.RWMutex
 )
 
-// dispatchQuery sends a query to the target agents and collects results.
+// dispatchQuery broadcasts a query through all connected zone leaders.
+// Zone leaders relay the query down through the mesh to all agents in
+// their subtrees. Each agent executes the query locally and results
+// bubble back up through the mesh.
 func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetIDs []string) ([]*pb.QueryResult, error) {
 	qs := &querySession{
 		queryID:   qr.QueryId,
@@ -223,40 +226,47 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 		querySessionsMu.Unlock()
 	}()
 
-	// Fan out query to target agents.
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_QueryRequest{
 			QueryRequest: qr,
 		},
 	}
 
+	// Broadcast to ALL connected zone leaders. Each zone leader executes
+	// the query itself AND relays it to its entire subtree. Results from
+	// leaf and relay agents bubble back up through the mesh.
 	sent := 0
 	s.mu.RLock()
-	for _, id := range targetIDs {
-		if as, ok := s.streams[id]; ok {
-			select {
-			case as.send <- msg:
-				sent++
-			default:
-				s.log.Warn("agent send buffer full", "agent_id", id)
-			}
+	for _, as := range s.streams {
+		select {
+		case as.send <- msg:
+			sent++
+		default:
+			s.log.Warn("zone leader send buffer full", "agent_id", as.agentID)
 		}
 	}
 	s.mu.RUnlock()
 
-	s.log.Info("query dispatched", "query_id", qr.QueryId, "targets", len(targetIDs), "sent", sent)
+	s.log.Info("query dispatched to zone leaders",
+		"query_id", qr.QueryId,
+		"target_agents", len(targetIDs),
+		"zone_leaders", sent,
+	)
 
 	// Collect results until timeout or all responded.
 	var results []*pb.QueryResult
 	timer := time.NewTimer(qs.timeout)
 	defer timer.Stop()
 
-	for len(results) < sent {
+	// Wait for results from individual agents (not zone leaders).
+	// Each agent in the mesh sends its own result back.
+	expectedResults := len(targetIDs)
+	for len(results) < expectedResults {
 		select {
 		case r := <-qs.results:
 			results = append(results, r)
 		case <-timer.C:
-			s.log.Warn("query timed out", "query_id", qr.QueryId, "received", len(results), "expected", sent)
+			s.log.Warn("query timed out", "query_id", qr.QueryId, "received", len(results), "expected", expectedResults)
 			return results, nil
 		case <-ctx.Done():
 			return results, ctx.Err()

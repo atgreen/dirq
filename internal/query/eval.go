@@ -15,20 +15,33 @@ import (
 
 // TargetScope describes the target scope of a query.
 type TargetScope struct {
-	All   bool   // FROM *
-	Kind  string // "tag" or "group"
-	Value string // e.g. "prod", "webservers"
+	All      bool   // FROM *
+	TagKey   string // tag key to match (e.g. "env", "group")
+	TagValue string // tag value to match, empty = any value for that key
 }
 
 // ExtractTarget returns the target scope from the query's FROM clause.
 // If no FROM clause is present, it defaults to all hosts.
+//
+//	FROM *              → All=true
+//	FROM tag:env=prod   → TagKey="env", TagValue="prod"
+//	FROM tag:env        → TagKey="env", TagValue="" (any value)
+//	FROM group:web      → TagKey="group", TagValue="web"
 func ExtractTarget(q *Query) TargetScope {
 	if q.From == nil || q.From.All {
 		return TargetScope{All: true}
 	}
+	scope := q.From.Scope
+	if scope.Kind == "group" {
+		return TargetScope{
+			TagKey:   "group",
+			TagValue: scope.Key, // group:webservers → key="group", value="webservers"
+		}
+	}
+	// tag:env=prod or tag:env
 	return TargetScope{
-		Kind:  q.From.Scope.Kind,
-		Value: q.From.Scope.Value,
+		TagKey:   scope.Key,
+		TagValue: scope.Value,
 	}
 }
 

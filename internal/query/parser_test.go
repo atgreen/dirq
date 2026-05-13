@@ -33,8 +33,8 @@ func TestParseSelectFromWhereOrderBy(t *testing.T) {
 	if q.From.All {
 		t.Error("expected scoped FROM, got All")
 	}
-	if q.From.Scope.Kind != "tag" || q.From.Scope.Value != "prod" {
-		t.Errorf("FROM: got %s:%s, want tag:prod", q.From.Scope.Kind, q.From.Scope.Value)
+	if q.From.Scope.Kind != "tag" || q.From.Scope.Key != "prod" {
+		t.Errorf("FROM: got %s:%s, want tag:prod", q.From.Scope.Kind, q.From.Scope.Key)
 	}
 
 	// WHERE
@@ -117,8 +117,8 @@ func TestParseGroupFromWhere(t *testing.T) {
 	if q.From == nil || q.From.Scope == nil {
 		t.Fatal("expected FROM group scope")
 	}
-	if q.From.Scope.Kind != "group" || q.From.Scope.Value != "webservers" {
-		t.Errorf("FROM: got %s:%s, want group:webservers", q.From.Scope.Kind, q.From.Scope.Value)
+	if q.From.Scope.Kind != "group" || q.From.Scope.Key != "webservers" {
+		t.Errorf("FROM: got %s:%s, want group:webservers", q.From.Scope.Kind, q.From.Scope.Key)
 	}
 
 	// WHERE cpu.cores >= 8
@@ -156,8 +156,8 @@ func TestExtractModulesMultiple(t *testing.T) {
 func TestExtractTarget(t *testing.T) {
 	q, _ := Parse(`SELECT hostname FROM tag:prod`)
 	target := ExtractTarget(q)
-	if target.All || target.Kind != "tag" || target.Value != "prod" {
-		t.Errorf("target: got %+v", target)
+	if target.All || target.TagKey != "prod" {
+		t.Errorf("target: got %+v, want TagKey=prod", target)
 	}
 
 	q2, _ := Parse(`SELECT hostname FROM *`)

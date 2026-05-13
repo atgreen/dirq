@@ -129,8 +129,8 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	target := query.ExtractTarget(parsed)
 	agentFilter := db.ListAgentsFilter{}
 	if !target.All {
-		agentFilter.Tag = target.Kind
-		agentFilter.TagValue = target.Value
+		agentFilter.Tag = target.TagKey
+		agentFilter.TagValue = target.TagValue
 	}
 	agents, err := s.db.ListAgents(ctx, agentFilter)
 	if err != nil {

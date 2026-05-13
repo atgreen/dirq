@@ -105,19 +105,34 @@ func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.Serve
 		s.execMu.Unlock()
 	}()
 
-	// Send to the agent.
+	// Find the stream to send through. If the target agent is a zone
+	// leader, send directly. Otherwise, find its zone leader ancestor
+	// and route through that zone leader's stream — the mesh relays it.
 	s.mu.RLock()
 	as, ok := s.streams[agentID]
 	s.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("agent %s not connected", agentID)
+		// Agent is not directly connected (it's a relay or leaf).
+		// Find its zone leader and route through that stream.
+		zl, err := s.db.FindZoneLeader(ctx, agentID)
+		if err != nil {
+			return nil, fmt.Errorf("agent %s not connected and no zone leader found: %w", agentID, err)
+		}
+		s.mu.RLock()
+		as, ok = s.streams[zl.ID]
+		s.mu.RUnlock()
+		if !ok {
+			return nil, fmt.Errorf("zone leader %s for agent %s is not connected", zl.ID, agentID)
+		}
+		s.log.Info("routing exec through zone leader",
+			"target", agentID, "zone_leader", zl.ID, "zone_leader_host", zl.Hostname)
 	}
 
 	select {
 	case as.send <- msg:
 	default:
-		return nil, fmt.Errorf("agent %s send buffer full", agentID)
+		return nil, fmt.Errorf("send buffer full for stream handling agent %s", agentID)
 	}
 
 	// Wait for response.

@@ -268,13 +268,17 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 		a.upstreamStream = stream
 	}
 
-	// Send Hello.
+	return a.sendHello()
+}
+
+// sendHello sends an AgentHello on the upstream stream. Must be the first
+// message on any new stream — the server/relay rejects streams without it.
+func (a *Agent) sendHello() error {
 	caps := []string{}
 	for name := range modules.Registry() {
 		caps = append(caps, name)
 	}
-
-	err = a.upstreamStream.Send(&pb.AgentMessage{
+	return a.upstreamStream.Send(&pb.AgentMessage{
 		Payload: &pb.AgentMessage_Hello{
 			Hello: &pb.AgentHello{
 				AgentId:      a.agentID,
@@ -283,11 +287,6 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 			},
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("send hello: %w", err)
-	}
-
-	return nil
 }
 
 // connectToServer is the fallback when a parent peer is unreachable.
@@ -314,6 +313,11 @@ func (a *Agent) connectToServer(ctx context.Context) error {
 		return fmt.Errorf("open server stream: %w", err)
 	}
 	a.upstreamStream = stream
+
+	// Send Hello — the server rejects streams that don't start with Hello.
+	if err := a.sendHello(); err != nil {
+		return fmt.Errorf("send hello on fallback: %w", err)
+	}
 
 	return nil
 }
@@ -380,19 +384,31 @@ func (a *Agent) sendHeartbeat() {
 func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) {
 	switch p := msg.Payload.(type) {
 	case *pb.ServerMessage_QueryRequest:
+		// Queries are broadcast — execute locally AND relay to downstream peers.
 		go a.executeQuery(ctx, p.QueryRequest)
 	case *pb.ServerMessage_PeerUpdate:
 		a.log.Info("peer update received", "new_role", p.PeerUpdate.NewRole)
-		// TODO: handle topology changes
 	case *pb.ServerMessage_UpdatePush:
 		a.log.Info("update push received", "version", p.UpdatePush.Version)
-		// TODO: handle agent updates
 	case *pb.ServerMessage_ExecRequest:
-		go a.handleExecRequest(ctx, p.ExecRequest)
+		// Exec is targeted — if it's for us, execute. Otherwise relay downstream.
+		if p.ExecRequest.AgentId == a.agentID {
+			go a.handleExecRequest(ctx, p.ExecRequest)
+		} else {
+			a.relayToDownstreams(msg)
+		}
 	case *pb.ServerMessage_PutFile:
-		go a.handlePutFile(ctx, p.PutFile)
+		if p.PutFile.AgentId == a.agentID {
+			go a.handlePutFile(ctx, p.PutFile)
+		} else {
+			a.relayToDownstreams(msg)
+		}
 	case *pb.ServerMessage_FetchFile:
-		go a.handleFetchFile(ctx, p.FetchFile)
+		if p.FetchFile.AgentId == a.agentID {
+			go a.handleFetchFile(ctx, p.FetchFile)
+		} else {
+			a.relayToDownstreams(msg)
+		}
 	}
 }
 
@@ -443,12 +459,15 @@ func (a *Agent) sendQueryResult(queryID, hostname string, success bool, errMsg s
 }
 
 func (a *Agent) relayQueryToDownstreams(qr *pb.QueryRequest) {
-	msg := &pb.ServerMessage{
+	a.relayToDownstreams(&pb.ServerMessage{
 		Payload: &pb.ServerMessage_QueryRequest{
 			QueryRequest: qr,
 		},
-	}
+	})
+}
 
+// relayToDownstreams sends any ServerMessage to all connected downstream peers.
+func (a *Agent) relayToDownstreams(msg *pb.ServerMessage) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 

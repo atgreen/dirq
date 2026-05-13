@@ -86,10 +86,18 @@ func (db *DB) ListAgents(ctx context.Context, f ListAgentsFilter) ([]Agent, erro
 		args = append(args, f.ParentID)
 		argIdx++
 	}
-	if f.Tag != "" && f.TagValue != "" {
-		conditions = append(conditions, fmt.Sprintf("tags->>$%d = $%d", argIdx, argIdx+1))
-		args = append(args, f.Tag, f.TagValue)
-		argIdx += 2
+	if f.Tag != "" {
+		if f.TagValue != "" {
+			// Match specific tag key=value: tags->>'env' = 'prod'
+			conditions = append(conditions, fmt.Sprintf("tags->>$%d = $%d", argIdx, argIdx+1))
+			args = append(args, f.Tag, f.TagValue)
+			argIdx += 2
+		} else {
+			// Match tag key exists (any value): tags ? 'env'
+			conditions = append(conditions, fmt.Sprintf("tags ? $%d", argIdx))
+			args = append(args, f.Tag)
+			argIdx++
+		}
 	}
 
 	query := `SELECT id, hostname, os, os_version, arch, agent_version, listen_addr, role,

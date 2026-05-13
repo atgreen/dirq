@@ -33,10 +33,15 @@ type FromClause struct {
 	Scope *Scope `parser:"| @@ )"`
 }
 
-// Scope is a scoped target like tag:prod or group:webservers.
+// Scope is a scoped target like tag:env=prod, tag:env, or group:webservers.
+//
+//	FROM tag:env=prod    → agents with tag key "env" and value "prod"
+//	FROM tag:env         → agents with tag key "env" (any value)
+//	FROM group:webservers → agents with tag key "group" and value "webservers"
 type Scope struct {
 	Kind  string `parser:"@('tag' | 'group') ':'"`
-	Value string `parser:"@Ident"`
+	Key   string `parser:"@Ident"`
+	Value string `parser:"( '=' @Ident )?"`
 }
 
 // WhereClause is a list of conditions joined by AND.
