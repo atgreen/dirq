@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Web server agent — has nginx installed
+FROM localhost/dirq_dirq-agent:latest
+RUN dnf install -y openssl curl nginx httpd-tools && dnf clean all
+RUN echo "webserver" > /etc/dirq-role

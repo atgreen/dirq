@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: MIT
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-server-pod
+  labels:
+    app: dirq-server
+spec:
+  containers:
+    - name: postgres
+      image: docker.io/library/postgres:17
+      env:
+        - name: POSTGRES_USER
+          value: dirq
+        - name: POSTGRES_PASSWORD
+          value: dirq
+        - name: POSTGRES_DB
+          value: dirq
+      ports:
+        - containerPort: 5432
+
+    - name: dirq-server
+      image: localhost/dirq_dirq-server:latest
+      env:
+        - name: DIRQ_GRPC_ADDR
+          value: ":50051"
+        - name: DIRQ_HTTP_ADDR
+          value: ":8080"
+        - name: DIRQ_DB_URL
+          value: "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"
+        - name: DIRQ_POD_ID
+          value: "demo-server"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_AUTH_DISABLED
+          value: "true"
+        - name: DIRQ_MAX_ZONE_LEADERS
+          value: "3"
+        - name: DIRQ_MAX_CHILDREN
+          value: "10"
+      ports:
+        - containerPort: 50051
+          hostPort: 50051
+        - containerPort: 8080
+          hostPort: 8090

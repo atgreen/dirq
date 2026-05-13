@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT
+# Demo site playbook — runs through the DirQ mesh, not SSH
+
+---
+- name: Production health check
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Get hostname
+      raw: hostname
+      register: host_result
+
+    - name: Get uptime
+      raw: uptime
+      register: uptime_result
+
+    - name: Check disk space
+      raw: df -h / | tail -1
+      register: disk_result
+
+    - name: Check role marker
+      raw: cat /etc/dirq-role 2>/dev/null || echo "unknown"
+      register: role_result
+
+    - name: Report
+      debug:
+        msg: >
+          Host={{ host_result.stdout | trim }},
+          Role={{ role_result.stdout | trim }},
+          Uptime={{ uptime_result.stdout | trim }},
+          Disk={{ disk_result.stdout | trim }}
