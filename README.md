@@ -573,6 +573,91 @@ Use in playbook conditionals:
     - command: systemctl status myapp
 ```
 
+### Query-Based Inventories
+
+The inventory plugin accepts an optional `query` parameter that filters which
+hosts appear in the inventory. Only hosts matching the DirQ query are included.
+The query runs in real time against the agent mesh — agents filter locally and
+only matches respond.
+
+**Inventory source files:**
+
+```yaml
+# inventories/all-hosts.yml — all online hosts
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-server:8080
+
+# inventories/vulnerable-openssl.yml — only hosts with OpenSSL 1.x
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-server:8080
+query: "SELECT os_info.hostname FROM * WHERE packages.name = 'openssl' AND packages.version LIKE '1.%'"
+
+# inventories/disks-full.yml — only hosts with disks over 90%
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-server:8080
+query: "SELECT os_info.hostname FROM * WHERE disk.pct_used > 90"
+
+# inventories/sshd-stopped.yml — only hosts where sshd is down
+plugin: atgreen.dirq.dirq
+server_url: http://dirq-server:8080
+query: "SELECT os_info.hostname FROM * WHERE services.name = 'sshd' AND services.state = 'stopped'"
+```
+
+**Using with AAP:**
+
+Each YAML file becomes an Inventory Source in AAP (type: "Sourced from a Project").
+Create job templates that pair each inventory with a remediation playbook:
+
+| Job Template | Inventory Source | Playbook | Targets |
+|---|---|---|---|
+| Patch OpenSSL | vulnerable-openssl.yml | update-openssl.yml | Hosts with OpenSSL 1.x |
+| Fix Full Disks | disks-full.yml | cleanup-disks.yml | Hosts over 90% disk |
+| Restart SSHD | sshd-stopped.yml | restart-sshd.yml | Hosts where sshd is down |
+
+When AAP syncs the inventory, the DirQ query runs against the mesh in real time.
+The resulting host list is always current — after patching OpenSSL, the next sync
+returns fewer hosts because the query no longer matches the patched ones.
+
+**The flow:**
+
+```
+AAP Inventory Sync
+  │
+  ▼
+Inventory plugin runs DirQ query through the mesh
+  → Agents check locally (packages, disk, services)
+  → Only matching agents respond
+  │
+  ▼
+AAP inventory contains exactly the matching hosts
+  (e.g. 3 hosts out of 10,000 with vulnerable OpenSSL)
+  │
+  ▼
+Job template runs playbook against only those 3 hosts
+  → connection: atgreen.dirq.dirq (through the mesh, no SSH)
+```
+
+**Why this is better than `hosts: all` with `when:` conditionals:**
+
+- Traditional approach: AAP connects to all 10,000 hosts via SSH just to check
+  a condition, then skips 9,997 of them. Slow, wasteful, requires SSH access to
+  every host.
+- Query-based inventory: The DirQ query runs in seconds across the mesh. Agents
+  filter locally. AAP only connects to the 3 matching hosts. No SSH needed for
+  the inventory sync — it's an HTTP call to the DirQ server.
+
+**Standalone usage (without AAP):**
+
+```bash
+# Only target hosts with full disks
+DIRQ_QUERY="SELECT os_info.hostname FROM * WHERE disk.pct_used > 90" \
+  ansible-playbook -i ansible/dirq_inventory.py cleanup-disks.yml
+
+# Only target hosts with a specific package
+DIRQ_QUERY="SELECT os_info.hostname FROM * WHERE packages.name = 'nginx'" \
+  ansible-playbook -i ansible/dirq_inventory.py update-nginx.yml
+```
+
 ## Execution Transport
 
 The DirQ relay mesh doubles as an **Ansible connection transport**. AAP runs playbooks against managed hosts through the mesh — no SSH, no WinRM, no inbound firewall rules.
