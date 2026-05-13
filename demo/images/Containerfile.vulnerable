@@ -2,7 +2,7 @@
 # Vulnerable agent — old packages that need patching
 FROM localhost/dirq_dirq-agent:latest
 # Install an older openssl version (simulated by just having the package)
-RUN dnf install -y openssl curl && dnf clean all
+RUN dnf install -y --allowerasing openssl curl && dnf clean all
 # Create a fake "old version" marker
 RUN echo "1.1.1k-fips" > /etc/openssl-version-override
 RUN echo "vulnerable" > /etc/dirq-role
