@@ -60,9 +60,11 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			token = r.URL.Query().Get("token")
 		}
 		if token == "" {
-			// In dev mode, allow unauthenticated access
-			// TODO: make this configurable
-			next(w, r)
+			if s.cfg.AuthDisabled {
+				next(w, r)
+				return
+			}
+			httpError(w, http.StatusUnauthorized, "authentication required — provide an API token via Authorization header or ?token= query parameter")
 			return
 		}
 

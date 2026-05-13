@@ -393,6 +393,7 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | `DIRQ_POD_ID` | hostname | Unique pod identifier (for multi-pod deployments) |
 | `DIRQ_MAX_ZONE_LEADERS` | `5` | Max agents connecting directly to the server |
 | `DIRQ_MAX_CHILDREN` | `50` | Max children per relay or zone leader node |
+| `DIRQ_AUTH_DISABLED` | `false` | Disable API token auth (not recommended) |
 
 ### Agent (environment variables)
 
@@ -441,16 +442,19 @@ encrypted unless you explicitly opt out.
 ### Default: auto-generated certs (zero config)
 
 With no TLS variables set, the server and agent auto-generate self-signed
-certificates on startup. All gRPC traffic is encrypted. You'll see a log
-warning:
+certificates on startup. All gRPC and REST API traffic is encrypted. You'll
+see a log warning:
 
 ```
 WARN No TLS certs configured — auto-generating self-signed certificates.
      Set DIRQ_TLS_CERT and DIRQ_TLS_KEY for production use.
 ```
 
-This is fine for development and testing. For production, use user-supplied
-or manually generated certs.
+**Security note:** Auto-generated certs protect against **passive sniffing**
+(traffic is encrypted), but do NOT protect against **man-in-the-middle attacks**
+or **rogue agent/server impersonation**. The auto-gen mode sets
+`InsecureSkipVerify` since there's no shared CA to verify against. For
+production, use user-supplied certs with a shared CA for full mTLS.
 
 ### Self-signed certificates (manual)
 
@@ -529,21 +533,69 @@ The server and agent will log a warning:
 WARN TLS explicitly disabled — all gRPC connections are unencrypted. NOT RECOMMENDED for production.
 ```
 
-## API Tokens
+## Authentication
+
+API authentication is **required by default**. All REST API endpoints (except
+`/healthz`) require a valid API token in the `Authorization` header or `?token=`
+query parameter.
+
+### Bootstrap token
+
+On first startup, if no API tokens exist in the database, the server
+auto-generates a bootstrap token and prints it to the log:
+
+```
+INFO ========================================
+INFO NO API TOKENS FOUND — bootstrap token created
+INFO Save this token — it cannot be retrieved later:
+INFO   dq_a1b2c3d4e5f6...
+INFO Use: export DIRQ_TOKEN=dq_a1b2c3d4e5f6...
+INFO ========================================
+```
+
+Save this token immediately. Use it to create additional tokens.
+
+### Managing tokens
 
 ```bash
 # Create a token
 ./bin/dirq token create my-token --scope admin
 
+# Create a read-only token
+./bin/dirq token create readonly-token --scope readonly
+
 # List tokens
 ./bin/dirq token list
 
-# Use with CLI
+# Delete a token
+./bin/dirq token delete my-token
+```
+
+### Using tokens
+
+```bash
+# CLI
 export DIRQ_TOKEN=<token-value>
 ./bin/dirq hosts list
 
-# Use with curl
-curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/hosts
+# curl
+curl -H "Authorization: Bearer <token>" https://localhost:8080/api/v1/hosts
+
+# Ansible (via credential or env var)
+export DIRQ_TOKEN=<token-value>
+```
+
+### Disabling auth (not recommended)
+
+For isolated test environments only:
+
+```bash
+DIRQ_AUTH_DISABLED=true ./bin/dirq-server
+```
+
+The server will log a warning:
+```
+WARN API authentication disabled (DIRQ_AUTH_DISABLED=true) — NOT RECOMMENDED for production
 ```
 
 ## REST API

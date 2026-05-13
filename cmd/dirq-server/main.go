@@ -25,6 +25,7 @@ func main() {
 		PodID:              envOr("DIRQ_POD_ID", mustHostname()),
 		MaxZoneLeaders:     envInt("DIRQ_MAX_ZONE_LEADERS", 0),
 		MaxChildrenPerNode: envInt("DIRQ_MAX_CHILDREN", 0),
+		AuthDisabled:       os.Getenv("DIRQ_AUTH_DISABLED") == "true",
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -44,6 +45,26 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("database migrations complete")
+
+	// Bootstrap: if no API tokens exist and auth is enabled, create one.
+	if !cfg.AuthDisabled {
+		tokens, _ := database.ListTokens(ctx)
+		if len(tokens) == 0 {
+			plaintext, err := database.CreateToken(ctx, "bootstrap", "admin")
+			if err != nil {
+				log.Error("failed to create bootstrap token", "error", err)
+			} else {
+				log.Info("========================================")
+				log.Info("NO API TOKENS FOUND — bootstrap token created")
+				log.Info("Save this token — it cannot be retrieved later:")
+				log.Info("  " + plaintext)
+				log.Info("Use: export DIRQ_TOKEN=" + plaintext)
+				log.Info("========================================")
+			}
+		}
+	} else {
+		log.Warn("API authentication disabled (DIRQ_AUTH_DISABLED=true) — NOT RECOMMENDED for production")
+	}
 
 	// Start server.
 	srv := server.New(cfg, database, log)

@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -28,6 +29,7 @@ type Config struct {
 	PodID              string // unique identifier for this server pod
 	MaxZoneLeaders     int    // topology: max zone leaders (default 50)
 	MaxChildrenPerNode int    // topology: max children per node (default 50)
+	AuthDisabled       bool   // DIRQ_AUTH_DISABLED=true to allow anonymous API access
 }
 
 // Server is the DirQ server.
@@ -115,11 +117,26 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("grpc listen: %w", err)
 	}
 
-	// HTTP server (REST API + Web UI)
+	// HTTP/HTTPS server (REST API + Web UI)
 	mux := s.setupHTTPRoutes()
 	s.httpSv = &http.Server{
 		Addr:    s.cfg.HTTPAddr,
 		Handler: mux,
+	}
+
+	// Use HTTPS when TLS certs are available.
+	if tlsCfg.Enabled() && tlsCfg.CertFile != "" {
+		httpTLS, err := tls.LoadX509KeyPair(tlsCfg.CertFile, tlsCfg.KeyFile)
+		if err != nil {
+			return fmt.Errorf("HTTP TLS setup: %w", err)
+		}
+		s.httpSv.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{httpTLS},
+			MinVersion:   tls.VersionTLS12,
+		}
+		s.log.Info("HTTPS enabled for REST API", "addr", s.cfg.HTTPAddr)
+	} else {
+		s.log.Warn("REST API running on plain HTTP")
 	}
 
 	httpLis, err := net.Listen("tcp", s.cfg.HTTPAddr)
@@ -147,7 +164,13 @@ func (s *Server) Start(ctx context.Context) error {
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- s.grpcSv.Serve(grpcLis) }()
-	go func() { errCh <- s.httpSv.Serve(httpLis) }()
+	go func() {
+		if s.httpSv.TLSConfig != nil {
+			errCh <- s.httpSv.ServeTLS(httpLis, "", "") // certs already in TLSConfig
+		} else {
+			errCh <- s.httpSv.Serve(httpLis)
+		}
+	}()
 
 	select {
 	case err := <-errCh:
