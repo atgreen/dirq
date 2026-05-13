@@ -447,6 +447,7 @@ type AgentMessage struct {
 	//	*AgentMessage_FileChunk
 	//	*AgentMessage_FetchResponse
 	//	*AgentMessage_AggregatedResult
+	//	*AgentMessage_PeerDisconnected
 	Payload       isAgentMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -552,6 +553,15 @@ func (x *AgentMessage) GetAggregatedResult() *AggregatedQueryResult {
 	return nil
 }
 
+func (x *AgentMessage) GetPeerDisconnected() *PeerDisconnected {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentMessage_PeerDisconnected); ok {
+			return x.PeerDisconnected
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Payload interface {
 	isAgentMessage_Payload()
 }
@@ -584,6 +594,10 @@ type AgentMessage_AggregatedResult struct {
 	AggregatedResult *AggregatedQueryResult `protobuf:"bytes,7,opt,name=aggregated_result,json=aggregatedResult,proto3,oneof"` // batched results from subtree
 }
 
+type AgentMessage_PeerDisconnected struct {
+	PeerDisconnected *PeerDisconnected `protobuf:"bytes,8,opt,name=peer_disconnected,json=peerDisconnected,proto3,oneof"` // child peer lost — propagate up
+}
+
 func (*AgentMessage_Heartbeat) isAgentMessage_Payload() {}
 
 func (*AgentMessage_QueryResult) isAgentMessage_Payload() {}
@@ -597,6 +611,55 @@ func (*AgentMessage_FileChunk) isAgentMessage_Payload() {}
 func (*AgentMessage_FetchResponse) isAgentMessage_Payload() {}
 
 func (*AgentMessage_AggregatedResult) isAgentMessage_Payload() {}
+
+func (*AgentMessage_PeerDisconnected) isAgentMessage_Payload() {}
+
+// PeerDisconnected is sent upstream when a relay detects a child has
+// disconnected. The server uses this to mark the agent (and its subtree)
+// offline immediately, instead of waiting for heartbeat expiry.
+type PeerDisconnected struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"` // the agent that disconnected
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PeerDisconnected) Reset() {
+	*x = PeerDisconnected{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PeerDisconnected) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PeerDisconnected) ProtoMessage() {}
+
+func (x *PeerDisconnected) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PeerDisconnected.ProtoReflect.Descriptor instead.
+func (*PeerDisconnected) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *PeerDisconnected) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
 
 type ServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -619,7 +682,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[6]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -631,7 +694,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[6]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -644,7 +707,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{6}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ServerMessage) GetPayload() isServerMessage_Payload {
@@ -788,7 +851,7 @@ type AgentHello struct {
 
 func (x *AgentHello) Reset() {
 	*x = AgentHello{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[7]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -800,7 +863,7 @@ func (x *AgentHello) String() string {
 func (*AgentHello) ProtoMessage() {}
 
 func (x *AgentHello) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[7]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -813,7 +876,7 @@ func (x *AgentHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentHello.ProtoReflect.Descriptor instead.
 func (*AgentHello) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{7}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *AgentHello) GetAgentId() string {
@@ -848,7 +911,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[8]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -860,7 +923,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[8]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -873,7 +936,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{8}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Heartbeat) GetAgentId() string {
@@ -915,7 +978,7 @@ type QueryRequest struct {
 
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[9]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -927,7 +990,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[9]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -940,7 +1003,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{9}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *QueryRequest) GetQueryId() string {
@@ -1003,7 +1066,7 @@ type Filter struct {
 
 func (x *Filter) Reset() {
 	*x = Filter{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[10]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1015,7 +1078,7 @@ func (x *Filter) String() string {
 func (*Filter) ProtoMessage() {}
 
 func (x *Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[10]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1028,7 +1091,7 @@ func (x *Filter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Filter.ProtoReflect.Descriptor instead.
 func (*Filter) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{10}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Filter) GetField() string {
@@ -1067,7 +1130,7 @@ type QueryResult struct {
 
 func (x *QueryResult) Reset() {
 	*x = QueryResult{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[11]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1079,7 +1142,7 @@ func (x *QueryResult) String() string {
 func (*QueryResult) ProtoMessage() {}
 
 func (x *QueryResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[11]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1092,7 +1155,7 @@ func (x *QueryResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryResult.ProtoReflect.Descriptor instead.
 func (*QueryResult) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{11}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *QueryResult) GetQueryId() string {
@@ -1158,7 +1221,7 @@ type AggregatedQueryResult struct {
 
 func (x *AggregatedQueryResult) Reset() {
 	*x = AggregatedQueryResult{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[12]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1170,7 +1233,7 @@ func (x *AggregatedQueryResult) String() string {
 func (*AggregatedQueryResult) ProtoMessage() {}
 
 func (x *AggregatedQueryResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[12]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1183,7 +1246,7 @@ func (x *AggregatedQueryResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AggregatedQueryResult.ProtoReflect.Descriptor instead.
 func (*AggregatedQueryResult) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{12}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AggregatedQueryResult) GetQueryId() string {
@@ -1209,13 +1272,16 @@ type PeerUpdate struct {
 	NewParentAddr string `protobuf:"bytes,3,opt,name=new_parent_addr,json=newParentAddr,proto3" json:"new_parent_addr,omitempty"`
 	// Fallback addresses for the new parent.
 	NewFallbackAddrs []string `protobuf:"bytes,4,rep,name=new_fallback_addrs,json=newFallbackAddrs,proto3" json:"new_fallback_addrs,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Target agent ID. If set, only the agent with this ID should apply
+	// the update; other agents relay it downstream.
+	TargetAgentId string `protobuf:"bytes,5,opt,name=target_agent_id,json=targetAgentId,proto3" json:"target_agent_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PeerUpdate) Reset() {
 	*x = PeerUpdate{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[13]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1227,7 +1293,7 @@ func (x *PeerUpdate) String() string {
 func (*PeerUpdate) ProtoMessage() {}
 
 func (x *PeerUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[13]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1240,7 +1306,7 @@ func (x *PeerUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerUpdate.ProtoReflect.Descriptor instead.
 func (*PeerUpdate) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{13}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PeerUpdate) GetNewPeers() []*PeerInfo {
@@ -1271,6 +1337,13 @@ func (x *PeerUpdate) GetNewFallbackAddrs() []string {
 	return nil
 }
 
+func (x *PeerUpdate) GetTargetAgentId() string {
+	if x != nil {
+		return x.TargetAgentId
+	}
+	return ""
+}
+
 type AgentUpdatePush struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -1284,7 +1357,7 @@ type AgentUpdatePush struct {
 
 func (x *AgentUpdatePush) Reset() {
 	*x = AgentUpdatePush{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1296,7 +1369,7 @@ func (x *AgentUpdatePush) String() string {
 func (*AgentUpdatePush) ProtoMessage() {}
 
 func (x *AgentUpdatePush) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1309,7 +1382,7 @@ func (x *AgentUpdatePush) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentUpdatePush.ProtoReflect.Descriptor instead.
 func (*AgentUpdatePush) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{14}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AgentUpdatePush) GetVersion() string {
@@ -1371,7 +1444,7 @@ type ExecRequest struct {
 
 func (x *ExecRequest) Reset() {
 	*x = ExecRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1383,7 +1456,7 @@ func (x *ExecRequest) String() string {
 func (*ExecRequest) ProtoMessage() {}
 
 func (x *ExecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1396,7 +1469,7 @@ func (x *ExecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecRequest.ProtoReflect.Descriptor instead.
 func (*ExecRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{15}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ExecRequest) GetRequestId() string {
@@ -1502,7 +1575,7 @@ type ExecResponse struct {
 
 func (x *ExecResponse) Reset() {
 	*x = ExecResponse{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1514,7 +1587,7 @@ func (x *ExecResponse) String() string {
 func (*ExecResponse) ProtoMessage() {}
 
 func (x *ExecResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1527,7 +1600,7 @@ func (x *ExecResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecResponse.ProtoReflect.Descriptor instead.
 func (*ExecResponse) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{16}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ExecResponse) GetRequestId() string {
@@ -1620,7 +1693,7 @@ type PutFileRequest struct {
 
 func (x *PutFileRequest) Reset() {
 	*x = PutFileRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1632,7 +1705,7 @@ func (x *PutFileRequest) String() string {
 func (*PutFileRequest) ProtoMessage() {}
 
 func (x *PutFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1645,7 +1718,7 @@ func (x *PutFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutFileRequest.ProtoReflect.Descriptor instead.
 func (*PutFileRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{17}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PutFileRequest) GetRequestId() string {
@@ -1736,7 +1809,7 @@ type FetchFileRequest struct {
 
 func (x *FetchFileRequest) Reset() {
 	*x = FetchFileRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1748,7 +1821,7 @@ func (x *FetchFileRequest) String() string {
 func (*FetchFileRequest) ProtoMessage() {}
 
 func (x *FetchFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1761,7 +1834,7 @@ func (x *FetchFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchFileRequest.ProtoReflect.Descriptor instead.
 func (*FetchFileRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{18}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *FetchFileRequest) GetRequestId() string {
@@ -1837,7 +1910,7 @@ type FetchFileResponse struct {
 
 func (x *FetchFileResponse) Reset() {
 	*x = FetchFileResponse{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1849,7 +1922,7 @@ func (x *FetchFileResponse) String() string {
 func (*FetchFileResponse) ProtoMessage() {}
 
 func (x *FetchFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1862,7 +1935,7 @@ func (x *FetchFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchFileResponse.ProtoReflect.Descriptor instead.
 func (*FetchFileResponse) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{19}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *FetchFileResponse) GetRequestId() string {
@@ -1935,7 +2008,7 @@ type FileChunk struct {
 
 func (x *FileChunk) Reset() {
 	*x = FileChunk{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[20]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1947,7 +2020,7 @@ func (x *FileChunk) String() string {
 func (*FileChunk) ProtoMessage() {}
 
 func (x *FileChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[20]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1960,7 +2033,7 @@ func (x *FileChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileChunk.ProtoReflect.Descriptor instead.
 func (*FileChunk) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{20}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *FileChunk) GetRequestId() string {
@@ -2034,7 +2107,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\"a\n" +
 	"\fPeerResponse\x12'\n" +
 	"\x05peers\x18\x02 \x03(\v2\x11.dirq.v1.PeerInfoR\x05peers\x12(\n" +
-	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\"\xbc\x03\n" +
+	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\"\x86\x04\n" +
 	"\fAgentMessage\x122\n" +
 	"\theartbeat\x18\x01 \x01(\v2\x12.dirq.v1.HeartbeatH\x00R\theartbeat\x129\n" +
 	"\fquery_result\x18\x02 \x01(\v2\x14.dirq.v1.QueryResultH\x00R\vqueryResult\x12+\n" +
@@ -2043,8 +2116,11 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\n" +
 	"file_chunk\x18\x05 \x01(\v2\x12.dirq.v1.FileChunkH\x00R\tfileChunk\x12C\n" +
 	"\x0efetch_response\x18\x06 \x01(\v2\x1a.dirq.v1.FetchFileResponseH\x00R\rfetchResponse\x12M\n" +
-	"\x11aggregated_result\x18\a \x01(\v2\x1e.dirq.v1.AggregatedQueryResultH\x00R\x10aggregatedResultB\t\n" +
-	"\apayload\"\x8a\x04\n" +
+	"\x11aggregated_result\x18\a \x01(\v2\x1e.dirq.v1.AggregatedQueryResultH\x00R\x10aggregatedResult\x12H\n" +
+	"\x11peer_disconnected\x18\b \x01(\v2\x19.dirq.v1.PeerDisconnectedH\x00R\x10peerDisconnectedB\t\n" +
+	"\apayload\"-\n" +
+	"\x10PeerDisconnected\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x8a\x04\n" +
 	"\rServerMessage\x12<\n" +
 	"\rquery_request\x18\x01 \x01(\v2\x15.dirq.v1.QueryRequestH\x00R\fqueryRequest\x126\n" +
 	"\vpeer_update\x18\x02 \x01(\v2\x13.dirq.v1.PeerUpdateH\x00R\n" +
@@ -2092,13 +2168,14 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\fcollected_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\vcollectedAt\"b\n" +
 	"\x15AggregatedQueryResult\x12\x19\n" +
 	"\bquery_id\x18\x01 \x01(\tR\aqueryId\x12.\n" +
-	"\aresults\x18\x02 \x03(\v2\x14.dirq.v1.QueryResultR\aresults\"\xc1\x01\n" +
+	"\aresults\x18\x02 \x03(\v2\x14.dirq.v1.QueryResultR\aresults\"\xe9\x01\n" +
 	"\n" +
 	"PeerUpdate\x12.\n" +
 	"\tnew_peers\x18\x01 \x03(\v2\x11.dirq.v1.PeerInfoR\bnewPeers\x12-\n" +
 	"\bnew_role\x18\x02 \x01(\x0e2\x12.dirq.v1.AgentRoleR\anewRole\x12&\n" +
 	"\x0fnew_parent_addr\x18\x03 \x01(\tR\rnewParentAddr\x12,\n" +
-	"\x12new_fallback_addrs\x18\x04 \x03(\tR\x10newFallbackAddrs\"\x85\x01\n" +
+	"\x12new_fallback_addrs\x18\x04 \x03(\tR\x10newFallbackAddrs\x12&\n" +
+	"\x0ftarget_agent_id\x18\x05 \x01(\tR\rtargetAgentId\"\x85\x01\n" +
 	"\x0fAgentUpdatePush\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
 	"\x06binary\x18\x02 \x01(\fR\x06binary\x12\x1c\n" +
@@ -2210,7 +2287,7 @@ func file_proto_dirq_v1_dirq_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_dirq_v1_dirq_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_proto_dirq_v1_dirq_proto_goTypes = []any{
 	(AgentRole)(0),                // 0: dirq.v1.AgentRole
 	(*RegisterRequest)(nil),       // 1: dirq.v1.RegisterRequest
@@ -2219,67 +2296,69 @@ var file_proto_dirq_v1_dirq_proto_goTypes = []any{
 	(*PeerRequest)(nil),           // 4: dirq.v1.PeerRequest
 	(*PeerResponse)(nil),          // 5: dirq.v1.PeerResponse
 	(*AgentMessage)(nil),          // 6: dirq.v1.AgentMessage
-	(*ServerMessage)(nil),         // 7: dirq.v1.ServerMessage
-	(*AgentHello)(nil),            // 8: dirq.v1.AgentHello
-	(*Heartbeat)(nil),             // 9: dirq.v1.Heartbeat
-	(*QueryRequest)(nil),          // 10: dirq.v1.QueryRequest
-	(*Filter)(nil),                // 11: dirq.v1.Filter
-	(*QueryResult)(nil),           // 12: dirq.v1.QueryResult
-	(*AggregatedQueryResult)(nil), // 13: dirq.v1.AggregatedQueryResult
-	(*PeerUpdate)(nil),            // 14: dirq.v1.PeerUpdate
-	(*AgentUpdatePush)(nil),       // 15: dirq.v1.AgentUpdatePush
-	(*ExecRequest)(nil),           // 16: dirq.v1.ExecRequest
-	(*ExecResponse)(nil),          // 17: dirq.v1.ExecResponse
-	(*PutFileRequest)(nil),        // 18: dirq.v1.PutFileRequest
-	(*FetchFileRequest)(nil),      // 19: dirq.v1.FetchFileRequest
-	(*FetchFileResponse)(nil),     // 20: dirq.v1.FetchFileResponse
-	(*FileChunk)(nil),             // 21: dirq.v1.FileChunk
-	nil,                           // 22: dirq.v1.RegisterRequest.TagsEntry
-	nil,                           // 23: dirq.v1.ExecRequest.EnvironmentEntry
-	(*timestamppb.Timestamp)(nil), // 24: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 25: google.protobuf.Struct
+	(*PeerDisconnected)(nil),      // 7: dirq.v1.PeerDisconnected
+	(*ServerMessage)(nil),         // 8: dirq.v1.ServerMessage
+	(*AgentHello)(nil),            // 9: dirq.v1.AgentHello
+	(*Heartbeat)(nil),             // 10: dirq.v1.Heartbeat
+	(*QueryRequest)(nil),          // 11: dirq.v1.QueryRequest
+	(*Filter)(nil),                // 12: dirq.v1.Filter
+	(*QueryResult)(nil),           // 13: dirq.v1.QueryResult
+	(*AggregatedQueryResult)(nil), // 14: dirq.v1.AggregatedQueryResult
+	(*PeerUpdate)(nil),            // 15: dirq.v1.PeerUpdate
+	(*AgentUpdatePush)(nil),       // 16: dirq.v1.AgentUpdatePush
+	(*ExecRequest)(nil),           // 17: dirq.v1.ExecRequest
+	(*ExecResponse)(nil),          // 18: dirq.v1.ExecResponse
+	(*PutFileRequest)(nil),        // 19: dirq.v1.PutFileRequest
+	(*FetchFileRequest)(nil),      // 20: dirq.v1.FetchFileRequest
+	(*FetchFileResponse)(nil),     // 21: dirq.v1.FetchFileResponse
+	(*FileChunk)(nil),             // 22: dirq.v1.FileChunk
+	nil,                           // 23: dirq.v1.RegisterRequest.TagsEntry
+	nil,                           // 24: dirq.v1.ExecRequest.EnvironmentEntry
+	(*timestamppb.Timestamp)(nil), // 25: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 26: google.protobuf.Struct
 }
 var file_proto_dirq_v1_dirq_proto_depIdxs = []int32{
-	22, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
+	23, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
 	0,  // 1: dirq.v1.RegisterResponse.role:type_name -> dirq.v1.AgentRole
 	3,  // 2: dirq.v1.RegisterResponse.peers:type_name -> dirq.v1.PeerInfo
 	3,  // 3: dirq.v1.PeerResponse.peers:type_name -> dirq.v1.PeerInfo
-	9,  // 4: dirq.v1.AgentMessage.heartbeat:type_name -> dirq.v1.Heartbeat
-	12, // 5: dirq.v1.AgentMessage.query_result:type_name -> dirq.v1.QueryResult
-	8,  // 6: dirq.v1.AgentMessage.hello:type_name -> dirq.v1.AgentHello
-	17, // 7: dirq.v1.AgentMessage.exec_response:type_name -> dirq.v1.ExecResponse
-	21, // 8: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
-	20, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
-	13, // 10: dirq.v1.AgentMessage.aggregated_result:type_name -> dirq.v1.AggregatedQueryResult
-	10, // 11: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
-	14, // 12: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
-	15, // 13: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
-	16, // 14: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
-	18, // 15: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
-	19, // 16: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
-	24, // 17: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
-	11, // 18: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
-	25, // 19: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
-	24, // 20: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
-	12, // 21: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
-	3,  // 22: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
-	0,  // 23: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
-	23, // 24: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
-	24, // 25: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
-	24, // 26: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
-	1,  // 27: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
-	6,  // 28: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
-	4,  // 29: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
-	6,  // 30: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
-	2,  // 31: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
-	7,  // 32: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
-	5,  // 33: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
-	7,  // 34: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
-	31, // [31:35] is the sub-list for method output_type
-	27, // [27:31] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	10, // 4: dirq.v1.AgentMessage.heartbeat:type_name -> dirq.v1.Heartbeat
+	13, // 5: dirq.v1.AgentMessage.query_result:type_name -> dirq.v1.QueryResult
+	9,  // 6: dirq.v1.AgentMessage.hello:type_name -> dirq.v1.AgentHello
+	18, // 7: dirq.v1.AgentMessage.exec_response:type_name -> dirq.v1.ExecResponse
+	22, // 8: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
+	21, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
+	14, // 10: dirq.v1.AgentMessage.aggregated_result:type_name -> dirq.v1.AggregatedQueryResult
+	7,  // 11: dirq.v1.AgentMessage.peer_disconnected:type_name -> dirq.v1.PeerDisconnected
+	11, // 12: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
+	15, // 13: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
+	16, // 14: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
+	17, // 15: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
+	19, // 16: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
+	20, // 17: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
+	25, // 18: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
+	12, // 19: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
+	26, // 20: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
+	25, // 21: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
+	13, // 22: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
+	3,  // 23: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
+	0,  // 24: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
+	24, // 25: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
+	25, // 26: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
+	25, // 27: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
+	1,  // 28: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
+	6,  // 29: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
+	4,  // 30: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
+	6,  // 31: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
+	2,  // 32: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
+	8,  // 33: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
+	5,  // 34: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
+	8,  // 35: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
+	32, // [32:36] is the sub-list for method output_type
+	28, // [28:32] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_proto_dirq_v1_dirq_proto_init() }
@@ -2295,8 +2374,9 @@ func file_proto_dirq_v1_dirq_proto_init() {
 		(*AgentMessage_FileChunk)(nil),
 		(*AgentMessage_FetchResponse)(nil),
 		(*AgentMessage_AggregatedResult)(nil),
+		(*AgentMessage_PeerDisconnected)(nil),
 	}
-	file_proto_dirq_v1_dirq_proto_msgTypes[6].OneofWrappers = []any{
+	file_proto_dirq_v1_dirq_proto_msgTypes[7].OneofWrappers = []any{
 		(*ServerMessage_QueryRequest)(nil),
 		(*ServerMessage_PeerUpdate)(nil),
 		(*ServerMessage_UpdatePush)(nil),
@@ -2310,7 +2390,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_dirq_v1_dirq_proto_rawDesc), len(file_proto_dirq_v1_dirq_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   23,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

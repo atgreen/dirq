@@ -151,6 +151,25 @@ func (db *DB) MarkStaleAgentsOffline(ctx context.Context, threshold time.Duratio
 	return tag.RowsAffected(), nil
 }
 
+// MarkAgentTreeOffline marks an agent and all its descendants offline using a
+// recursive CTE. Returns the number of agents affected. This replaces
+// heartbeat-based reaping — when a parent detects a child disconnect, it
+// propagates up to the server which marks the whole subtree in one query.
+func (db *DB) MarkAgentTreeOffline(ctx context.Context, rootID string) (int64, error) {
+	tag, err := db.pool.Exec(ctx, `
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM agents WHERE id = $1
+			UNION ALL
+			SELECT a.id FROM agents a JOIN subtree s ON a.parent_id = s.id
+		)
+		UPDATE agents SET online = false
+		WHERE id IN (SELECT id FROM subtree) AND online = true`, rootID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // SetAgentOffline marks an agent as offline.
 func (db *DB) SetAgentOffline(ctx context.Context, id string) error {
 	tag, err := db.pool.Exec(ctx, `UPDATE agents SET online = false WHERE id = $1`, id)

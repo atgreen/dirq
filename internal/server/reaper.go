@@ -8,10 +8,13 @@ import (
 	"time"
 )
 
-// startReaper periodically marks agents as offline if they haven't sent a
-// heartbeat within the threshold. Also cleans up stale query records.
+// startReaper is a safety net that catches agents whose disconnection was
+// not propagated via PeerDisconnected (e.g. server restart, network
+// partition where the parent also died). Runs infrequently with a long
+// threshold — normal disconnections are handled immediately via stream
+// close (zone leaders) or PeerDisconnected (relay children).
 func (s *Server) startReaper(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 
 	for {
@@ -25,11 +28,10 @@ func (s *Server) startReaper(ctx context.Context) {
 }
 
 // reapStaleAgents marks agents offline if their last_seen_at is older than
-// the threshold. An agent that is still connected will refresh last_seen_at
-// via heartbeats every 30 seconds, so a 90-second threshold gives it 3
-// missed heartbeats before being marked offline.
+// 5 minutes. This is a safety net only — most agents are marked offline
+// immediately when their parent detects the stream drop.
 func (s *Server) reapStaleAgents(ctx context.Context) {
-	threshold := 90 * time.Second
+	threshold := 5 * time.Minute
 
 	result, err := s.db.MarkStaleAgentsOffline(ctx, threshold)
 	if err != nil {
@@ -37,6 +39,15 @@ func (s *Server) reapStaleAgents(ctx context.Context) {
 		return
 	}
 	if result > 0 {
-		s.log.Info("reaper: marked stale agents offline", "count", result)
+		s.log.Info("reaper: safety-net marked stale agents offline", "count", result)
 	}
+
+	// Clean up stale reassigning entries (agent never reconnected).
+	s.reassigningMu.Lock()
+	for id, t := range s.reassigning {
+		if time.Since(t) > 2*time.Minute {
+			delete(s.reassigning, id)
+		}
+	}
+	s.reassigningMu.Unlock()
 }

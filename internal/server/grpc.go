@@ -131,9 +131,15 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 
 	defer func() {
 		s.mu.Lock()
+		reassigned := as.reassigned
 		delete(s.streams, agentID)
 		s.mu.Unlock()
-		// Mark agent offline immediately when stream drops.
+		if reassigned {
+			// Agent was demoted/reassigned — it's reconnecting to a
+			// new parent, not dead. Don't mark offline.
+			s.log.Info("agent stream closed (reassigned)", "agent_id", agentID)
+			return
+		}
 		if err := s.db.SetAgentOffline(context.Background(), agentID); err != nil {
 			s.log.Error("failed to mark agent offline", "agent_id", agentID, "error", err)
 		}
@@ -173,14 +179,31 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 
 		switch p := msg.Payload.(type) {
 		case *pb.AgentMessage_Heartbeat:
-			// Use the agent ID from the heartbeat, not the stream owner.
-			// Relay agents forward heartbeats through zone leaders.
-			hbAgentID := p.Heartbeat.AgentId
-			if hbAgentID == "" {
-				hbAgentID = agentID
+			// Legacy heartbeat — ignored. Liveness is now tracked via
+			// stream presence and PeerDisconnected notifications.
+		case *pb.AgentMessage_PeerDisconnected:
+			// A relay agent detected a child disconnected. Mark the
+			// agent and its entire subtree offline — unless the agent
+			// is being reassigned by the rebalancer (expected disconnect).
+			deadID := p.PeerDisconnected.AgentId
+			if deadID == "" {
+				break
 			}
-			if err := s.db.UpdateAgentHeartbeat(ctx, hbAgentID); err != nil {
-				s.log.Error("heartbeat update failed", "agent_id", hbAgentID, "error", err)
+			s.reassigningMu.Lock()
+			_, isReassigning := s.reassigning[deadID]
+			if isReassigning {
+				delete(s.reassigning, deadID)
+			}
+			s.reassigningMu.Unlock()
+			if isReassigning {
+				s.log.Info("peer disconnected (reassigning, skipped)", "agent_id", deadID)
+				break
+			}
+			count, err := s.db.MarkAgentTreeOffline(ctx, deadID)
+			if err != nil {
+				s.log.Error("failed to mark agent tree offline", "agent_id", deadID, "error", err)
+			} else if count > 0 {
+				s.log.Info("peer disconnected, marked tree offline", "agent_id", deadID, "count", count)
 			}
 		case *pb.AgentMessage_QueryResult:
 			s.handleQueryResult(p.QueryResult)

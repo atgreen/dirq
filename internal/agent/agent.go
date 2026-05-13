@@ -405,10 +405,6 @@ func (a *Agent) connectToServer(ctx context.Context) error {
 }
 
 func (a *Agent) mainLoop(ctx context.Context) error {
-	// Start heartbeat ticker.
-	heartbeatTicker := time.NewTicker(30 * time.Second)
-	defer heartbeatTicker.Stop()
-
 	// Start receiving from upstream in a goroutine.
 	msgCh := make(chan *pb.ServerMessage, 16)
 	errCh := make(chan error, 1)
@@ -435,31 +431,27 @@ func (a *Agent) mainLoop(ctx context.Context) error {
 		case err := <-errCh:
 			return fmt.Errorf("upstream stream error: %w", err)
 
-		case <-heartbeatTicker.C:
-			a.sendHeartbeat()
-
 		case msg := <-msgCh:
 			a.handleServerMessage(ctx, msg)
 		}
 	}
 }
 
-func (a *Agent) sendHeartbeat() {
-	a.mu.RLock()
-	peerCount := uint32(len(a.downstreams))
-	a.mu.RUnlock()
-
+// notifyPeerDisconnected sends a PeerDisconnected message upstream so the
+// server can immediately mark the agent (and its subtree) offline.
+func (a *Agent) notifyPeerDisconnected(peerID string) {
+	if a.upstreamStream == nil {
+		return
+	}
 	err := a.upstreamStream.Send(&pb.AgentMessage{
-		Payload: &pb.AgentMessage_Heartbeat{
-			Heartbeat: &pb.Heartbeat{
-				AgentId:        a.agentID,
-				Timestamp:      timestamppb.Now(),
-				ConnectedPeers: peerCount,
+		Payload: &pb.AgentMessage_PeerDisconnected{
+			PeerDisconnected: &pb.PeerDisconnected{
+				AgentId: peerID,
 			},
 		},
 	})
 	if err != nil {
-		a.log.Error("heartbeat send failed", "error", err)
+		a.log.Error("failed to send peer disconnected", "peer_id", peerID, "error", err)
 	}
 }
 
@@ -477,6 +469,11 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 		go a.executeQuery(ctx, p.QueryRequest)
 	case *pb.ServerMessage_PeerUpdate:
 		pu := p.PeerUpdate
+		// If the update targets a specific agent and it's not us, relay downstream.
+		if pu.TargetAgentId != "" && pu.TargetAgentId != a.agentID {
+			a.relayToDownstreams(msg)
+			return
+		}
 		if pu.NewRole == pb.AgentRole_AGENT_ROLE_ZONE_LEADER && pu.NewParentAddr == "" {
 			// Promotion to zone leader — reconnect directly to the server.
 			// Our children stay connected to us — zero disruption for them.
@@ -688,6 +685,7 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 		delete(a.downstreams, peerID)
 		a.mu.Unlock()
 		a.log.Info("downstream peer disconnected", "peer_id", peerID)
+		a.notifyPeerDisconnected(peerID)
 	}()
 
 	// Sender goroutine

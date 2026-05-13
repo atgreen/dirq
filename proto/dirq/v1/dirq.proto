@@ -99,7 +99,15 @@ message AgentMessage {
     FileChunk file_chunk          = 5;
     FetchFileResponse fetch_response = 6;
     AggregatedQueryResult aggregated_result = 7; // batched results from subtree
+    PeerDisconnected peer_disconnected = 8;      // child peer lost — propagate up
   }
+}
+
+// PeerDisconnected is sent upstream when a relay detects a child has
+// disconnected. The server uses this to mark the agent (and its subtree)
+// offline immediately, instead of waiting for heartbeat expiry.
+message PeerDisconnected {
+  string agent_id = 1; // the agent that disconnected
 }
 
 message ServerMessage {
@@ -184,6 +192,9 @@ message PeerUpdate {
   string new_parent_addr = 3;
   // Fallback addresses for the new parent.
   repeated string new_fallback_addrs = 4;
+  // Target agent ID. If set, only the agent with this ID should apply
+  // the update; other agents relay it downstream.
+  string target_agent_id = 5;
 }
 
 // ─────────────────────────────────────────────────────────

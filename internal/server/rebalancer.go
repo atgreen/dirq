@@ -84,6 +84,7 @@ func (s *Server) promoteOneRelay(ctx context.Context) {
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_PeerUpdate{
 			PeerUpdate: &pb.PeerUpdate{
+				TargetAgentId: candidate.ID,
 				NewRole:       pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
 				NewParentAddr: "",
 			},
@@ -136,6 +137,7 @@ func (s *Server) demoteOne(ctx context.Context) {
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_PeerUpdate{
 			PeerUpdate: &pb.PeerUpdate{
+				TargetAgentId:    agentID,
 				NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
 				NewParentAddr:    parent.ListenAddr,
 				NewFallbackAddrs: fallbacks,
@@ -146,12 +148,17 @@ func (s *Server) demoteOne(ctx context.Context) {
 		s.signServerMessage(msg)
 	}
 
-	s.mu.RLock()
+	s.mu.Lock()
 	as, ok := s.streams[agentID]
-	s.mu.RUnlock()
+	if ok {
+		as.reassigned = true
+	}
+	s.mu.Unlock()
 	if !ok {
 		return
 	}
+
+	s.markReassigning(agentID)
 
 	select {
 	case as.send <- msg:
@@ -188,6 +195,7 @@ func (s *Server) redistributeOne(ctx context.Context) {
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_PeerUpdate{
 			PeerUpdate: &pb.PeerUpdate{
+				TargetAgentId:    child.ID,
 				NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
 				NewParentAddr:    light.Agent.ListenAddr,
 				NewFallbackAddrs: fallbacks,
@@ -197,6 +205,8 @@ func (s *Server) redistributeOne(ctx context.Context) {
 	if s.signer != nil {
 		s.signServerMessage(msg)
 	}
+
+	s.markReassigning(child.ID)
 
 	if s.sendToAgent(ctx, child.ID, msg) {
 		s.db.SetAgentParent(ctx, child.ID, light.Agent.ID)
@@ -241,4 +251,13 @@ func (s *Server) sendToAgent(ctx context.Context, agentID string, msg *pb.Server
 	default:
 		return false
 	}
+}
+
+// markReassigning records that an agent is being intentionally moved by the
+// rebalancer. When its old parent reports the disconnect via PeerDisconnected,
+// the server will skip marking it offline.
+func (s *Server) markReassigning(agentID string) {
+	s.reassigningMu.Lock()
+	s.reassigning[agentID] = time.Now()
+	s.reassigningMu.Unlock()
 }

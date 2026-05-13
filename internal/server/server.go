@@ -52,6 +52,11 @@ type Server struct {
 	// Phase 2: exec sessions pending response
 	execMu       sync.RWMutex
 	execSessions map[string]*execSession
+
+	// Agents currently being reassigned by the rebalancer. Their
+	// disconnect from the old parent is expected — don't mark offline.
+	reassigningMu sync.Mutex
+	reassigning   map[string]time.Time
 }
 
 type agentStream struct {
@@ -59,6 +64,7 @@ type agentStream struct {
 	capabilities []string
 	send         chan *pb.ServerMessage
 	cancel       context.CancelFunc
+	reassigned   bool // true if this agent was demoted/reassigned — don't mark offline on stream close
 }
 
 // New creates a new DirQ server.
@@ -78,6 +84,7 @@ func New(cfg Config, database *db.DB, log *slog.Logger) *Server {
 		log:          log,
 		streams:      make(map[string]*agentStream),
 		execSessions: make(map[string]*execSession),
+		reassigning:  make(map[string]time.Time),
 	}
 }
 
