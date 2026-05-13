@@ -30,7 +30,17 @@ func main() {
 		Short: "DirQ — Real-Time Endpoint Query CLI",
 	}
 
-	root.PersistentFlags().StringVar(&serverURL, "server", envOr("DIRQ_SERVER_URL", "http://localhost:8080"), "DirQ server URL")
+	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("DIRQ_SERVER_URL"), "DirQ server URL (or set DIRQ_SERVER_URL)")
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		// Allow tls generate to run without a server URL.
+		if cmd.Name() == "generate" {
+			return nil
+		}
+		if serverURL == "" {
+			return fmt.Errorf("DIRQ_SERVER_URL is not set. Use --server or export DIRQ_SERVER_URL=http://your-dirq-server:8080")
+		}
+		return nil
+	}
 	root.PersistentFlags().StringVar(&apiToken, "token", os.Getenv("DIRQ_TOKEN"), "API token")
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "output raw JSON")
 

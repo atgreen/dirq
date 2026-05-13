@@ -85,13 +85,19 @@ class Connection(ConnectionBase):
             hostvars.get("dirq_server_url")
             or os.environ.get("DIRQ_SERVER_URL")
             or self.get_option("dirq_server_url")
-            or "http://localhost:8080"
+            or ""
         )
         token = (
             os.environ.get("DIRQ_TOKEN")
             or self.get_option("dirq_token")
             or ""
         )
+
+        if not server_url:
+            raise AnsibleConnectionFailure(
+                "DIRQ_SERVER_URL is not set. Set it in the environment, "
+                "or use the DirQ inventory plugin which sets dirq_server_url per host."
+            )
 
         from ansible_collections.atgreen.dirq.plugins.module_utils.api import DirQClient
         self._client = DirQClient(server_url, token)

@@ -74,13 +74,19 @@ class Connection(ConnectionBase):
             host_vars.get("dirq_server_url")
             or os.environ.get("DIRQ_SERVER_URL")
             or self.get_option("dirq_server_url")
-            or "http://localhost:8080"
+            or ""
         )
         self._token = (
             os.environ.get("DIRQ_TOKEN")
             or self.get_option("dirq_token")
             or ""
         )
+
+        if not self._server_url:
+            raise AnsibleConnectionFailure(
+                "DIRQ_SERVER_URL is not set. Set it in the environment, "
+                "or use the DirQ inventory plugin which sets dirq_server_url per host."
+            )
 
         # Route by stable dirq_agent_id (set by inventory), fallback to hostname.
         hostname = self._play_context.remote_addr
