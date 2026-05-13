@@ -151,6 +151,21 @@ func (db *DB) MarkStaleAgentsOffline(ctx context.Context, threshold time.Duratio
 	return tag.RowsAffected(), nil
 }
 
+// TouchAgentTree refreshes last_seen_at for an agent and all its descendants.
+// Called by the reaper for agents with active server streams — their open
+// connection proves the whole subtree is reachable.
+func (db *DB) TouchAgentTree(ctx context.Context, rootID string) error {
+	_, err := db.pool.Exec(ctx, `
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM agents WHERE id = $1
+			UNION ALL
+			SELECT a.id FROM agents a JOIN subtree s ON a.parent_id = s.id
+		)
+		UPDATE agents SET last_seen_at = now()
+		WHERE id IN (SELECT id FROM subtree) AND online = true`, rootID)
+	return err
+}
+
 // MarkAgentTreeOffline marks an agent and all its descendants offline using a
 // recursive CTE. Returns the number of agents affected. This replaces
 // heartbeat-based reaping — when a parent detects a child disconnect, it

@@ -31,6 +31,23 @@ func (s *Server) startReaper(ctx context.Context) {
 // 5 minutes. This is a safety net only — most agents are marked offline
 // immediately when their parent detects the stream drop.
 func (s *Server) reapStaleAgents(ctx context.Context) {
+	// Refresh last_seen_at for all agents with active server streams
+	// (zone leaders) and their entire subtrees. An open stream proves
+	// the agent is alive — this keeps the safety-net reaper from
+	// marking connected agents as stale.
+	s.mu.RLock()
+	streamIDs := make([]string, 0, len(s.streams))
+	for id := range s.streams {
+		streamIDs = append(streamIDs, id)
+	}
+	s.mu.RUnlock()
+
+	for _, id := range streamIDs {
+		if err := s.db.TouchAgentTree(ctx, id); err != nil {
+			s.log.Error("reaper: failed to touch agent tree", "agent_id", id, "error", err)
+		}
+	}
+
 	threshold := 5 * time.Minute
 
 	result, err := s.db.MarkStaleAgentsOffline(ctx, threshold)
