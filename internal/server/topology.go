@@ -43,9 +43,10 @@ func DefaultTopologyConfig() TopologyConfig {
 // assignment is the result of the topology manager deciding where a new
 // agent fits in the tree.
 type assignment struct {
-	Role       pb.AgentRole
-	ParentID   string // empty for zone leaders (they connect to the server)
-	ParentAddr string // listen_addr of the parent, empty for zone leaders
+	Role          pb.AgentRole
+	ParentID      string   // empty for zone leaders (they connect to the server)
+	ParentAddr    string   // listen_addr of the parent, empty for zone leaders
+	FallbackAddrs []string // ordered backup parent addresses for failover
 }
 
 // assignRole decides the role and parent for a newly registered agent.
@@ -81,15 +82,25 @@ func (s *Server) assignRole(ctx context.Context) (assignment, error) {
 	// Step 2: Find any node with room, preferring shallowest (BFS fill).
 	parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
 	if err == nil && parent.ID != "" {
+		// Find fallback parents on different branches for fault isolation.
+		var fallbacks []string
+		fbAgents, err := s.db.FindFallbackParents(ctx, parent.ID, cfg.MaxChildrenPerNode, 2)
+		if err == nil {
+			for _, fb := range fbAgents {
+				fallbacks = append(fallbacks, fb.ListenAddr)
+			}
+		}
+
 		s.log.Info("topology: assigning under parent",
 			"parent", parent.Hostname,
 			"parent_id", parent.ID,
-			"parent_role", parent.Role,
+			"fallbacks", len(fallbacks),
 		)
 		return assignment{
-			Role:       pb.AgentRole_AGENT_ROLE_RELAY, // all non-ZL nodes use relay role
-			ParentID:   parent.ID,
-			ParentAddr: parent.ListenAddr,
+			Role:          pb.AgentRole_AGENT_ROLE_RELAY,
+			ParentID:      parent.ID,
+			ParentAddr:    parent.ListenAddr,
+			FallbackAddrs: fallbacks,
 		}, nil
 	}
 

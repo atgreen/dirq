@@ -46,7 +46,8 @@ type Agent struct {
 	log        *slog.Logger
 	agentID    string
 	role       pb.AgentRole
-	parentAddr string // where to connect upstream (server addr or parent's listen_addr)
+	parentAddr    string   // where to connect upstream (server addr or parent's listen_addr)
+	fallbackAddrs []string // backup parent addresses, tried before server on failure
 
 	// gRPC server for downstream peers
 	grpcSv *grpc.Server
@@ -192,9 +193,35 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 			return ctx.Err()
 		}
 
+		// Try primary parent first.
+		connected := false
 		err := a.connectUpstream(ctx)
-		if err != nil {
-			a.log.Warn("upstream connection failed, retrying", "error", err, "backoff", backoff)
+		if err == nil {
+			connected = true
+		} else {
+			a.log.Warn("primary parent failed", "addr", a.parentAddr, "error", err)
+
+			// Try fallback parents before going to the server.
+			for i, addr := range a.fallbackAddrs {
+				a.log.Info("trying fallback parent", "fallback", i, "addr", addr)
+				if err := a.connectToAddr(ctx, addr); err == nil {
+					a.log.Info("connected to fallback parent", "fallback", i, "addr", addr)
+					connected = true
+					break
+				}
+				a.log.Warn("fallback parent failed", "fallback", i, "addr", addr, "error", err)
+			}
+
+			// Last resort: fall back to direct server connection.
+			if !connected {
+				a.log.Info("all parents failed, falling back to server")
+				if err := a.connectToServer(ctx); err == nil {
+					connected = true
+				}
+			}
+		}
+
+		if !connected {
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
@@ -210,7 +237,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 		// Reset backoff on successful connect.
 		backoff = 1 * time.Second
 
-		a.log.Info("upstream connected", "server", a.cfg.ServerAddr)
+		a.log.Info("upstream connected", "target", a.parentAddr)
 
 		// Run the main loop until the stream breaks.
 		err = a.mainLoop(ctx)
@@ -226,16 +253,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		a.log.Warn("upstream connection lost, reconnecting", "error", err, "backoff", backoff)
-		select {
-		case <-time.After(backoff):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		backoff = backoff * 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
+		a.log.Warn("upstream connection lost, reconnecting", "error", err)
 	}
 }
 
@@ -277,12 +295,16 @@ func (a *Agent) register(ctx context.Context) error {
 
 	// Determine where to connect upstream.
 	if resp.ZoneLeaderAddr != "" && resp.Role != pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
-		// Connect to assigned parent (zone leader or relay peer).
 		a.parentAddr = resp.ZoneLeaderAddr
-		a.log.Info("assigned to parent", "parent_addr", a.parentAddr, "role", resp.Role)
+		a.fallbackAddrs = resp.FallbackAddrs
+		a.log.Info("assigned to parent",
+			"parent_addr", a.parentAddr,
+			"role", resp.Role,
+			"fallbacks", len(a.fallbackAddrs),
+		)
 	} else {
-		// Zone leader — connect directly to the server.
 		a.parentAddr = a.cfg.ServerAddr
+		a.fallbackAddrs = nil
 	}
 
 	return nil
@@ -325,6 +347,31 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 	}
 
 	return a.sendHello()
+}
+
+// connectToAddr connects to a specific address as a relay peer (for fallbacks).
+func (a *Agent) connectToAddr(ctx context.Context, addr string) error {
+	conn, err := grpc.NewClient(addr, grpcDialOpts()...)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", addr, err)
+	}
+
+	client := pb.NewDirQRelayClient(conn)
+	stream, err := client.RelayStream(ctx)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("relay stream to %s: %w", addr, err)
+	}
+
+	a.upstreamConn = conn
+	a.upstreamStream = stream
+
+	if err := a.sendHello(); err != nil {
+		conn.Close()
+		return fmt.Errorf("hello to %s: %w", addr, err)
+	}
+
+	return nil
 }
 
 // sendHello sends an AgentHello on the upstream stream. Must be the first

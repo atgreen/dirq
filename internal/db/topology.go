@@ -87,6 +87,64 @@ func (db *DB) FindZoneLeader(ctx context.Context, agentID string) (Agent, error)
 	return scanAgent(row)
 }
 
+// FindFallbackParents returns up to `count` online agents with room for children,
+// excluding the primary parent and preferring agents on different branches
+// (different zone leader subtrees) for fault isolation.
+func (db *DB) FindFallbackParents(ctx context.Context, primaryParentID string, maxChildren int, count int) ([]Agent, error) {
+	// Find the zone leader ancestor of the primary parent so we can
+	// prefer fallbacks under a DIFFERENT zone leader.
+	rows, err := db.pool.Query(ctx, `
+		WITH RECURSIVE tree AS (
+			SELECT id, hostname, os, os_version, arch, agent_version,
+			       listen_addr, role, capabilities, tags,
+			       parent_id, server_pod, online, exec_enabled,
+			       registered_at, last_seen_at, 0 AS depth,
+			       id AS root_zl
+			FROM agents
+			WHERE role = 'zone_leader' AND online = true AND listen_addr != ''
+			UNION ALL
+			SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
+			       a.listen_addr, a.role, a.capabilities, a.tags,
+			       a.parent_id, a.server_pod, a.online, a.exec_enabled,
+			       a.registered_at, a.last_seen_at, tree.depth + 1,
+			       tree.root_zl
+			FROM agents a
+			JOIN tree ON a.parent_id = tree.id
+			WHERE a.online = true AND a.listen_addr != ''
+		)
+		SELECT t.id, t.hostname, t.os, t.os_version, t.arch, t.agent_version,
+		       t.listen_addr, t.role, t.capabilities, t.tags,
+		       t.parent_id, t.server_pod, t.online, t.exec_enabled,
+		       t.registered_at, t.last_seen_at
+		FROM tree t
+		WHERE t.id != $1
+		  AND (SELECT COUNT(*) FROM agents c WHERE c.parent_id = t.id AND c.online = true) < $2
+		ORDER BY
+		  -- Prefer nodes under a different zone leader than the primary parent
+		  CASE WHEN t.root_zl = (
+		    SELECT root_zl FROM tree WHERE id = $1 LIMIT 1
+		  ) THEN 1 ELSE 0 END ASC,
+		  t.depth ASC,
+		  (SELECT COUNT(*) FROM agents c WHERE c.parent_id = t.id AND c.online = true) ASC
+		LIMIT $3`,
+		primaryParentID, maxChildren, count,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var agents []Agent
+	for rows.Next() {
+		a, err := scanAgentRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
 // FindParentWithRoom finds an online agent with the given role that has fewer
 // than maxChildren children. Returns the agent, or an empty Agent if none found.
 // Prefers agents with the fewest children (balances the tree).

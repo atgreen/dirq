@@ -60,6 +60,9 @@ message RegisterResponse {
   int32 heartbeat_interval_seconds = 5;
   bytes server_signing_public_key = 6; // Ed25519 public key for signed control messages
   string server_signing_key_id = 7;    // identifier/fingerprint for the signing key
+  // Fallback parent addresses, tried in order if primary parent fails.
+  // Chosen from different branches for fault isolation.
+  repeated string fallback_addrs = 8;
 }
 
 enum AgentRole {

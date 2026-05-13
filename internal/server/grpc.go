@@ -95,6 +95,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		HeartbeatIntervalSeconds: 30,
 		ServerSigningPublicKey:   s.signer.PublicKey(),
 		ServerSigningKeyId:       s.signer.KeyID(),
+		FallbackAddrs:            a.FallbackAddrs,
 	}, nil
 }
 

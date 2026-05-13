@@ -195,8 +195,11 @@ type RegisterResponse struct {
 	HeartbeatIntervalSeconds int32                  `protobuf:"varint,5,opt,name=heartbeat_interval_seconds,json=heartbeatIntervalSeconds,proto3" json:"heartbeat_interval_seconds,omitempty"`
 	ServerSigningPublicKey   []byte                 `protobuf:"bytes,6,opt,name=server_signing_public_key,json=serverSigningPublicKey,proto3" json:"server_signing_public_key,omitempty"` // Ed25519 public key for signed control messages
 	ServerSigningKeyId       string                 `protobuf:"bytes,7,opt,name=server_signing_key_id,json=serverSigningKeyId,proto3" json:"server_signing_key_id,omitempty"`             // identifier/fingerprint for the signing key
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// Fallback parent addresses, tried in order if primary parent fails.
+	// Chosen from different branches for fault isolation.
+	FallbackAddrs []string `protobuf:"bytes,8,rep,name=fallback_addrs,json=fallbackAddrs,proto3" json:"fallback_addrs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RegisterResponse) Reset() {
@@ -276,6 +279,13 @@ func (x *RegisterResponse) GetServerSigningKeyId() string {
 		return x.ServerSigningKeyId
 	}
 	return ""
+}
+
+func (x *RegisterResponse) GetFallbackAddrs() []string {
+	if x != nil {
+		return x.FallbackAddrs
+	}
+	return nil
 }
 
 type PeerInfo struct {
@@ -1978,7 +1988,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\fexec_enabled\x18\t \x01(\bR\vexecEnabled\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd4\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xfb\x02\n" +
 	"\x10RegisterResponse\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12&\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x12.dirq.v1.AgentRoleR\x04role\x12'\n" +
@@ -1986,7 +1996,8 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x10zone_leader_addr\x18\x04 \x01(\tR\x0ezoneLeaderAddr\x12<\n" +
 	"\x1aheartbeat_interval_seconds\x18\x05 \x01(\x05R\x18heartbeatIntervalSeconds\x129\n" +
 	"\x19server_signing_public_key\x18\x06 \x01(\fR\x16serverSigningPublicKey\x121\n" +
-	"\x15server_signing_key_id\x18\a \x01(\tR\x12serverSigningKeyId\"9\n" +
+	"\x15server_signing_key_id\x18\a \x01(\tR\x12serverSigningKeyId\x12%\n" +
+	"\x0efallback_addrs\x18\b \x03(\tR\rfallbackAddrs\"9\n" +
 	"\bPeerInfo\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\"(\n" +
