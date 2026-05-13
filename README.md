@@ -403,6 +403,18 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | `DIRQ_TAGS` | | Comma-separated tags: `env=prod,dc=us-east` |
 | `DIRQ_EXEC_ENABLED` | `false` | Enable remote command execution |
 
+### TLS (environment variables — apply to both server and agent)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DIRQ_TLS_CA` | | Path to CA certificate (enables mTLS verification) |
+| `DIRQ_TLS_CERT` | | Path to this process's TLS certificate |
+| `DIRQ_TLS_KEY` | | Path to this process's TLS private key |
+| `DIRQ_TLS_INSECURE` | `false` | Skip cert verification (agent only — for self-signed certs) |
+
+When `DIRQ_TLS_CERT` and `DIRQ_TLS_KEY` are set, TLS is enabled. When they
+are not set, all gRPC connections run unencrypted (dev mode).
+
 ### CLI (environment variables and flags)
 
 | Variable / Flag | Default | Description |
@@ -410,6 +422,87 @@ ansible all -i ansible/dirq_inventory.py -m ping
 | `DIRQ_SERVER_URL` / `--server` | `http://localhost:8080` | DirQ server REST URL |
 | `DIRQ_TOKEN` / `--token` | | API token |
 | `--json` | `false` | Output raw JSON |
+
+## TLS
+
+All gRPC connections (server-to-agent, agent-to-agent relay) support TLS.
+Three modes:
+
+### 1. No TLS (development)
+
+Don't set any `DIRQ_TLS_*` variables. All connections are unencrypted.
+This is the default for local development.
+
+### 2. Self-signed certificates
+
+Generate a CA, server cert, and agent cert with one command:
+
+```bash
+./bin/dirq tls generate --dir ./certs
+```
+
+This creates:
+```
+certs/
+  ca.crt, ca.key         — Certificate Authority (10-year validity)
+  server.crt, server.key — Server cert (1-year, SANs: localhost, dirq-server)
+  agent.crt, agent.key   — Agent cert (1-year)
+```
+
+**Server:**
+```bash
+DIRQ_TLS_CA=./certs/ca.crt \
+DIRQ_TLS_CERT=./certs/server.crt \
+DIRQ_TLS_KEY=./certs/server.key \
+  ./bin/dirq-server
+```
+
+**Agent (with CA verification):**
+```bash
+DIRQ_TLS_CA=./certs/ca.crt \
+DIRQ_TLS_CERT=./certs/agent.crt \
+DIRQ_TLS_KEY=./certs/agent.key \
+  ./bin/dirq-agent
+```
+
+**Agent (skip verification — when you don't want to distribute the CA):**
+```bash
+DIRQ_TLS_CERT=./certs/agent.crt \
+DIRQ_TLS_KEY=./certs/agent.key \
+DIRQ_TLS_INSECURE=true \
+  ./bin/dirq-agent
+```
+
+### 3. User-supplied certificates
+
+Point the environment variables at your own CA-signed certificates.
+Any standard x509 certs work — from your corporate CA, Let's Encrypt, etc.
+
+```bash
+# Server
+DIRQ_TLS_CA=/etc/pki/dirq/ca-bundle.crt \
+DIRQ_TLS_CERT=/etc/pki/dirq/server.crt \
+DIRQ_TLS_KEY=/etc/pki/dirq/server.key \
+  ./bin/dirq-server
+
+# Agent
+DIRQ_TLS_CA=/etc/pki/dirq/ca-bundle.crt \
+DIRQ_TLS_CERT=/etc/pki/dirq/agent.crt \
+DIRQ_TLS_KEY=/etc/pki/dirq/agent.key \
+  ./bin/dirq-agent
+```
+
+### mTLS (mutual TLS)
+
+When `DIRQ_TLS_CA` is set on the **server**, it enforces mutual TLS —
+agents must present a valid certificate signed by that CA. This prevents
+unauthorized agents from joining the mesh.
+
+When `DIRQ_TLS_CA` is set on the **agent**, it verifies the server's
+certificate against the CA. This prevents agents from connecting to a
+rogue server.
+
+For full mutual authentication, set `DIRQ_TLS_CA` on both sides.
 
 ## API Tokens
 
