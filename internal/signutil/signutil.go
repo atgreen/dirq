@@ -211,12 +211,16 @@ func verifyTokenWith(pubKey ed25519.PublicKey, agentID, token string) bool {
 	sigB64 := token[:lastColon]
 	tsStr := token[lastColon+1:]
 
-	// Check expiry.
+	// Check expiry and reject future-dated tokens.
 	ts, err := strconv.ParseInt(tsStr, 10, 64)
 	if err != nil {
 		return false
 	}
-	if time.Now().Unix()-ts > int64(SessionTokenTTL.Seconds()) {
+	now := time.Now().Unix()
+	if ts > now+30 {
+		return false // token timestamp is in the future (clock skew tolerance: 30s)
+	}
+	if now-ts > int64(SessionTokenTTL.Seconds()) {
 		return false
 	}
 
