@@ -77,6 +77,7 @@ func main() {
 	root.AddCommand(selectCmd())
 	root.AddCommand(deployCmd())
 	root.AddCommand(doctorCmd())
+	root.AddCommand(cveCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -633,6 +634,14 @@ Depth-first rolling wave by default. Supports .rpm, .deb, .msi.
 
     dirq ask "which prod hosts have full disks?"
     dirq ask "how many hosts are running linux?" --dry-run
+
+### dirq cve — scan RHEL systems for CVE vulnerabilities
+
+    dirq cve CVE-2024-6345
+    dirq "cve CVE-2024-6345 where tag.env = 'prod'"
+
+Fetches affected packages from Red Hat Security Data API, queries the
+fleet for installed versions, and reports which hosts are vulnerable.
 
 ### dirq doctor — check deployment health
 
@@ -1493,6 +1502,475 @@ func doctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// ─────────────────────────────────────────────────────────
+// dirq cve
+// ─────────────────────────────────────────────────────────
+
+func cveCmd() *cobra.Command {
+	var timeout int
+
+	cmd := &cobra.Command{
+		Use:   "cve [CVE-ID] [WHERE ...]",
+		Short: "Scan RHEL systems for a CVE vulnerability",
+		Long: `Look up a CVE in the Red Hat Security Data API, then scan the fleet
+for RHEL systems running vulnerable package versions.
+
+Examples:
+  dirq cve CVE-2024-6345
+  dirq cve CVE-2024-6345 WHERE tag.env = 'prod'
+  dirq "cve CVE-2024-6345 where tag.env = 'prod'"
+  dirq cve CVE-2024-6345 --json`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cveID := strings.ToUpper(args[0])
+			if !strings.HasPrefix(cveID, "CVE-") {
+				return fmt.Errorf("expected a CVE ID like CVE-2024-1234, got %q", cveID)
+			}
+
+			// Fetch CVE data from Red Hat.
+			fmt.Fprintf(os.Stderr, "Fetching %s from Red Hat Security Data API...\n", cveID)
+
+			cveURL := "https://access.redhat.com/hydra/rest/securitydata/cve/" + cveID + ".json"
+			resp, err := http.Get(cveURL)
+			if err != nil {
+				return fmt.Errorf("failed to fetch CVE data: %w", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == 404 {
+				return fmt.Errorf("CVE %s not found in Red Hat Security Data", cveID)
+			}
+			if resp.StatusCode != 200 {
+				return fmt.Errorf("Red Hat API returned HTTP %d", resp.StatusCode)
+			}
+
+			cveBody, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("read CVE response: %w", err)
+			}
+
+			var cveData struct {
+				Name           string `json:"name"`
+				ThreatSeverity string `json:"threat_severity"`
+				Bugzilla       struct {
+					Description string `json:"description"`
+				} `json:"bugzilla"`
+				AffectedRelease []struct {
+					ProductName string `json:"product_name"`
+					Advisory    string `json:"advisory"`
+					Package     string `json:"package"`
+					CPE         string `json:"cpe"`
+				} `json:"affected_release"`
+				PackageState []struct {
+					ProductName string `json:"product_name"`
+					FixState    string `json:"fix_state"`
+					PackageName string `json:"package_name"`
+					CPE         string `json:"cpe"`
+				} `json:"package_state"`
+			}
+			if err := json.Unmarshal(cveBody, &cveData); err != nil {
+				return fmt.Errorf("parse CVE data: %w", err)
+			}
+
+			fmt.Fprintf(os.Stderr, "%s: %s\n", cveID, cveData.Bugzilla.Description)
+			fmt.Fprintf(os.Stderr, "Severity: %s\n", cveData.ThreatSeverity)
+
+			// Extract affected package names and fixed versions from affected_release.
+			// Package format: "name-epoch:version-release.el9" or similar.
+			type fixedPkg struct {
+				name       string // RPM source package name
+				fullNEVRA  string // full name-epoch:version-release string
+				fixVersion string // version-release portion for comparison
+			}
+
+			var fixedPkgs []fixedPkg
+			seenPkgs := map[string]bool{}
+
+			for _, ar := range cveData.AffectedRelease {
+				if ar.Package == "" {
+					continue
+				}
+				// Only care about RHEL (not middleware, containers, etc.)
+				if !strings.Contains(ar.CPE, "enterprise_linux") {
+					continue
+				}
+				name, version := parseRPMNEVRA(ar.Package)
+				if name == "" {
+					continue
+				}
+				if seenPkgs[name] {
+					continue
+				}
+				seenPkgs[name] = true
+				fixedPkgs = append(fixedPkgs, fixedPkg{
+					name:       name,
+					fullNEVRA:  ar.Package,
+					fixVersion: version,
+				})
+			}
+
+			// Also collect package names from package_state where fix_state is "Affected".
+			for _, ps := range cveData.PackageState {
+				if ps.FixState != "Affected" {
+					continue
+				}
+				if !strings.Contains(ps.CPE, "enterprise_linux") {
+					continue
+				}
+				if !seenPkgs[ps.PackageName] {
+					seenPkgs[ps.PackageName] = true
+					fixedPkgs = append(fixedPkgs, fixedPkg{
+						name: ps.PackageName,
+					})
+				}
+			}
+
+			if len(fixedPkgs) == 0 {
+				fmt.Println("No RHEL packages associated with this CVE.")
+				return nil
+			}
+
+			// Build package name list for display and query.
+			pkgNames := make([]string, len(fixedPkgs))
+			for i, fp := range fixedPkgs {
+				pkgNames[i] = fp.name
+			}
+
+			fmt.Fprintf(os.Stderr, "Packages: %s\n", strings.Join(pkgNames, ", "))
+			for _, fp := range fixedPkgs {
+				if fp.fixVersion != "" {
+					fmt.Fprintf(os.Stderr, "  %s: fixed in %s\n", fp.name, fp.fullNEVRA)
+				} else {
+					fmt.Fprintf(os.Stderr, "  %s: no fix available (still affected)\n", fp.name)
+				}
+			}
+			fmt.Fprintln(os.Stderr)
+
+			// Build DirQ query to find RHEL hosts with these packages installed.
+			inList := make([]string, len(pkgNames))
+			for i, n := range pkgNames {
+				inList[i] = "'" + n + "'"
+			}
+			pkgFilter := "packages.name IN (" + strings.Join(inList, ", ") + ")"
+
+			// Add WHERE clause from remaining args if provided.
+			var whereExtra string
+			if len(args) > 1 {
+				whereExtra = " AND " + strings.Join(args[1:], " ")
+				// Strip leading WHERE if the user wrote it.
+				whereExtra = strings.Replace(whereExtra, " AND WHERE ", " AND ", 1)
+				whereExtra = strings.Replace(whereExtra, " AND where ", " AND ", 1)
+			}
+
+			queryStr := fmt.Sprintf("SELECT hostname, os_info.os, os_info.os_version, packages.name, packages.version WHERE %s%s",
+				pkgFilter, whereExtra)
+
+			fmt.Fprintf(os.Stderr, "Scanning fleet...\n\n")
+
+			// Run query.
+			body, _ := json.Marshal(map[string]any{
+				"query":   queryStr,
+				"timeout": timeout,
+			})
+			queryResp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
+			if err != nil {
+				return fmt.Errorf("fleet query failed: %w", err)
+			}
+
+			var result struct {
+				TotalTargets int `json:"total_targets"`
+				Received     int `json:"received"`
+				Results      []struct {
+					Hostname string         `json:"hostname"`
+					Success  bool           `json:"success"`
+					Error    string         `json:"error"`
+					Data     map[string]any `json:"data"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(queryResp, &result); err != nil {
+				return fmt.Errorf("parse query result: %w", err)
+			}
+
+			if jsonOut {
+				fmt.Println(string(queryResp))
+				return nil
+			}
+
+			// Build fixed version lookup.
+			fixedVersionMap := map[string]string{} // pkg name → fixed version string
+			for _, fp := range fixedPkgs {
+				if fp.fixVersion != "" {
+					fixedVersionMap[fp.name] = fp.fixVersion
+				}
+			}
+
+			vulnerable := 0
+			patched := 0
+			noFix := 0
+
+			for _, r := range result.Results {
+				if !r.Success {
+					continue
+				}
+
+				// Check OS — skip non-RHEL.
+				osName, _ := r.Data["os_info.os"].(string)
+				if osName == "" {
+					// Try nested format.
+					if oi, ok := r.Data["os_info"].(map[string]any); ok {
+						osName, _ = oi["os"].(string)
+					}
+				}
+
+				// Extract packages from results.
+				pkgs := extractPackageList(r.Data)
+				for _, pkg := range pkgs {
+					fixedVer, hasfix := fixedVersionMap[pkg.name]
+					if !hasfix {
+						// Package is affected but no fix available.
+						fmt.Printf("  %-24s %-20s %-20s  VULNERABLE (no fix available)\n",
+							r.Hostname, pkg.name, pkg.version)
+						noFix++
+						continue
+					}
+
+					if rpmVersionCompare(pkg.version, fixedVer) < 0 {
+						fmt.Printf("  %-24s %-20s %-20s  VULNERABLE (fixed in %s)\n",
+							r.Hostname, pkg.name, pkg.version, fixedVer)
+						vulnerable++
+					} else {
+						fmt.Printf("  %-24s %-20s %-20s  patched\n",
+							r.Hostname, pkg.name, pkg.version)
+						patched++
+					}
+				}
+			}
+
+			fmt.Printf("\n%d vulnerable, %d patched", vulnerable, patched)
+			if noFix > 0 {
+				fmt.Printf(", %d no fix available", noFix)
+			}
+			fmt.Println()
+
+			if vulnerable > 0 || noFix > 0 {
+				return fmt.Errorf("vulnerable systems found")
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&timeout, "timeout", 60, "query timeout in seconds")
+	return cmd
+}
+
+type pkgInfo struct {
+	name    string
+	version string
+}
+
+// extractPackageList pulls package name/version pairs from query result data.
+func extractPackageList(data map[string]any) []pkgInfo {
+	var pkgs []pkgInfo
+
+	// The data may have packages as an array under "packages" key
+	// or as flattened "packages.name" / "packages.version" fields.
+	if nameVal, ok := data["packages.name"]; ok {
+		// Flattened single package.
+		name, _ := nameVal.(string)
+		version, _ := data["packages.version"].(string)
+		if name != "" {
+			pkgs = append(pkgs, pkgInfo{name, version})
+		}
+		return pkgs
+	}
+
+	if pkgData, ok := data["packages"]; ok {
+		switch v := pkgData.(type) {
+		case []any:
+			for _, item := range v {
+				if m, ok := item.(map[string]any); ok {
+					name, _ := m["name"].(string)
+					version, _ := m["version"].(string)
+					if name != "" {
+						pkgs = append(pkgs, pkgInfo{name, version})
+					}
+				}
+			}
+		case map[string]any:
+			name, _ := v["name"].(string)
+			version, _ := v["version"].(string)
+			if name != "" {
+				pkgs = append(pkgs, pkgInfo{name, version})
+			}
+		}
+	}
+
+	return pkgs
+}
+
+// parseRPMNEVRA extracts the package name and version-release from an RPM NEVRA string.
+// Input: "python3-setuptools-0:68.2.2-4.el8_10" or "openssl-1:3.0.7-27.el9"
+// Returns: name="python3-setuptools", version="0:68.2.2-4.el8_10"
+func parseRPMNEVRA(nevra string) (name, version string) {
+	// RPM NEVRA: name-[epoch:]version-release.arch
+	// We need to find the boundary between name and epoch:version.
+	// The epoch contains a colon, which helps locate it.
+	colonIdx := strings.Index(nevra, ":")
+	if colonIdx < 0 {
+		// No epoch — find the last two hyphens (name-version-release).
+		lastDash := strings.LastIndex(nevra, "-")
+		if lastDash < 0 {
+			return "", ""
+		}
+		secondLast := strings.LastIndex(nevra[:lastDash], "-")
+		if secondLast < 0 {
+			return nevra[:lastDash], nevra[lastDash+1:]
+		}
+		return nevra[:secondLast], nevra[secondLast+1:]
+	}
+
+	// Find the dash before the epoch digit.
+	epochStart := colonIdx
+	for epochStart > 0 && nevra[epochStart-1] != '-' {
+		epochStart--
+	}
+	if epochStart == 0 {
+		return "", ""
+	}
+	return nevra[:epochStart-1], nevra[epochStart:]
+}
+
+// rpmVersionCompare compares two RPM version strings.
+// Returns -1, 0, or 1 like strcmp.
+func rpmVersionCompare(a, b string) int {
+	// Strip epoch if present — compare epoch first, then version-release.
+	ae, av := splitEpoch(a)
+	be, bv := splitEpoch(b)
+
+	if ae != be {
+		if ae < be {
+			return -1
+		}
+		return 1
+	}
+
+	return rpmVerCmp(av, bv)
+}
+
+func splitEpoch(v string) (int, string) {
+	if idx := strings.Index(v, ":"); idx >= 0 {
+		e := 0
+		fmt.Sscanf(v[:idx], "%d", &e)
+		return e, v[idx+1:]
+	}
+	return 0, v
+}
+
+// rpmVerCmp implements RPM's version comparison algorithm.
+func rpmVerCmp(a, b string) int {
+	if a == b {
+		return 0
+	}
+
+	segA := rpmSegments(a)
+	segB := rpmSegments(b)
+
+	for i := 0; i < len(segA) && i < len(segB); i++ {
+		sa := segA[i]
+		sb := segB[i]
+
+		// Both numeric — compare as integers.
+		aNum := isNumeric(sa)
+		bNum := isNumeric(sb)
+
+		if aNum && bNum {
+			// Strip leading zeros for numeric comparison.
+			sa = strings.TrimLeft(sa, "0")
+			sb = strings.TrimLeft(sb, "0")
+			if len(sa) != len(sb) {
+				if len(sa) < len(sb) {
+					return -1
+				}
+				return 1
+			}
+			if sa < sb {
+				return -1
+			}
+			if sa > sb {
+				return 1
+			}
+			continue
+		}
+
+		// Numeric beats alpha.
+		if aNum {
+			return 1
+		}
+		if bNum {
+			return -1
+		}
+
+		// Both alpha — strcmp.
+		if sa < sb {
+			return -1
+		}
+		if sa > sb {
+			return 1
+		}
+	}
+
+	if len(segA) < len(segB) {
+		return -1
+	}
+	if len(segA) > len(segB) {
+		return 1
+	}
+	return 0
+}
+
+func rpmSegments(v string) []string {
+	var segs []string
+	i := 0
+	for i < len(v) {
+		// Skip non-alphanumeric separators.
+		for i < len(v) && !isAlnum(v[i]) {
+			i++
+		}
+		if i >= len(v) {
+			break
+		}
+		start := i
+		if v[i] >= '0' && v[i] <= '9' {
+			for i < len(v) && v[i] >= '0' && v[i] <= '9' {
+				i++
+			}
+		} else {
+			for i < len(v) && isAlpha(v[i]) {
+				i++
+			}
+		}
+		segs = append(segs, v[start:i])
+	}
+	return segs
+}
+
+func isNumeric(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+func isAlnum(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func isAlpha(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // ─────────────────────────────────────────────────────────
