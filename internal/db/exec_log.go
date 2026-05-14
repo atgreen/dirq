@@ -36,7 +36,7 @@ func (db *DB) UpdateExecLog(ctx context.Context, id string, rc *int, success boo
 	}
 	_, err := db.pool.Exec(ctx, `
 		UPDATE exec_log SET rc = $2, success = $3, error = $4, finished_at = $5
-		WHERE id = $1`,
+		WHERE request_id = $1`,
 		id, rc, success, errPtr, finishedAt,
 	)
 	return err

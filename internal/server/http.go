@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,30 +16,34 @@ import (
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
+type contextKey string
+
+const tokenScopeKey contextKey = "tokenScope"
+
 func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// API routes
-	mux.HandleFunc("POST /api/v1/query", s.authMiddleware(s.handleQuery))
-	mux.HandleFunc("GET /api/v1/hosts", s.authMiddleware(s.handleListHosts))
-	mux.HandleFunc("GET /api/v1/hosts/{id}", s.authMiddleware(s.handleGetHost))
-	mux.HandleFunc("GET /api/v1/hosts/{id}/facts", s.authMiddleware(s.handleGetHostFacts))
-	mux.HandleFunc("PUT /api/v1/hosts/{id}/tags", s.authMiddleware(s.handleSetTags))
-	mux.HandleFunc("PATCH /api/v1/hosts/{id}/tags", s.authMiddleware(s.handleMergeTags))
-	mux.HandleFunc("DELETE /api/v1/hosts/{id}/tags/{key}", s.authMiddleware(s.handleDeleteTag))
-	mux.HandleFunc("GET /api/v1/queries", s.authMiddleware(s.handleListQueries))
-	mux.HandleFunc("POST /api/v1/tokens", s.authMiddleware(s.handleCreateToken))
-	mux.HandleFunc("GET /api/v1/tokens", s.authMiddleware(s.handleListTokens))
-	mux.HandleFunc("DELETE /api/v1/tokens/{name}", s.authMiddleware(s.handleDeleteToken))
+	// Read-only API routes (readonly or admin scope)
+	mux.HandleFunc("POST /api/v1/query", s.authMiddleware(requireScope("readonly", s.handleQuery)))
+	mux.HandleFunc("GET /api/v1/hosts", s.authMiddleware(requireScope("readonly", s.handleListHosts)))
+	mux.HandleFunc("GET /api/v1/hosts/{id}", s.authMiddleware(requireScope("readonly", s.handleGetHost)))
+	mux.HandleFunc("GET /api/v1/hosts/{id}/facts", s.authMiddleware(requireScope("readonly", s.handleGetHostFacts)))
+	mux.HandleFunc("GET /api/v1/queries", s.authMiddleware(requireScope("readonly", s.handleListQueries)))
+	mux.HandleFunc("GET /api/v1/exec_log", s.authMiddleware(requireScope("readonly", s.handleListExecLogs)))
+	mux.HandleFunc("GET /api/v1/inventory", s.authMiddleware(requireScope("readonly", s.handleInventory)))
 
-	// Phase 2: exec endpoints
-	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(s.handleExecCommand))
-	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(s.handlePutFile))
-	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(s.handleFetchFile))
-	mux.HandleFunc("GET /api/v1/exec_log", s.authMiddleware(s.handleListExecLogs))
+	// Write API routes (admin scope only)
+	mux.HandleFunc("PUT /api/v1/hosts/{id}/tags", s.authMiddleware(requireScope("admin", s.handleSetTags)))
+	mux.HandleFunc("PATCH /api/v1/hosts/{id}/tags", s.authMiddleware(requireScope("admin", s.handleMergeTags)))
+	mux.HandleFunc("DELETE /api/v1/hosts/{id}/tags/{key}", s.authMiddleware(requireScope("admin", s.handleDeleteTag)))
+	mux.HandleFunc("POST /api/v1/tokens", s.authMiddleware(requireScope("admin", s.handleCreateToken)))
+	mux.HandleFunc("GET /api/v1/tokens", s.authMiddleware(requireScope("admin", s.handleListTokens)))
+	mux.HandleFunc("DELETE /api/v1/tokens/{name}", s.authMiddleware(requireScope("admin", s.handleDeleteToken)))
 
-	// Ansible inventory endpoint
-	mux.HandleFunc("GET /api/v1/inventory", s.authMiddleware(s.handleInventory))
+	// Exec endpoints (admin scope only)
+	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(requireScope("admin", s.handleExecCommand)))
+	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.handlePutFile)))
+	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
 
 	// Health check (no auth)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -72,9 +77,21 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			token = token[7:]
 		}
 
-		_, err := s.db.ValidateToken(r.Context(), token)
+		t, err := s.db.ValidateToken(r.Context(), token)
 		if err != nil {
 			httpError(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		ctx := context.WithValue(r.Context(), tokenScopeKey, t.Scope)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+func requireScope(scope string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s, _ := r.Context().Value(tokenScopeKey).(string)
+		if s != "admin" && s != scope {
+			httpError(w, http.StatusForbidden, "this endpoint requires "+scope+" or admin scope")
 			return
 		}
 		next(w, r)
@@ -231,7 +248,11 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			rows[i] = row
 		}
-		aggRows, _ := query.Aggregate(parsed, rows)
+		aggRows, err := query.Aggregate(parsed, rows)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, "aggregation failed: "+err.Error())
+			return
+		}
 		aggregated = make([]queryResult, len(aggRows))
 		for i, ar := range aggRows {
 			aggregated[i] = queryResult{
