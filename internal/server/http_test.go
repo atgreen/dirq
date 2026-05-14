@@ -583,6 +583,46 @@ func TestInventory_OnlineOnly(t *testing.T) {
 	}
 }
 
+func TestFlattenInto(t *testing.T) {
+	src := map[string]any{
+		"os_info": map[string]any{
+			"os":      "linux",
+			"version": "6.1",
+		},
+		"hostname": "web1",
+		"cpu": map[string]any{
+			"info": map[string]any{
+				"cores": 4,
+			},
+		},
+	}
+
+	dst := map[string]any{}
+	flattenInto(dst, "", src)
+
+	tests := map[string]any{
+		"os_info.os":      "linux",
+		"os_info.version": "6.1",
+		"hostname":        "web1",
+		"cpu.info.cores":  4,
+	}
+	for k, want := range tests {
+		got, ok := dst[k]
+		if !ok {
+			t.Errorf("missing key %q", k)
+		} else if got != want {
+			t.Errorf("flattenInto[%q] = %v, want %v", k, got, want)
+		}
+	}
+
+	// Nested maps should not appear as values.
+	for k, v := range dst {
+		if _, isMap := v.(map[string]any); isMap {
+			t.Errorf("key %q still has nested map value", k)
+		}
+	}
+}
+
 func TestSanitizeGroupName(t *testing.T) {
 	tests := []struct {
 		input, want string

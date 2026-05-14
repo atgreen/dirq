@@ -248,9 +248,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		for i, r := range out {
 			row := query.Row{}
 			row["hostname"] = r.Hostname
-			for k, v := range r.Data {
-				row[k] = v
-			}
+			flattenInto(row, "", r.Data)
 			rows[i] = row
 		}
 		aggRows, err := query.Aggregate(parsed, rows)
@@ -604,6 +602,22 @@ func sanitizeGroupName(s string) string {
 // ─────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────
+
+// flattenInto recursively flattens nested maps into dotted keys.
+// e.g. {"os_info": {"os": "linux"}} becomes {"os_info.os": "linux"}.
+func flattenInto(dst map[string]any, prefix string, src map[string]any) {
+	for k, v := range src {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		if nested, ok := v.(map[string]any); ok {
+			flattenInto(dst, key, nested)
+		} else {
+			dst[key] = v
+		}
+	}
+}
 
 func httpError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
