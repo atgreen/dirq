@@ -165,10 +165,13 @@ the server simultaneously.
 podman-compose up -d
 ```
 
-The server auto-generates TLS certs, runs DB migrations, and creates a bootstrap API token (printed to the log). Grab the token:
+The server auto-generates TLS certs, runs DB migrations, and creates a bootstrap API token. The token is written to a file (not logged) for security:
 
 ```bash
-podman logs dirq_dirq-server_1 2>&1 | grep "DIRQ_TOKEN"
+# The server log shows the token file path:
+podman logs dirq_dirq-server_1 2>&1 | grep "bootstrap"
+# Read the token:
+cat /var/lib/dirq/bootstrap-token
 ```
 
 ### 2. Build and run the agent
@@ -178,7 +181,7 @@ go build -o bin/dirq-agent ./cmd/dirq-agent
 ./bin/dirq-agent
 ```
 
-The agent auto-generates TLS certs into the same directory as the server (`/tmp/dirq-autotls`). When both run on the same machine, they share the auto-generated CA and verify each other automatically — no TLS flags needed for local dev.
+The agent auto-generates TLS certs into the same directory as the server (`/var/lib/dirq/tls`). When both run on the same machine, they share the auto-generated CA and verify each other automatically — no TLS flags needed for local dev.
 
 ### 3. Build and use the CLI
 

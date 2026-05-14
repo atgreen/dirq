@@ -56,8 +56,10 @@ func ConfigFromEnv(fileCfg ...*config.File) Config {
 	}
 }
 
-// autoGenDir is where auto-generated certs are stored.
-const autoGenDir = "/tmp/dirq-autotls"
+// autoGenDir returns the directory for auto-generated certs.
+func autoGenDir() string {
+	return filepath.Join(config.DataDir(), "tls")
+}
 
 // EnsureCerts makes sure TLS cert/key files exist. If the user provided their
 // own, those are used. Otherwise, self-signed certs are auto-generated.
@@ -86,7 +88,7 @@ func EnsureCerts(cfg Config, role string, log *slog.Logger) (Config, error) {
 		"vulnerable to MITM if an attacker is on-path during agent registration. " +
 		"For production, use dirq tls generate and distribute the CA cert to all agents.")
 
-	result, err := GenerateSelfSigned(autoGenDir)
+	result, err := GenerateSelfSigned(autoGenDir())
 	if err != nil {
 		return cfg, fmt.Errorf("auto-generate TLS certs: %w", err)
 	}
@@ -109,7 +111,7 @@ func EnsureCerts(cfg Config, role string, log *slog.Logger) (Config, error) {
 	}
 
 	log.Info("auto-generated self-signed TLS certs",
-		"dir", autoGenDir,
+		"dir", autoGenDir(),
 		"cert", filepath.Base(cfg.CertFile),
 		"ca", filepath.Base(cfg.CAFile),
 	)

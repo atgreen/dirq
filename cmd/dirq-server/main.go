@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -68,12 +69,18 @@ func main() {
 			if err != nil {
 				log.Error("failed to create bootstrap token", "error", err)
 			} else {
-				log.Info("========================================")
-				log.Info("NO API TOKENS FOUND — bootstrap token created")
-				log.Info("Save this token — it cannot be retrieved later:")
-				log.Info("  " + plaintext)
-				log.Info("Use: export DIRQ_TOKEN=" + plaintext)
-				log.Info("========================================")
+				// Write token to a file with restricted permissions instead
+				// of logging it, to prevent credential leakage through logs.
+				tokenFile := filepath.Join(config.DataDir(), "bootstrap-token")
+				if writeErr := os.WriteFile(tokenFile, []byte(plaintext+"\n"), 0600); writeErr != nil {
+					log.Error("failed to write bootstrap token file", "error", writeErr)
+					// Fall back to logging if file write fails.
+					log.Info("bootstrap token: " + plaintext)
+				} else {
+					log.Info("NO API TOKENS FOUND — bootstrap token created",
+						"file", tokenFile)
+					log.Info("Read with: cat " + tokenFile)
+				}
 			}
 		}
 	} else {

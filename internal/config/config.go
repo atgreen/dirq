@@ -17,6 +17,7 @@ package config
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -41,6 +42,27 @@ func DefaultServerPath() string {
 		return `C:\ProgramData\dirq\server.conf`
 	}
 	return "/etc/dirq/server.conf"
+}
+
+// DataDir returns the platform-appropriate directory for auto-generated keys,
+// tokens, and other runtime state. Prefers /var/lib/dirq (Linux) or
+// C:\ProgramData\dirq (Windows). Falls back to a user-private directory
+// under the OS temp dir if the preferred path isn't writable.
+func DataDir() string {
+	preferred := "/var/lib/dirq"
+	if runtime.GOOS == "windows" {
+		preferred = `C:\ProgramData\dirq`
+	}
+
+	// Try creating the preferred directory.
+	if err := os.MkdirAll(preferred, 0700); err == nil {
+		return preferred
+	}
+
+	// Fall back to a user-private temp directory.
+	fallback := filepath.Join(os.TempDir(), "dirq-data")
+	os.MkdirAll(fallback, 0700)
+	return fallback
 }
 
 // Load reads a config file. Returns an empty File (not an error) if the

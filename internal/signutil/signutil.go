@@ -22,8 +22,12 @@ import (
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
+// autoGenDir returns the directory for auto-generated signing keys.
+func autoGenDir() string {
+	return filepath.Join(config.DataDir(), "signing")
+}
+
 const (
-	autoGenDir      = "/tmp/dirq-autosign"
 	defaultValidity = 5 * time.Minute
 )
 
@@ -59,11 +63,11 @@ func EnsureServerSigner(cfg Config, log *slog.Logger) (*Signer, error) {
 		return LoadSigner(cfg)
 	}
 
-	if err := os.MkdirAll(autoGenDir, 0700); err != nil {
+	if err := os.MkdirAll(autoGenDir(), 0700); err != nil {
 		return nil, fmt.Errorf("create auto-sign dir: %w", err)
 	}
-	cfg.PrivateKeyFile = filepath.Join(autoGenDir, "server_signing.key")
-	cfg.PublicKeyFile = filepath.Join(autoGenDir, "server_signing.pub")
+	cfg.PrivateKeyFile = filepath.Join(autoGenDir(), "server_signing.key")
+	cfg.PublicKeyFile = filepath.Join(autoGenDir(), "server_signing.pub")
 
 	if _, err := os.Stat(cfg.PrivateKeyFile); err == nil {
 		return LoadSigner(cfg)
