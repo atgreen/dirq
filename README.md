@@ -638,9 +638,21 @@ export DIRQ_TOKEN=<token>
 
 Set `DIRQ_AUTH_DISABLED=true` to disable (not recommended).
 
+### Message Signing
+
+Every control message the server sends through the relay mesh — queries, exec requests, file transfers, rebalancer commands — is **signed with Ed25519** before dispatch. Each agent verifies the signature before processing.
+
+This is critical because queries and exec requests flow through relay agents. Without signing, a compromised relay could inject fake commands to downstream agents. With signing:
+
+- **Only the server can originate commands.** Relay agents forward signed messages but cannot forge them.
+- **Signatures include an expiry window** (5 minutes), preventing replay attacks.
+- **The server's public key is distributed to agents during registration** over the TLS-protected gRPC stream.
+
+The signing key pair is auto-generated on first startup and persisted. To use a pre-generated key, set `DIRQ_SIGNING_KEY`.
+
 ### Execution Security
 
-- **Server-originated only:** exec requests must come from the server. Peer agents cannot send exec requests to each other.
+- **Server-originated only:** exec requests must come from the server and carry a valid Ed25519 signature. Relay agents forward but cannot forge exec requests.
 - **Opt-in per agent:** `exec_enabled` defaults to `false`.
 - **Full audit trail:** every operation logged with AAP job ID, user, command, exit status.
 - **AAP retains authority:** DirQ is the data plane; AAP controls RBAC, credentials, approvals.
