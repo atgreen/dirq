@@ -183,7 +183,11 @@ const SessionTokenTTL = 24 * time.Hour
 // timestamp so each issuance produces a unique, expiring token. Format:
 // base64(sign(agentID + ":" + unixTimestamp)) + ":" + unixTimestamp
 func (s *Signer) SignToken(agentID string) string {
-	ts := fmt.Sprintf("%d", time.Now().Unix())
+	return s.signTokenAt(agentID, time.Now())
+}
+
+func (s *Signer) signTokenAt(agentID string, t time.Time) string {
+	ts := fmt.Sprintf("%d", t.Unix())
 	payload := agentID + ":" + ts
 	sig := ed25519.Sign(s.privateKey, []byte(payload))
 	return base64.StdEncoding.EncodeToString(sig) + ":" + ts
