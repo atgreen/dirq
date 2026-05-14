@@ -28,3 +28,9 @@ override_dh_auto_install:
 
 override_dh_auto_test:
 	# Skip — binaries are pre-built and tested in CI.
+
+override_dh_dwz:
+	# Skip — Go binaries use compressed debug sections that dwz cannot handle.
+
+override_dh_strip:
+	# Skip — Go binaries should not be stripped.
