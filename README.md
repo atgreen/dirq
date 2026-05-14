@@ -5,6 +5,7 @@ DirQ ("Direct Query") is an agent-based platform for querying and managing large
 The key idea is simple:
 
 - **Query the fleet like a dataset** instead of logging into hosts one by one
+- **Scan for CVEs in real time** — identify every affected host in seconds, not hours
 - **Keep managed hosts outbound-only** instead of opening SSH/WinRM inbound
 - **Reuse Ansible** while replacing the transport underneath
 - **Build Ansible inventories from live DirQ query results** instead of static host lists
@@ -18,6 +19,7 @@ One of the most practical workflows in DirQ is:
 
 Examples:
 
+- A new CVE drops — run `dirq cve CVE-2024-6345` and instantly see which hosts are vulnerable and which are already patched, across the entire fleet.
 - Find only hosts with disks over 90%, turn that into an inventory, then run a cleanup or expansion playbook.
 - Query for hosts with vulnerable OpenSSL package versions, build an inventory from the result, and patch only those systems.
 - Query for hosts where `sshd` or another critical service is stopped, generate an inventory, and run a remediation playbook immediately.
@@ -28,10 +30,11 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 
 1. **Large locked-down environments** — managed hosts cannot accept inbound SSH or WinRM.
 2. **Segmented enterprise networks** — a single control plane across data centers, edge sites, or heavily firewalled zones.
-3. **Real-time fleet troubleshooting** — answer "which prod hosts have disks over 90%?" and act on it immediately.
-4. **Query-driven Ansible targeting** — inventories based on live fleet state, not stale static groups.
-5. **Ansible without transport pain** — keep your playbooks, drop the SSH/WinRM dependency.
-6. **Very large estates** — server connection count stays bounded while the fleet grows.
+3. **Real-time CVE response** — a vulnerability drops and you need to know which hosts are affected *now*, not after the next scheduled scan.
+4. **Real-time fleet troubleshooting** — answer "which prod hosts have disks over 90%?" and act on it immediately.
+5. **Query-driven Ansible targeting** — inventories based on live fleet state, not stale static groups.
+6. **Ansible without transport pain** — keep your playbooks, drop the SSH/WinRM dependency.
+7. **Very large estates** — server connection count stays bounded while the fleet grows.
 
 **What makes DirQ different:**
 
