@@ -100,23 +100,31 @@ jobs:
           path: ./artifacts
 
       - name: Setup rpmbuild
-        run: rpmdev-setuptree
+        run: |
+          export RPMBUILD_DIR="${GITHUB_WORKSPACE}/rpmbuild"
+          mkdir -p "${RPMBUILD_DIR}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          echo "%_topdir ${RPMBUILD_DIR}" > ~/.rpmmacros
 
       - name: Build agent RPM
         run: |
-          cp artifacts/dist/dirq-agent-linux-amd64 ~/rpmbuild/SOURCES/dirq-agent
-          cp packaging/dirq-agent.service ~/rpmbuild/SOURCES/
-          cp packaging/agent.conf ~/rpmbuild/SOURCES/
-          cp packaging/dirq-agent.spec ~/rpmbuild/SPECS/
-          rpmbuild -bb ~/rpmbuild/SPECS/dirq-agent.spec --define "_version ${VERSION}"
+          cp artifacts/dist/dirq-agent-linux-amd64 rpmbuild/SOURCES/dirq-agent
+          cp packaging/dirq-agent.service rpmbuild/SOURCES/
+          cp packaging/agent.conf rpmbuild/SOURCES/
+          cp packaging/dirq-agent.spec rpmbuild/SPECS/
+          rpmbuild -bb rpmbuild/SPECS/dirq-agent.spec --define "_version ${VERSION}"
 
       - name: Build server RPM
         run: |
-          cp artifacts/dist/dirq-server-linux-amd64 ~/rpmbuild/SOURCES/dirq-server
-          cp artifacts/dist/dirq-linux-amd64 ~/rpmbuild/SOURCES/dirq
-          cp packaging/dirq-server.service ~/rpmbuild/SOURCES/
-          cp packaging/dirq-server.spec ~/rpmbuild/SPECS/
-          rpmbuild -bb ~/rpmbuild/SPECS/dirq-server.spec --define "_version ${VERSION}"
+          cp artifacts/dist/dirq-server-linux-amd64 rpmbuild/SOURCES/dirq-server
+          cp packaging/dirq-server.service rpmbuild/SOURCES/
+          cp packaging/dirq-server.spec rpmbuild/SPECS/
+          rpmbuild -bb rpmbuild/SPECS/dirq-server.spec --define "_version ${VERSION}"
+
+      - name: Build CLI RPM
+        run: |
+          cp artifacts/dist/dirq-linux-amd64 rpmbuild/SOURCES/dirq
+          cp packaging/dirq.spec rpmbuild/SPECS/
+          rpmbuild -bb rpmbuild/SPECS/dirq.spec --define "_version ${VERSION}"
 
       - name: Sign RPMs
         env:
@@ -130,13 +138,13 @@ jobs:
           GPG_NAME=$(gpg --list-secret-keys --with-colons | awk -F: '/^uid/{print $10; exit}')
           echo "%_signature gpg" > ~/.rpmmacros
           echo "%_gpg_name ${GPG_NAME}" >> ~/.rpmmacros
-          rpmsign --addsign ~/rpmbuild/RPMS/x86_64/*.rpm
+          rpmsign --addsign rpmbuild/RPMS/x86_64/*.rpm
 
       - name: Upload RPM artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rpm-packages
-          path: ~/rpmbuild/RPMS/x86_64/*.rpm
+          path: rpmbuild/RPMS/x86_64/*.rpm
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Build DEB packages.

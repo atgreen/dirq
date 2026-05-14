@@ -14,12 +14,10 @@ admins, query engine, and Ansible inventory endpoint.
 mkdir -p %{buildroot}/usr/local/bin
 mkdir -p %{buildroot}/usr/lib/systemd/system
 cp %{_sourcedir}/dirq-server %{buildroot}/usr/local/bin/dirq-server
-cp %{_sourcedir}/dirq %{buildroot}/usr/local/bin/dirq
 cp %{_sourcedir}/dirq-server.service %{buildroot}/usr/lib/systemd/system/
 
 %files
 /usr/local/bin/dirq-server
-/usr/local/bin/dirq
 /usr/lib/systemd/system/dirq-server.service
 
 %post

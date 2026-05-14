@@ -19,10 +19,12 @@ override_dh_auto_install:
 	# dirq-server
 	install -D -m 0755 $(CURDIR)/dist/dirq-server \
 		$(CURDIR)/debian/dirq-server/usr/local/bin/dirq-server
-	install -D -m 0755 $(CURDIR)/dist/dirq \
-		$(CURDIR)/debian/dirq-server/usr/local/bin/dirq
 	install -D -m 0644 $(CURDIR)/packaging/dirq-server.service \
 		$(CURDIR)/debian/dirq-server/usr/lib/systemd/system/dirq-server.service
+
+	# dirq (CLI)
+	install -D -m 0755 $(CURDIR)/dist/dirq \
+		$(CURDIR)/debian/dirq/usr/local/bin/dirq
 
 override_dh_auto_test:
 	# Skip — binaries are pre-built and tested in CI.
