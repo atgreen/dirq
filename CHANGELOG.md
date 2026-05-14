@@ -5,6 +5,33 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-05-14
+
+### Added
+
+- **`dirq exec`** — execute a command or script across the fleet in parallel with streaming NDJSON results; supports `--become`, `--script`, `--container`, `--timeout`
+- **Broadcast deploy** — `dirq deploy` now sends the package through the mesh tree once per link instead of once per host; each relay forwards to its children, only targeted agents write and install
+- **Broadcast exec** — `dirq exec` broadcasts through the mesh like queries; one message traverses each link regardless of fleet size
+- **Session token authentication** — agents receive a signed, time-stamped session token during registration; server and relay peers verify tokens cryptographically before accepting stream connections
+- **Registration secret** — optional `DIRQ_REGISTRATION_SECRET` pre-shared key gates who can register agents with the server
+- **Config file TLS/signing support** — `tls_ca`, `tls_cert`, `tls_key`, `tls_insecure`, `tls_disabled`, `signing_key`, `signing_pub` all configurable via config file in addition to environment variables
+- **WHERE clause for `hosts list/tag/untag`** — operate on multiple hosts by query instead of one-at-a-time by ID
+
+### Changed
+
+- **Deploy is now parallel by default** — broadcast replaces the per-host rolling wave approach; the `--parallel` flag has been removed
+- **Auto-generated keys stored in `/var/lib/dirq/`** instead of `/tmp/` for security (0700 permissions; falls back to user-private temp dir)
+- **Bootstrap token written to file** (`/var/lib/dirq/bootstrap-token`) instead of server log to prevent credential leakage
+- **API tokens accepted only via `Authorization` header** — query string `?token=` parameter removed to prevent log/proxy credential leakage
+- **Auto-generated TLS certs use CA verification** instead of forcing `InsecureSkipVerify`; certs are reused if already present so server and agent share the same CA
+- **Exec stdout/stderr base64-encoded** on the wire for binary safety across all exec endpoints
+
+### Fixed
+
+- **Concurrent deploys could overwrite each other** — temp filenames now include a unique deploy ID
+- **`hosts list WHERE` made N+1 API calls** — now uses query result data directly (single call)
+- **CLI created a new TLS transport per request** when `--tls-insecure` was set, preventing connection reuse
+
 ## [0.4.0] - 2026-05-14
 
 ### Added
@@ -112,6 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.5.0]: https://github.com/atgreen/dirq/releases/tag/v0.5.0
 [0.4.0]: https://github.com/atgreen/dirq/releases/tag/v0.4.0
 [0.3.0]: https://github.com/atgreen/dirq/releases/tag/v0.3.0
 [0.2.1]: https://github.com/atgreen/dirq/releases/tag/v0.2.1
