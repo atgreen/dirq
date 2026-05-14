@@ -5,6 +5,15 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-05-13
+
+### Fixed
+
+- **Exec audit log updates never matched** — `UpdateExecLog` queried by auto-generated ID instead of request ID, leaving audit rows permanently incomplete
+- **Token scopes not enforced** — readonly tokens could access exec, tag mutation, and token management endpoints; scopes are now checked per-route
+- **GROUP BY aggregation errors silently discarded** — partial failures now return HTTP 500 instead of misleading results
+- **Token validation scaled poorly** — every API request scanned all tokens with bcrypt; now uses an indexed prefix for O(1) lookup
+
 ## [0.2.0] - 2026-05-13
 
 ### Added
@@ -70,5 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.2.1]: https://github.com/atgreen/dirq/releases/tag/v0.2.1
 [0.2.0]: https://github.com/atgreen/dirq/releases/tag/v0.2.0
 [0.1.0]: https://github.com/atgreen/dirq/releases/tag/v0.1.0
