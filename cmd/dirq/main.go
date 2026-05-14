@@ -67,7 +67,6 @@ func main() {
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "output raw JSON")
 	root.PersistentFlags().BoolVar(&tlsInsecure, "tls-insecure", os.Getenv("DIRQ_TLS_INSECURE") == "true", "skip TLS certificate verification")
 
-	root.AddCommand(queryCmd())
 	root.AddCommand(hostsCmd())
 	root.AddCommand(tokenCmd())
 	root.AddCommand(queriesCmd())
@@ -82,81 +81,6 @@ func main() {
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
-}
-
-// ─────────────────────────────────────────────────────────
-// dirq query
-// ─────────────────────────────────────────────────────────
-
-func queryCmd() *cobra.Command {
-	var timeout int
-
-	cmd := &cobra.Command{
-		Use:   "query [DirQ expression]",
-		Short: "Run an ad-hoc query across the fleet",
-		Long: `Run a DirQ query and display results.
-
-Examples:
-  dirq query "SELECT hostname, disk.pct_used WHERE disk.pct_used > 80"
-  dirq query "SELECT hostname, cpu.cores WHERE tag.prod IS NOT NULL"
-  dirq query "SELECT os, COUNT(hostname) GROUP BY os"`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			body, _ := json.Marshal(map[string]any{
-				"query":   args[0],
-				"timeout": timeout,
-			})
-
-			resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
-			if err != nil {
-				return err
-			}
-
-			if jsonOut {
-				fmt.Println(string(resp))
-				return nil
-			}
-
-			var result struct {
-				QueryID      string `json:"query_id"`
-				Status       string `json:"status"`
-				TotalTargets int    `json:"total_targets"`
-				Received     int    `json:"received"`
-				Results      []struct {
-					Hostname string         `json:"hostname"`
-					Success  bool           `json:"success"`
-					Error    string         `json:"error"`
-					Data     map[string]any `json:"data"`
-				} `json:"results"`
-			}
-			if err := json.Unmarshal(resp, &result); err != nil {
-				return err
-			}
-
-			fmt.Printf("Query: %s\n", result.QueryID)
-			fmt.Printf("Status: %s | Targets: %d | Received: %d\n\n", result.Status, result.TotalTargets, result.Received)
-
-			if len(result.Results) == 0 {
-				fmt.Println("No results.")
-				return nil
-			}
-
-			// Print results as formatted JSON per host.
-			for _, r := range result.Results {
-				if r.Success {
-					data, _ := json.MarshalIndent(r.Data, "  ", "  ")
-					fmt.Printf("  %s:\n  %s\n\n", r.Hostname, string(data))
-				} else {
-					fmt.Printf("  %s: ERROR: %s\n\n", r.Hostname, r.Error)
-				}
-			}
-
-			return nil
-		},
-	}
-
-	cmd.Flags().IntVar(&timeout, "timeout", 60, "query timeout in seconds")
-	return cmd
 }
 
 // ─────────────────────────────────────────────────────────

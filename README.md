@@ -357,9 +357,6 @@ dirq "select os_info.hostname, disk.pct_used where disk.pct_used > 80"
 # Flags
 dirq select os_info.os, COUNT(os_info.hostname) GROUP BY os_info.os --json
 dirq "select * where tag.env = 'prod'" --timeout 30
-
-# The old dirq query command still works
-dirq query "SELECT os_info.hostname, cpu.logical_cores"
 ```
 
 ### Natural language queries
