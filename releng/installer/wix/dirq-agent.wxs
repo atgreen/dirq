@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DirQ Agent - Windows MSI Installer
+  WiX v5 Source
+
+  SPDX-License-Identifier: MIT
+  Copyright (C) 2026 Anthony Green <green@moxielogic.com>
+
+  Build with: wix build dirq-agent.wxs -o dirq-agent.msi -d VERSION=0.2.0
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package
+    Name="DirQ Agent"
+    Manufacturer="Anthony Green"
+    Version="$(VERSION)"
+    UpgradeCode="D1E2F3A4-B5C6-7D8E-9F0A-1B2C3D4E5F6A"
+    Scope="perMachine">
+
+    <SummaryInformation
+      Description="DirQ - Real-time endpoint query and execution agent"
+      Manufacturer="Anthony Green" />
+
+    <!-- Major upgrade configuration -->
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+      AllowSameVersionUpgrades="yes" />
+
+    <!-- Embed cabinet in MSI -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Feature definition -->
+    <Feature Id="ProductFeature" Title="DirQ Agent" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="ConfigComponents" />
+      <ComponentGroupRef Id="ServiceComponents" />
+      <ComponentGroupRef Id="FirewallComponents" />
+    </Feature>
+
+    <!-- UI configuration -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+  </Package>
+
+  <!-- Directory structure -->
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DirQ" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="CONFIGFOLDER" Name="dirq" />
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- Product components -->
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="1A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D">
+        <File Id="dirq_agent.exe" Source="dirq-agent.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="LicenseFile" Guid="2B3C4D5E-6F7A-8B9C-0D1E-2F3A4B5C6D7E">
+        <File Id="LICENSE" Source="LICENSE" />
+      </Component>
+      <Component Id="ReadmeFile" Guid="3C4D5E6F-7A8B-9C0D-1E2F-3A4B5C6D7E8F">
+        <File Id="README.md" Source="README.md" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Default config file -->
+  <Fragment>
+    <ComponentGroup Id="ConfigComponents" Directory="CONFIGFOLDER">
+      <Component Id="ConfigFile" Guid="4D5E6F7A-8B9C-0D1E-2F3A-4B5C6D7E8F9A"
+                 NeverOverwrite="yes" Permanent="yes">
+        <File Id="agent.conf" Source="agent.conf" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Windows service -->
+  <Fragment>
+    <ComponentGroup Id="ServiceComponents" Directory="INSTALLFOLDER">
+      <Component Id="DirQService" Guid="5E6F7A8B-9C0D-1E2F-3A4B-5C6D7E8F9A0B">
+        <ServiceInstall
+          Id="DirQAgentService"
+          Name="DirQAgent"
+          DisplayName="DirQ Agent"
+          Description="DirQ real-time endpoint query and execution agent"
+          Start="auto"
+          Type="ownProcess"
+          ErrorControl="normal"
+          Account="LocalSystem">
+          <ServiceConfig
+            DelayedAutoStart="yes"
+            OnInstall="yes"
+            OnReinstall="yes" />
+          <!-- Recovery: restart on failure -->
+          <util:ServiceConfig xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+            FirstFailureActionType="restart"
+            SecondFailureActionType="restart"
+            ThirdFailureActionType="restart"
+            RestartServiceDelayInSeconds="5"
+            ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl
+          Id="DirQAgentControl"
+          Name="DirQAgent"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Firewall rule -->
+  <Fragment>
+    <ComponentGroup Id="FirewallComponents" Directory="INSTALLFOLDER">
+      <Component Id="FirewallRule" Guid="6F7A8B9C-0D1E-2F3A-4B5C-6D7E8F9A0B1C">
+        <fire:FirewallException xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall"
+          Id="DirQAgentFirewall"
+          Name="DirQ Agent"
+          Port="50052"
+          Protocol="tcp"
+          Scope="any"
+          Profile="all" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>

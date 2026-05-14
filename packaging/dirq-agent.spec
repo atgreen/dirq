@@ -14,12 +14,15 @@ and optionally executes commands.
 %install
 mkdir -p %{buildroot}/usr/local/bin
 mkdir -p %{buildroot}/usr/lib/systemd/system
+mkdir -p %{buildroot}/etc/dirq
 cp %{_sourcedir}/dirq-agent %{buildroot}/usr/local/bin/dirq-agent
 cp %{_sourcedir}/dirq-agent.service %{buildroot}/usr/lib/systemd/system/
+cp %{_sourcedir}/agent.conf %{buildroot}/etc/dirq/agent.conf
 
 %files
 /usr/local/bin/dirq-agent
 /usr/lib/systemd/system/dirq-agent.service
+%config(noreplace) /etc/dirq/agent.conf
 
 %post
 systemctl daemon-reload

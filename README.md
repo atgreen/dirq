@@ -352,6 +352,42 @@ dirq query "SELECT os_info.hostname, disk.pct_used WHERE disk.pct_used > 80" --t
 dirq query "SELECT os_info.os, COUNT(os_info.hostname) GROUP BY os_info.os" --json
 ```
 
+### Natural language queries
+
+Ask questions in plain English — DirQ translates them to queries using an LLM (requires `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`):
+
+```bash
+dirq ask "which prod hosts have full disks?"
+# Query: SELECT hostname, disk.mount_point, disk.pct_used WHERE tag.env = 'prod' AND disk.pct_used > 80
+
+dirq ask "show me all windows servers"
+dirq ask "how many hosts are running linux?"
+dirq ask "find hosts with openssl installed"
+dirq ask "what packages are on the staging servers?"
+```
+
+Use `--dry-run` to see the generated query without executing it:
+
+```bash
+dirq ask "hosts with more than 8 cores" --dry-run
+```
+
+Use `--provider` and `--model` to choose the LLM:
+
+```bash
+dirq ask "stopped services" --provider openai --model gpt-4o
+dirq ask "disk usage in prod" --provider anthropic --model claude-sonnet-4-20250514
+```
+
+### AI integration
+
+Generate an AI-readable reference for the query language:
+
+```bash
+dirq skill            # print to stdout
+dirq skill | pbcopy   # copy to clipboard (macOS)
+```
+
 ---
 
 ## Ansible Integration

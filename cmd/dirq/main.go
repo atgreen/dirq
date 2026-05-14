@@ -36,9 +36,12 @@ func main() {
 
 	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("DIRQ_SERVER_URL"), "DirQ server URL (or set DIRQ_SERVER_URL)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		// Allow tls generate and skill to run without a server URL.
+		// Allow tls generate, skill, and ask --dry-run to run without a server URL.
 		if cmd.Name() == "generate" || cmd.Name() == "skill" {
 			return nil
+		}
+		if cmd.Name() == "ask" && serverURL == "" {
+			return nil // ask can run with --dry-run without a server
 		}
 		if serverURL == "" {
 			return fmt.Errorf("DIRQ_SERVER_URL is not set. Use --server or export DIRQ_SERVER_URL=http://your-dirq-server:8080")
@@ -56,6 +59,7 @@ func main() {
 	root.AddCommand(tlsCmd())
 	root.AddCommand(runCmd())
 	root.AddCommand(skillCmd())
+	root.AddCommand(askCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -746,6 +750,252 @@ Used with GROUP BY for fleet-wide summaries.
     -- Everything about all hosts
     SELECT *
 `
+
+// ─────────────────────────────────────────────────────────
+// dirq ask
+// ─────────────────────────────────────────────────────────
+
+func askCmd() *cobra.Command {
+	var dryRun bool
+	var timeout int
+	var model string
+	var provider string
+
+	cmd := &cobra.Command{
+		Use:   "ask [natural language question]",
+		Short: "Ask a question in plain English and query the fleet",
+		Long: `Translates a natural language question into a DirQ query using an LLM,
+then executes it against the fleet.
+
+Requires ANTHROPIC_API_KEY or OPENAI_API_KEY to be set.
+
+Examples:
+  dirq ask "which prod hosts have full disks?"
+  dirq ask "show me all windows servers"
+  dirq ask "how many hosts are running linux?" --dry-run
+  dirq ask "find hosts with openssl installed" --provider openai`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			question := args[0]
+
+			// Auto-detect provider from available API keys.
+			if provider == "" {
+				if os.Getenv("ANTHROPIC_API_KEY") != "" {
+					provider = "anthropic"
+				} else if os.Getenv("OPENAI_API_KEY") != "" {
+					provider = "openai"
+				} else {
+					return fmt.Errorf("set ANTHROPIC_API_KEY or OPENAI_API_KEY, or use --provider")
+				}
+			}
+
+			// Call LLM to translate question to DirQ query.
+			query, err := llmTranslate(provider, model, question)
+			if err != nil {
+				return fmt.Errorf("LLM translation failed: %w", err)
+			}
+
+			fmt.Fprintf(os.Stderr, "Query: %s\n\n", query)
+
+			if dryRun {
+				return nil
+			}
+
+			if serverURL == "" {
+				return fmt.Errorf("DIRQ_SERVER_URL is not set — use --dry-run to see the generated query without executing")
+			}
+
+			// Execute the query.
+			body, _ := json.Marshal(map[string]any{
+				"query":   query,
+				"timeout": timeout,
+			})
+
+			resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
+			if err != nil {
+				return err
+			}
+
+			if jsonOut {
+				fmt.Println(string(resp))
+				return nil
+			}
+
+			var result struct {
+				QueryID      string `json:"query_id"`
+				Status       string `json:"status"`
+				TotalTargets int    `json:"total_targets"`
+				Received     int    `json:"received"`
+				Results      []struct {
+					Hostname string         `json:"hostname"`
+					Success  bool           `json:"success"`
+					Error    string         `json:"error"`
+					Data     map[string]any `json:"data"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(resp, &result); err != nil {
+				return err
+			}
+
+			fmt.Printf("Status: %s | Targets: %d | Received: %d\n\n", result.Status, result.TotalTargets, result.Received)
+
+			for _, r := range result.Results {
+				if !r.Success {
+					fmt.Printf("  %s: ERROR: %s\n", r.Hostname, r.Error)
+					continue
+				}
+				formatted, _ := json.MarshalIndent(r.Data, "  ", "  ")
+				fmt.Printf("  %s:\n  %s\n\n", r.Hostname, string(formatted))
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the generated query without executing it")
+	cmd.Flags().IntVar(&timeout, "timeout", 60, "query timeout in seconds")
+	cmd.Flags().StringVar(&model, "model", "", "LLM model (default: claude-sonnet-4-20250514 or gpt-4o)")
+	cmd.Flags().StringVar(&provider, "provider", "", "LLM provider: anthropic or openai (auto-detected from API key)")
+
+	return cmd
+}
+
+const askSystemPrompt = skillText + `
+You are a DirQ query generator. Given a natural language question about a
+fleet of servers, output ONLY the DirQ query — no explanation, no markdown
+fences, no commentary. Just the raw query on a single line.
+
+If the question is ambiguous, make reasonable assumptions and generate the
+most useful query. If the question cannot be answered with a DirQ query,
+respond with just: SELECT *
+`
+
+func llmTranslate(provider, model, question string) (string, error) {
+	switch provider {
+	case "anthropic":
+		return llmAnthropic(model, question)
+	case "openai":
+		return llmOpenAI(model, question)
+	default:
+		return "", fmt.Errorf("unknown provider %q (use anthropic or openai)", provider)
+	}
+}
+
+func llmAnthropic(model, question string) (string, error) {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("ANTHROPIC_API_KEY is not set")
+	}
+	if model == "" {
+		model = "claude-sonnet-4-20250514"
+	}
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"model":      model,
+		"max_tokens": 256,
+		"system":     askSystemPrompt,
+		"messages": []map[string]string{
+			{"role": "user", "content": question},
+		},
+	})
+
+	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("Anthropic API error %d: %s", resp.StatusCode, string(data))
+	}
+
+	var result struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return "", err
+	}
+	if len(result.Content) == 0 {
+		return "", fmt.Errorf("empty response from Anthropic")
+	}
+
+	return cleanQuery(result.Content[0].Text), nil
+}
+
+func llmOpenAI(model, question string) (string, error) {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY is not set")
+	}
+	if model == "" {
+		model = "gpt-4o"
+	}
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"model":      model,
+		"max_tokens": 256,
+		"messages": []map[string]string{
+			{"role": "system", "content": askSystemPrompt},
+			{"role": "user", "content": question},
+		},
+	})
+
+	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("OpenAI API error %d: %s", resp.StatusCode, string(data))
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return "", err
+	}
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("empty response from OpenAI")
+	}
+
+	return cleanQuery(result.Choices[0].Message.Content), nil
+}
+
+// cleanQuery strips markdown fences and whitespace from LLM output.
+func cleanQuery(s string) string {
+	s = strings.TrimSpace(s)
+	// Strip ```sql ... ``` or ``` ... ```
+	if strings.HasPrefix(s, "```") {
+		lines := strings.Split(s, "\n")
+		// Remove first and last lines (fences).
+		if len(lines) >= 3 {
+			lines = lines[1 : len(lines)-1]
+		}
+		s = strings.Join(lines, " ")
+	}
+	// Collapse multi-line queries to single line.
+	s = strings.Join(strings.Fields(s), " ")
+	return s
+}
 
 // ─────────────────────────────────────────────────────────
 // HTTP client helpers

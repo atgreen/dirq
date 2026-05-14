@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: MIT
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# Binaries are pre-built and provided via _sourcedir.
+
+override_dh_auto_install:
+	# dirq-agent
+	install -D -m 0755 $(CURDIR)/dist/dirq-agent \
+		$(CURDIR)/debian/dirq-agent/usr/local/bin/dirq-agent
+	install -D -m 0644 $(CURDIR)/packaging/dirq-agent.service \
+		$(CURDIR)/debian/dirq-agent/usr/lib/systemd/system/dirq-agent.service
+	install -D -m 0644 $(CURDIR)/packaging/agent.conf \
+		$(CURDIR)/debian/dirq-agent/etc/dirq/agent.conf
+
+	# dirq-server
+	install -D -m 0755 $(CURDIR)/dist/dirq-server \
+		$(CURDIR)/debian/dirq-server/usr/local/bin/dirq-server
+	install -D -m 0755 $(CURDIR)/dist/dirq \
+		$(CURDIR)/debian/dirq-server/usr/local/bin/dirq
+	install -D -m 0644 $(CURDIR)/packaging/dirq-server.service \
+		$(CURDIR)/debian/dirq-server/usr/lib/systemd/system/dirq-server.service
+
+override_dh_auto_test:
+	# Skip — binaries are pre-built and tested in CI.

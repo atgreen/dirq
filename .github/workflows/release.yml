@@ -7,68 +7,631 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Extract version from tag.
+  # ─────────────────────────────────────────────────────────────────────────────
+  extract-version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Build all Go binaries and the Ansible collection.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build Binaries
+    needs: [extract-version]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
 
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
       - name: Extract release notes from CHANGELOG.md
-        id: changelog
         run: |
-          # Extract the section for this version from CHANGELOG.md.
-          # Matches everything between ## [X.Y.Z] and the next ## [ or EOF.
-          VERSION=${{ steps.version.outputs.VERSION }}
           NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{found=0} found" CHANGELOG.md)
           if [ -z "$NOTES" ]; then
             NOTES="Release v${VERSION}. See CHANGELOG.md for details."
           fi
-          # Write to file for gh release.
-          echo "$NOTES" > /tmp/release-notes.md
+          echo "$NOTES" > release-notes.md
 
       - name: Build binaries
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
           LDFLAGS="-X main.version=${VERSION}"
           mkdir -p dist
 
-          # Linux amd64
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-server-linux-amd64 ./cmd/dirq-server
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-linux-amd64 ./cmd/dirq-agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-linux-amd64 ./cmd/dirq
+          for GOARCH in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o dist/dirq-server-linux-$GOARCH ./cmd/dirq-server
+            CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o dist/dirq-agent-linux-$GOARCH  ./cmd/dirq-agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o dist/dirq-linux-$GOARCH       ./cmd/dirq
+          done
 
-          # Linux arm64
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-server-linux-arm64 ./cmd/dirq-server
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-linux-arm64 ./cmd/dirq-agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-linux-arm64 ./cmd/dirq
-
-          # Windows amd64
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-windows-amd64.exe ./cmd/dirq-agent
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-windows-amd64.exe ./cmd/dirq
-
-          # Windows arm64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-windows-amd64.exe      ./cmd/dirq
           CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-windows-arm64.exe ./cmd/dirq-agent
+
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-darwin-amd64 ./cmd/dirq
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-darwin-arm64 ./cmd/dirq
 
       - name: Build Ansible collection
         working-directory: collection/atgreen/dirq
         run: ansible-galaxy collection build --force
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            dist/
+            release-notes.md
+            collection/atgreen/dirq/atgreen-dirq-*.tar.gz
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Build RPM packages.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-rpm:
+    name: Build RPMs
+    needs: [build, extract-version]
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:9
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: dnf install -y rpm-build rpmdevtools rpm-sign
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: ./artifacts
+
+      - name: Setup rpmbuild
+        run: rpmdev-setuptree
+
+      - name: Build agent RPM
+        run: |
+          cp artifacts/dist/dirq-agent-linux-amd64 ~/rpmbuild/SOURCES/dirq-agent
+          cp packaging/dirq-agent.service ~/rpmbuild/SOURCES/
+          cp packaging/agent.conf ~/rpmbuild/SOURCES/
+          cp packaging/dirq-agent.spec ~/rpmbuild/SPECS/
+          rpmbuild -bb ~/rpmbuild/SPECS/dirq-agent.spec --define "_version ${VERSION}"
+
+      - name: Build server RPM
+        run: |
+          cp artifacts/dist/dirq-server-linux-amd64 ~/rpmbuild/SOURCES/dirq-server
+          cp artifacts/dist/dirq-linux-amd64 ~/rpmbuild/SOURCES/dirq
+          cp packaging/dirq-server.service ~/rpmbuild/SOURCES/
+          cp packaging/dirq-server.spec ~/rpmbuild/SPECS/
+          rpmbuild -bb ~/rpmbuild/SPECS/dirq-server.spec --define "_version ${VERSION}"
+
+      - name: Sign RPMs
+        env:
+          RPM_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
+        if: ${{ env.RPM_GPG_PRIVATE_KEY != '' }}
+        run: |
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" > ~/.gnupg/gpg.conf
+          echo "${RPM_GPG_PRIVATE_KEY}" | base64 -d | gpg --batch --import
+          GPG_NAME=$(gpg --list-secret-keys --with-colons | awk -F: '/^uid/{print $10; exit}')
+          echo "%_signature gpg" > ~/.rpmmacros
+          echo "%_gpg_name ${GPG_NAME}" >> ~/.rpmmacros
+          rpmsign --addsign ~/rpmbuild/RPMS/x86_64/*.rpm
+
+      - name: Upload RPM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-packages
+          path: ~/rpmbuild/RPMS/x86_64/*.rpm
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Build DEB packages.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-deb:
+    name: Build DEBs
+    needs: [build, extract-version]
+    runs-on: ubuntu-latest
+    container:
+      image: debian:stable
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y debhelper devscripts gpg debsigs
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: ./artifacts
+
+      - name: Prepare binaries
+        run: |
+          mkdir -p dist
+          cp artifacts/dist/dirq-agent-linux-amd64 dist/dirq-agent
+          cp artifacts/dist/dirq-server-linux-amd64 dist/dirq-server
+          cp artifacts/dist/dirq-linux-amd64 dist/dirq
+          chmod +x dist/*
+
+      - name: Update changelog version
+        run: |
+          sed -i "s/^dirq (.*)/dirq (${VERSION}-1) unstable; urgency=medium/" packaging/debian/changelog
+
+      - name: Build DEBs
+        run: |
+          ln -s packaging/debian debian
+          dpkg-buildpackage -uc -us -b
+
+      - name: Sign DEBs
+        env:
+          DEB_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
+        if: ${{ env.DEB_GPG_PRIVATE_KEY != '' }}
+        run: |
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" > ~/.gnupg/gpg.conf
+          echo "${DEB_GPG_PRIVATE_KEY}" | base64 -d | gpg --batch --import
+          GPG_KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
+          for deb in ../*.deb; do
+            debsigs --sign=origin -k "${GPG_KEYID}" "${deb}"
+          done
+
+      - name: Collect DEBs
+        run: cp ../*.deb . 2>/dev/null || true
+
+      - name: Upload DEB artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-packages
+          path: ./*.deb
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Build Windows installers (NSIS + MSI).
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-windows-installers:
+    name: Windows Installers
+    needs: [build, extract-version]
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: ./artifacts
+
+      - name: Install NSIS
+        shell: powershell
+        run: choco install -y nsis
+
+      - name: Build NSIS installer
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          Copy-Item "artifacts\dist\dirq-agent-windows-amd64.exe" "bin\dirq-agent.exe"
+          & "C:\Program Files (x86)\NSIS\makensis.exe" /DVERSION=$env:VERSION releng\installer\nsis\dirq-agent.nsi
+          Move-Item "releng\installer\nsis\dirq-agent-$env:VERSION-setup.exe" "artifacts\dist\"
+
+      - name: Install WiX Toolset
+        shell: powershell
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add WixToolset.UI.wixext/5.0.2 -g
+          wix extension add WixToolset.Util.wixext/5.0.2 -g
+          wix extension add WixToolset.Firewall.wixext/5.0.2 -g
+
+      - name: Build MSI installer
+        shell: powershell
+        run: |
+          Copy-Item "artifacts\dist\dirq-agent-windows-amd64.exe" "releng\installer\wix\dirq-agent.exe"
+          Copy-Item "LICENSE" "releng\installer\wix\"
+          Copy-Item "README.md" "releng\installer\wix\"
+          Push-Location releng\installer\wix
+          wix build dirq-agent.wxs -o "dirq-agent-$env:VERSION.msi" -d VERSION=$env:VERSION `
+            -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext
+          Pop-Location
+          Move-Item "releng\installer\wix\dirq-agent-$env:VERSION.msi" "artifacts\dist\"
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            artifacts/dist/*-setup.exe
+            artifacts/dist/*.msi
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Sign binaries with Cosign (keyless/Sigstore) and attest provenance.
+  # ─────────────────────────────────────────────────────────────────────────────
+  sign:
+    name: Sign Artifacts
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: ./artifacts
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Create tarballs and sign
+        run: |
+          cd artifacts/dist
+          for bin in dirq-*; do
+            case "$bin" in *.exe) continue ;; esac
+            chmod +x "$bin"
+            tar czf "${bin}.tar.gz" "$bin"
+            cosign sign-blob --yes "${bin}.tar.gz" --bundle "${bin}.tar.gz.bundle"
+          done
+
+      - name: Sign Windows binaries
+        run: |
+          cd artifacts/dist
+          for exe in *.exe; do
+            cosign sign-blob --yes "$exe" --bundle "${exe}.bundle"
+          done
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/dist/*.tar.gz
+
+      - name: Generate checksums
+        run: |
+          cd artifacts/dist
+          sha256sum *.tar.gz *.exe > checksums.sha256
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-artifacts
+          path: |
+            artifacts/dist/*.tar.gz
+            artifacts/dist/*.tar.gz.bundle
+            artifacts/dist/*.exe
+            artifacts/dist/*.exe.bundle
+            artifacts/dist/checksums.sha256
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SLSA Level 3 provenance.
+  # ─────────────────────────────────────────────────────────────────────────────
+  generate-provenance-subjects:
+    name: Generate SLSA Subjects
+    needs: [sign, build-rpm, build-deb, build-windows-installers]
+    runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate hashes
+        id: hash
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.tar.gz' -o -name '*.exe' -o -name '*.rpm' -o -name '*.deb' -o -name '*.msi' \) \
+            -exec sha256sum {} \; | sed 's|  \./[^/]*/|  |' > checksums.txt
+          cat checksums.txt
+          echo "hashes=$(cat checksums.txt | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+  slsa-provenance:
+    name: SLSA Provenance
+    needs: [generate-provenance-subjects]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.generate-provenance-subjects.outputs.hashes }}"
+      upload-assets: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Create GitHub Release with all artifacts.
+  # ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: Publish Release
+    needs: [build, sign, build-rpm, build-deb, build-windows-installers, slsa-provenance, extract-version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "v${{ steps.version.outputs.VERSION }}" \
-            --title "v${{ steps.version.outputs.VERSION }}" \
-            --notes-file /tmp/release-notes.md \
-            dist/* \
-            collection/atgreen/dirq/atgreen-dirq-*.tar.gz
+          gh release create "v${VERSION}" \
+            --repo "${{ github.repository }}" \
+            --title "v${VERSION}" \
+            --notes-file artifacts/build-artifacts/release-notes.md \
+            artifacts/signed-artifacts/*.tar.gz \
+            artifacts/signed-artifacts/*.tar.gz.bundle \
+            artifacts/signed-artifacts/*.exe \
+            artifacts/signed-artifacts/*.exe.bundle \
+            artifacts/signed-artifacts/checksums.sha256 \
+            artifacts/rpm-packages/*.rpm \
+            artifacts/deb-packages/*.deb \
+            artifacts/windows-installers/*-setup.exe \
+            artifacts/windows-installers/*.msi \
+            artifacts/build-artifacts/collection/atgreen/dirq/atgreen-dirq-*.tar.gz
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Build RPM repository metadata.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-rpm-repo:
+    name: Build RPM Repo
+    needs: [release, extract-version]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
+      TAG: v${{ needs.extract-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install createrepo_c
+        run: sudo apt-get install -y createrepo-c
+
+      - name: Download RPMs from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/rpms
+          gh release download "${TAG}" --pattern '*.rpm' --dir /tmp/rpms --skip-existing
+
+      - name: Build repodata
+        run: createrepo_c /tmp/rpms
+
+      - name: Rewrite package URLs to GitHub Release assets
+        run: |
+          REPO="${{ github.repository }}"
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+          cd /tmp/rpms/repodata
+          gunzip -f *-primary.xml.gz
+          PRIMARY=$(ls *-primary.xml)
+          sed -i "s|<location href=\"\([^\"]*\.rpm\)\"|<location href=\"${BASE}/\1\"|g" "${PRIMARY}"
+          gzip -9 "${PRIMARY}"
+
+          # Rebuild repomd.xml with correct checksums.
+          cd /tmp/rpms
+          cat > repodata/repomd.xml <<'XMLHEADER'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <repomd xmlns="http://linux.duke.edu/metadata/repo">
+          XMLHEADER
+
+          for gz in repodata/*.xml.gz; do
+            fname="$(basename "${gz}")"
+            type="$(echo "${fname}" | sed 's/.*-\([a-z_]*\)\.xml\.gz/\1/')"
+            checksum="$(sha256sum "${gz}" | awk '{print $1}')"
+            size="$(stat -c%s "${gz}")"
+            open_file="${gz%.gz}"
+            gunzip -k -f "${gz}"
+            open_checksum="$(sha256sum "${open_file}" | awk '{print $1}')"
+            open_size="$(stat -c%s "${open_file}")"
+            rm -f "${open_file}"
+            cat >> repodata/repomd.xml <<XMLDATA
+            <data type="${type}">
+              <checksum type="sha256">${checksum}</checksum>
+              <open-checksum type="sha256">${open_checksum}</open-checksum>
+              <location href="repodata/${fname}"/>
+              <size>${size}</size>
+              <open-size>${open_size}</open-size>
+            </data>
+          XMLDATA
+          done
+          echo "</repomd>" >> repodata/repomd.xml
+          sed -i 's/^          //' repodata/repomd.xml
+
+      - name: Sign repomd.xml and export public key
+        env:
+          RPM_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
+        if: ${{ env.RPM_GPG_PRIVATE_KEY != '' }}
+        run: |
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" > ~/.gnupg/gpg.conf
+          echo "${RPM_GPG_PRIVATE_KEY}" | base64 -d | gpg --batch --import
+          gpg --batch --detach-sign --armor /tmp/rpms/repodata/repomd.xml
+          gpg --batch --export --armor > /tmp/rpms/RPM-GPG-KEY-dirq
+
+      - name: Upload RPM repo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-repo
+          path: /tmp/rpms/repodata/
+
+      - name: Upload RPM GPG key
+        env:
+          RPM_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
+        if: ${{ env.RPM_GPG_PRIVATE_KEY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-repo-key
+          path: /tmp/rpms/RPM-GPG-KEY-dirq
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Build DEB repository metadata.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-deb-repo:
+    name: Build DEB Repo
+    needs: [release, extract-version]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
+      TAG: v${{ needs.extract-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install APT repo tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev gpg
+
+      - name: Download DEBs from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/debs
+          gh release download "${TAG}" --pattern '*.deb' --dir /tmp/debs --skip-existing
+
+      - name: Import GPG key
+        env:
+          DEB_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
+        if: ${{ env.DEB_GPG_PRIVATE_KEY != '' }}
+        run: |
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" > ~/.gnupg/gpg.conf
+          echo "${DEB_GPG_PRIVATE_KEY}" | base64 -d | gpg --batch --import
+          gpg --batch --export --armor > /tmp/debs/dirq-archive-keyring.gpg
+
+      - name: Build APT repository
+        run: |
+          REPO_DIR=/tmp/apt-repo
+          mkdir -p "${REPO_DIR}/pool/main"
+          mkdir -p "${REPO_DIR}/dists/stable/main/binary-amd64"
+
+          cp /tmp/debs/*.deb "${REPO_DIR}/pool/main/"
+          cd "${REPO_DIR}"
+
+          dpkg-scanpackages pool/main > dists/stable/main/binary-amd64/Packages
+          gzip -9c dists/stable/main/binary-amd64/Packages > dists/stable/main/binary-amd64/Packages.gz
+
+          cd dists/stable
+          cat > Release <<EOF
+          Origin: dirq
+          Label: dirq
+          Suite: stable
+          Codename: stable
+          Date: $(date -Ru)
+          Architectures: amd64
+          Components: main
+          Description: DirQ APT repository
+          EOF
+          sed -i 's/^          //' Release
+
+          {
+            echo "MD5Sum:"
+            for f in main/binary-amd64/Packages main/binary-amd64/Packages.gz; do
+              SIZE=$(stat -c%s "$f")
+              MD5=$(md5sum "$f" | awk '{print $1}')
+              printf " %s %16d %s\n" "$MD5" "$SIZE" "$f"
+            done
+            echo "SHA256:"
+            for f in main/binary-amd64/Packages main/binary-amd64/Packages.gz; do
+              SIZE=$(stat -c%s "$f")
+              SHA=$(sha256sum "$f" | awk '{print $1}')
+              printf " %s %16d %s\n" "$SHA" "$SIZE" "$f"
+            done
+          } >> Release
+
+      - name: Sign Release file
+        env:
+          DEB_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
+        if: ${{ env.DEB_GPG_PRIVATE_KEY != '' }}
+        run: |
+          cd /tmp/apt-repo/dists/stable
+          gpg --batch --yes --armor --detach-sign -o Release.gpg Release
+          gpg --batch --yes --armor --clearsign -o InRelease Release
+
+      - name: Upload DEB repo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-repo
+          path: /tmp/apt-repo/
+
+      - name: Upload DEB keyring
+        env:
+          DEB_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
+        if: ${{ env.DEB_GPG_PRIVATE_KEY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-repo-key
+          path: /tmp/debs/dirq-archive-keyring.gpg
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Deploy package repos to GitHub Pages.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-pages:
+    name: Deploy Package Repos
+    needs: [build-rpm-repo, build-deb-repo]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download RPM repo artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-repo
+          path: docs/rpm-repo/repodata
+
+      - name: Download RPM GPG key
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-repo-key
+          path: docs/rpm-repo
+        continue-on-error: true
+
+      - name: Download DEB repo artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-repo
+          path: docs/deb-repo
+
+      - name: Download DEB keyring
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-repo-key
+          path: docs/deb-repo
+        continue-on-error: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

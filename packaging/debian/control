@@ -1,0 +1,21 @@
+Source: dirq
+Section: admin
+Priority: optional
+Maintainer: Anthony Green <green@moxielogic.com>
+Standards-Version: 4.6.2
+Homepage: https://github.com/atgreen/dirq
+
+Package: dirq-agent
+Architecture: amd64
+Depends: ${misc:Depends}
+Description: DirQ agent — endpoint agent for fleet management
+ Lightweight agent that runs on managed Linux servers, collects system
+ data, relays queries through the P2P mesh, and optionally executes
+ commands.
+
+Package: dirq-server
+Architecture: amd64
+Depends: ${misc:Depends}, postgresql
+Description: DirQ server — Direct Query platform for fleet management
+ Central server providing gRPC service for agents, REST API, query
+ engine, and Ansible inventory endpoint.
