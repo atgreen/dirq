@@ -100,6 +100,7 @@ message AgentMessage {
     FetchFileResponse fetch_response = 6;
     AggregatedQueryResult aggregated_result = 7; // batched results from subtree
     PeerDisconnected peer_disconnected = 8;      // child peer lost — propagate up
+    DeployResponse deploy_response = 9;          // broadcast deploy result
   }
 }
 
@@ -118,6 +119,7 @@ message ServerMessage {
     ExecRequest exec_request      = 4; // Phase 2: run command on agent
     PutFileRequest put_file       = 5; // Phase 2: write file to agent
     FetchFileRequest fetch_file   = 6; // Phase 2: read file from agent
+    DeployRequest deploy_request  = 11; // broadcast package deploy
   }
   string signer_key_id = 7;
   int64 signed_at_unix = 8;
@@ -300,4 +302,36 @@ message FileChunk {
   string hostname   = 3;
   bool   success    = 4;
   string error      = 5;
+}
+
+// ─────────────────────────────────────────────────────────
+// Broadcast deploy
+// ─────────────────────────────────────────────────────────
+
+// DeployRequest broadcasts a package through the relay mesh. Every agent
+// relays the message to its children (like a query). Only agents whose ID
+// is in target_agent_ids write the file and run the install command.
+message DeployRequest {
+  string request_id             = 1;
+  repeated string target_agent_ids = 2; // agents that should install
+  string dest_path              = 3;    // temp file path on agent
+  bytes  content                = 4;    // package binary
+  int32  mode                   = 5;    // unix file mode
+  string install_command        = 6;    // e.g. "rpm -U /tmp/_dirq_deploy_xxx.rpm"
+  bool   become                 = 7;
+  string become_user            = 8;
+  int32  timeout_seconds        = 9;
+}
+
+// DeployResponse is sent by each targeted agent after writing and installing.
+message DeployResponse {
+  string request_id  = 1;
+  string agent_id    = 2;
+  string hostname    = 3;
+  bool   success     = 4;
+  string error       = 5;
+  string phase       = 6;  // "write" or "install"
+  int32  rc          = 7;  // install exit code
+  bytes  stdout      = 8;
+  bytes  stderr      = 9;
 }

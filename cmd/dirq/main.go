@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -956,9 +955,9 @@ PowerShell (.ps1) or cmd (.bat/.cmd).
 
     dirq deploy ./patch.rpm WHERE tag.env = 'prod'
     dirq deploy ./agent-0.3.0.msi WHERE os_info.os = 'windows'
-    dirq deploy ./fix.deb --parallel
+    dirq deploy ./fix.deb
 
-Depth-first rolling wave by default. Supports .rpm, .deb, .msi.
+Broadcast through the mesh — each link carries the package once. Supports .rpm, .deb, .msi.
 
 ### dirq ask — natural language queries (requires LLM API key)
 
@@ -1356,24 +1355,21 @@ Examples:
 // ─────────────────────────────────────────────────────────
 
 func deployCmd() *cobra.Command {
-	var (
-		parallel bool
-		timeout  int
-	)
+	var timeout int
 
 	cmd := &cobra.Command{
 		Use:   "deploy [package] [WHERE ...]",
 		Short: "Deploy a package across the fleet",
 		Long: `Deploy an RPM, DEB, or MSI package to agents through the relay mesh.
 
-Uses rolling wave deployment by default (leaves first, then relays,
-then zone leaders). Use --parallel to install on all targets at once.
+The package is broadcast through the mesh tree — each link carries it
+exactly once, regardless of fleet size. Targeted agents write the file
+and run the install command; non-targeted relays just forward.
 
 Examples:
   dirq deploy ./patch-2026-05.rpm
   dirq deploy ./patch.rpm WHERE tag.env = 'prod'
-  dirq deploy ./agent-0.3.0.msi WHERE os_info.os = 'windows'
-  dirq deploy ./dirq-agent-0.3.0.rpm --parallel`,
+  dirq deploy ./agent-0.3.0.msi WHERE os_info.os = 'windows'`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pkgPath := args[0]
@@ -1384,16 +1380,21 @@ Examples:
 				return fmt.Errorf("package file not found: %s", pkgPath)
 			}
 
-			// Determine install command from extension.
+			// Determine install command and dest path from extension.
 			ext := strings.ToLower(filepath.Ext(pkgPath))
-			var installCmd string
+			deployID := fmt.Sprintf("%d", time.Now().UnixNano())
+
+			var installCmd, destPath string
 			switch ext {
 			case ".rpm":
-				installCmd = "rpm -U --force /tmp/_dirq_deploy_pkg" + ext
+				destPath = fmt.Sprintf("/tmp/_dirq_deploy_%s%s", deployID, ext)
+				installCmd = fmt.Sprintf("rpm -U --force %s", destPath)
 			case ".deb":
-				installCmd = "dpkg -i /tmp/_dirq_deploy_pkg" + ext
+				destPath = fmt.Sprintf("/tmp/_dirq_deploy_%s%s", deployID, ext)
+				installCmd = fmt.Sprintf("dpkg -i %s", destPath)
 			case ".msi":
-				installCmd = `msiexec /i C:\Windows\Temp\_dirq_deploy_pkg.msi /qn`
+				destPath = fmt.Sprintf(`C:\Windows\Temp\_dirq_deploy_%s.msi`, deployID)
+				installCmd = fmt.Sprintf(`msiexec /i %s /qn`, destPath)
 			default:
 				return fmt.Errorf("unsupported package type %q (expected .rpm, .deb, or .msi)", ext)
 			}
@@ -1406,207 +1407,78 @@ Examples:
 
 			fmt.Printf("Package: %s (%.1f MB)\n", filepath.Base(pkgPath), float64(info.Size())/(1024*1024))
 
-			// Build query from remaining args (after the package path).
+			// Build query from remaining args.
 			queryStr := buildWhereQuery(args[1:])
 
-			// Query for target hosts.
-			hosts, err := runQuery(queryStr, timeout)
+			// Single broadcast request to the server.
+			body, _ := json.Marshal(map[string]any{
+				"query":           queryStr,
+				"dest_path":       destPath,
+				"content":         base64.StdEncoding.EncodeToString(pkgContent),
+				"mode":            0644,
+				"install_command": installCmd,
+				"become":          true,
+				"timeout":         timeout,
+			})
+
+			resp, err := apiStreamRequest("POST", "/api/v1/deploy", bytes.NewReader(body))
 			if err != nil {
 				return err
 			}
+			defer resp.Body.Close()
 
-			if len(hosts) == 0 {
-				fmt.Println("No hosts matched the query.")
+			if resp.StatusCode >= 400 {
+				data, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
+			}
+
+			dec := json.NewDecoder(resp.Body)
+
+			// First line: header with target count.
+			var header struct {
+				Type         string `json:"type"`
+				TotalTargets int    `json:"total_targets"`
+			}
+			if err := dec.Decode(&header); err != nil {
+				return fmt.Errorf("failed to read response header: %w", err)
+			}
+
+			if header.TotalTargets == 0 {
+				fmt.Println("No hosts matched the query (or none have exec enabled).")
 				return nil
 			}
 
-			names := make([]string, len(hosts))
-			for i, h := range hosts {
-				names[i] = h.hostname
-			}
-			fmt.Printf("Targets: %d host(s): %s\n", len(hosts), strings.Join(names, ", "))
+			fmt.Printf("Broadcasting to %d host(s)...\n\n", header.TotalTargets)
 
-			if parallel {
-				fmt.Println("Mode: parallel (all at once)")
-			} else {
-				fmt.Println("Mode: depth-first (deepest nodes first)")
-			}
-			fmt.Println()
-
-			// Fetch topology for each target to determine depth.
-			type targetHost struct {
-				queryHost
-				parentID string
-				depth    int
-			}
-
-			targetSet := make(map[string]bool)
-			for _, h := range hosts {
-				targetSet[h.agentID] = true
-			}
-
-			var targets []targetHost
-			for _, h := range hosts {
-				resp, err := apiRequest("GET", "/api/v1/hosts/"+h.agentID, nil)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "  warning: could not fetch agent %s: %v\n", h.hostname, err)
-					targets = append(targets, targetHost{h, "", 0})
-					continue
-				}
-				var agent struct {
-					ParentID *string `json:"parent_id"`
-				}
-				json.Unmarshal(resp, &agent)
-				pid := ""
-				if agent.ParentID != nil {
-					pid = *agent.ParentID
-				}
-				targets = append(targets, targetHost{h, pid, 0})
-			}
-
-			// Compute depth for each target by walking parent chains.
-			// Build a parent lookup from all agents (not just targets).
-			allResp, err := apiRequest("GET", "/api/v1/hosts", nil)
-			if err == nil {
-				var allAgents []struct {
-					ID       string  `json:"id"`
-					ParentID *string `json:"parent_id"`
-				}
-				json.Unmarshal(allResp, &allAgents)
-
-				parentMap := make(map[string]string) // agentID → parentID
-				for _, a := range allAgents {
-					if a.ParentID != nil {
-						parentMap[a.ID] = *a.ParentID
-					}
-				}
-
-				for i := range targets {
-					depth := 0
-					cur := targets[i].agentID
-					seen := make(map[string]bool)
-					for {
-						pid, ok := parentMap[cur]
-						if !ok || pid == "" || seen[cur] {
-							break
-						}
-						seen[cur] = true
-						depth++
-						cur = pid
-					}
-					targets[i].depth = depth
-				}
-			}
-
-			// Sort by depth descending (deepest first).
-			// Targets at the same depth are deployed in parallel within a wave.
-			sort.Slice(targets, func(i, j int) bool {
-				return targets[i].depth > targets[j].depth
-			})
-
-			// Group into waves by depth level.
-			var waves [][]targetHost
-			if parallel {
-				waves = [][]targetHost{targets}
-			} else {
-				currentDepth := -1
-				for _, t := range targets {
-					if t.depth != currentDepth {
-						waves = append(waves, []targetHost{})
-						currentDepth = t.depth
-					}
-					waves[len(waves)-1] = append(waves[len(waves)-1], t)
-				}
-			}
-
-			// Deploy wave by wave (deepest first).
-			b64Content := base64.StdEncoding.EncodeToString(pkgContent)
-			destPath := "/tmp/_dirq_deploy_pkg" + ext
-			if ext == ".msi" {
-				destPath = `C:\Windows\Temp\_dirq_deploy_pkg.msi`
-			}
-
+			// Stream results.
 			totalSuccess := 0
 			totalFail := 0
 
-			for wi, wave := range waves {
-				if !parallel {
-					waveNames := make([]string, len(wave))
-					for i, t := range wave {
-						waveNames[i] = t.hostname
-					}
-					fmt.Printf("Wave %d/%d (depth %d): %s\n", wi+1, len(waves), wave[0].depth, strings.Join(waveNames, ", "))
+			for dec.More() {
+				var r struct {
+					Type     string `json:"type"`
+					Hostname string `json:"hostname"`
+					Success  bool   `json:"success"`
+					Error    string `json:"error"`
+					Phase    string `json:"phase"`
+					RC       int    `json:"rc"`
+					Stderr   string `json:"stderr"`
+				}
+				if err := dec.Decode(&r); err != nil {
+					return fmt.Errorf("failed to read result: %w", err)
 				}
 
-				for _, t := range wave {
-					fmt.Printf("  %s: uploading... ", t.hostname)
-
-					// Put file.
-					putBody, _ := json.Marshal(map[string]any{
-						"agent_id":  t.agentID,
-						"dest_path": destPath,
-						"content":   b64Content,
-						"mode":      0644,
-						"timeout":   timeout,
-					})
-					putResp, err := apiRequest("POST", "/api/v1/put_file", bytes.NewReader(putBody))
-					if err != nil {
-						fmt.Printf("FAILED (upload: %v)\n", err)
-						totalFail++
-						continue
-					}
-					var putResult struct {
-						Success bool   `json:"success"`
-						Error   string `json:"error"`
-					}
-					json.Unmarshal(putResp, &putResult)
-					if !putResult.Success {
-						fmt.Printf("FAILED (upload: %s)\n", putResult.Error)
-						totalFail++
-						continue
-					}
-
-					fmt.Printf("installing... ")
-
-					// Exec install command.
-					execBody, _ := json.Marshal(map[string]any{
-						"agent_id": t.agentID,
-						"command":  installCmd,
-						"become":   true,
-						"timeout":  timeout,
-					})
-					execResp, err := apiRequest("POST", "/api/v1/exec", bytes.NewReader(execBody))
-					if err != nil {
-						fmt.Printf("FAILED (install: %v)\n", err)
-						totalFail++
-						continue
-					}
-					var execResult struct {
-						RC      int    `json:"rc"`
-						Stdout  string `json:"stdout"`
-						Stderr  string `json:"stderr"`
-						Success bool   `json:"success"`
-						Error   string `json:"error"`
-					}
-					json.Unmarshal(execResp, &execResult)
-					if !execResult.Success || execResult.RC != 0 {
-						errMsg := execResult.Error
-						if errMsg == "" {
-							errMsg = execResult.Stderr
-						}
-						fmt.Printf("FAILED (rc=%d: %s)\n", execResult.RC, errMsg)
-						totalFail++
-						continue
-					}
-
-					fmt.Println("OK")
+				if r.Success {
+					fmt.Printf("  %s: OK\n", r.Hostname)
 					totalSuccess++
-				}
-
-				// Wait between waves for agents to reconnect (if not parallel and not last wave).
-				if !parallel && wi < len(waves)-1 {
-					fmt.Printf("  Waiting for wave %d agents to reconnect...\n", wi+1)
-					time.Sleep(10 * time.Second)
+				} else {
+					errMsg := r.Error
+					if errMsg == "" && r.Stderr != "" {
+						stderr, _ := base64.StdEncoding.DecodeString(r.Stderr)
+						errMsg = string(stderr)
+					}
+					fmt.Printf("  %s: FAILED (%s, rc=%d: %s)\n", r.Hostname, r.Phase, r.RC, errMsg)
+					totalFail++
 				}
 			}
 
@@ -1618,7 +1490,6 @@ Examples:
 		},
 	}
 
-	cmd.Flags().BoolVar(&parallel, "parallel", false, "deploy to all targets at once instead of rolling waves")
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "timeout in seconds for each operation")
 
 	return cmd

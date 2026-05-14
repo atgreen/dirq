@@ -45,6 +45,7 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/exec_multi", s.authMiddleware(requireScope("admin", s.handleExecMulti)))
 	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.handlePutFile)))
 	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
+	mux.HandleFunc("POST /api/v1/deploy", s.authMiddleware(requireScope("admin", s.handleBroadcastDeploy)))
 
 	// Status endpoint (authenticated, readonly)
 	mux.HandleFunc("GET /api/v1/status", s.authMiddleware(requireScope("readonly", s.handleStatus)))

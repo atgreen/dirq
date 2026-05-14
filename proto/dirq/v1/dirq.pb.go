@@ -448,6 +448,7 @@ type AgentMessage struct {
 	//	*AgentMessage_FetchResponse
 	//	*AgentMessage_AggregatedResult
 	//	*AgentMessage_PeerDisconnected
+	//	*AgentMessage_DeployResponse
 	Payload       isAgentMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -562,6 +563,15 @@ func (x *AgentMessage) GetPeerDisconnected() *PeerDisconnected {
 	return nil
 }
 
+func (x *AgentMessage) GetDeployResponse() *DeployResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentMessage_DeployResponse); ok {
+			return x.DeployResponse
+		}
+	}
+	return nil
+}
+
 type isAgentMessage_Payload interface {
 	isAgentMessage_Payload()
 }
@@ -598,6 +608,10 @@ type AgentMessage_PeerDisconnected struct {
 	PeerDisconnected *PeerDisconnected `protobuf:"bytes,8,opt,name=peer_disconnected,json=peerDisconnected,proto3,oneof"` // child peer lost — propagate up
 }
 
+type AgentMessage_DeployResponse struct {
+	DeployResponse *DeployResponse `protobuf:"bytes,9,opt,name=deploy_response,json=deployResponse,proto3,oneof"` // broadcast deploy result
+}
+
 func (*AgentMessage_Heartbeat) isAgentMessage_Payload() {}
 
 func (*AgentMessage_QueryResult) isAgentMessage_Payload() {}
@@ -613,6 +627,8 @@ func (*AgentMessage_FetchResponse) isAgentMessage_Payload() {}
 func (*AgentMessage_AggregatedResult) isAgentMessage_Payload() {}
 
 func (*AgentMessage_PeerDisconnected) isAgentMessage_Payload() {}
+
+func (*AgentMessage_DeployResponse) isAgentMessage_Payload() {}
 
 // PeerDisconnected is sent upstream when a relay detects a child has
 // disconnected. The server uses this to mark the agent (and its subtree)
@@ -671,6 +687,7 @@ type ServerMessage struct {
 	//	*ServerMessage_ExecRequest
 	//	*ServerMessage_PutFile
 	//	*ServerMessage_FetchFile
+	//	*ServerMessage_DeployRequest
 	Payload       isServerMessage_Payload `protobuf_oneof:"payload"`
 	SignerKeyId   string                  `protobuf:"bytes,7,opt,name=signer_key_id,json=signerKeyId,proto3" json:"signer_key_id,omitempty"`
 	SignedAtUnix  int64                   `protobuf:"varint,8,opt,name=signed_at_unix,json=signedAtUnix,proto3" json:"signed_at_unix,omitempty"`
@@ -771,6 +788,15 @@ func (x *ServerMessage) GetFetchFile() *FetchFileRequest {
 	return nil
 }
 
+func (x *ServerMessage) GetDeployRequest() *DeployRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_DeployRequest); ok {
+			return x.DeployRequest
+		}
+	}
+	return nil
+}
+
 func (x *ServerMessage) GetSignerKeyId() string {
 	if x != nil {
 		return x.SignerKeyId
@@ -827,6 +853,10 @@ type ServerMessage_FetchFile struct {
 	FetchFile *FetchFileRequest `protobuf:"bytes,6,opt,name=fetch_file,json=fetchFile,proto3,oneof"` // Phase 2: read file from agent
 }
 
+type ServerMessage_DeployRequest struct {
+	DeployRequest *DeployRequest `protobuf:"bytes,11,opt,name=deploy_request,json=deployRequest,proto3,oneof"` // broadcast package deploy
+}
+
 func (*ServerMessage_QueryRequest) isServerMessage_Payload() {}
 
 func (*ServerMessage_PeerUpdate) isServerMessage_Payload() {}
@@ -838,6 +868,8 @@ func (*ServerMessage_ExecRequest) isServerMessage_Payload() {}
 func (*ServerMessage_PutFile) isServerMessage_Payload() {}
 
 func (*ServerMessage_FetchFile) isServerMessage_Payload() {}
+
+func (*ServerMessage_DeployRequest) isServerMessage_Payload() {}
 
 // Agent identifies itself when opening a stream.
 type AgentHello struct {
@@ -2092,6 +2124,226 @@ func (x *FileChunk) GetError() string {
 	return ""
 }
 
+// DeployRequest broadcasts a package through the relay mesh. Every agent
+// relays the message to its children (like a query). Only agents whose ID
+// is in target_agent_ids write the file and run the install command.
+type DeployRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	RequestId      string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	TargetAgentIds []string               `protobuf:"bytes,2,rep,name=target_agent_ids,json=targetAgentIds,proto3" json:"target_agent_ids,omitempty"` // agents that should install
+	DestPath       string                 `protobuf:"bytes,3,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"`                     // temp file path on agent
+	Content        []byte                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`                                       // package binary
+	Mode           int32                  `protobuf:"varint,5,opt,name=mode,proto3" json:"mode,omitempty"`                                            // unix file mode
+	InstallCommand string                 `protobuf:"bytes,6,opt,name=install_command,json=installCommand,proto3" json:"install_command,omitempty"`   // e.g. "rpm -U /tmp/_dirq_deploy_xxx.rpm"
+	Become         bool                   `protobuf:"varint,7,opt,name=become,proto3" json:"become,omitempty"`
+	BecomeUser     string                 `protobuf:"bytes,8,opt,name=become_user,json=becomeUser,proto3" json:"become_user,omitempty"`
+	TimeoutSeconds int32                  `protobuf:"varint,9,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DeployRequest) Reset() {
+	*x = DeployRequest{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeployRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeployRequest) ProtoMessage() {}
+
+func (x *DeployRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeployRequest.ProtoReflect.Descriptor instead.
+func (*DeployRequest) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *DeployRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *DeployRequest) GetTargetAgentIds() []string {
+	if x != nil {
+		return x.TargetAgentIds
+	}
+	return nil
+}
+
+func (x *DeployRequest) GetDestPath() string {
+	if x != nil {
+		return x.DestPath
+	}
+	return ""
+}
+
+func (x *DeployRequest) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *DeployRequest) GetMode() int32 {
+	if x != nil {
+		return x.Mode
+	}
+	return 0
+}
+
+func (x *DeployRequest) GetInstallCommand() string {
+	if x != nil {
+		return x.InstallCommand
+	}
+	return ""
+}
+
+func (x *DeployRequest) GetBecome() bool {
+	if x != nil {
+		return x.Become
+	}
+	return false
+}
+
+func (x *DeployRequest) GetBecomeUser() string {
+	if x != nil {
+		return x.BecomeUser
+	}
+	return ""
+}
+
+func (x *DeployRequest) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+// DeployResponse is sent by each targeted agent after writing and installing.
+type DeployResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	AgentId       string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Hostname      string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Success       bool                   `protobuf:"varint,4,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	Phase         string                 `protobuf:"bytes,6,opt,name=phase,proto3" json:"phase,omitempty"` // "write" or "install"
+	Rc            int32                  `protobuf:"varint,7,opt,name=rc,proto3" json:"rc,omitempty"`      // install exit code
+	Stdout        []byte                 `protobuf:"bytes,8,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr        []byte                 `protobuf:"bytes,9,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeployResponse) Reset() {
+	*x = DeployResponse{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeployResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeployResponse) ProtoMessage() {}
+
+func (x *DeployResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeployResponse.ProtoReflect.Descriptor instead.
+func (*DeployResponse) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *DeployResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *DeployResponse) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *DeployResponse) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *DeployResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *DeployResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *DeployResponse) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *DeployResponse) GetRc() int32 {
+	if x != nil {
+		return x.Rc
+	}
+	return 0
+}
+
+func (x *DeployResponse) GetStdout() []byte {
+	if x != nil {
+		return x.Stdout
+	}
+	return nil
+}
+
+func (x *DeployResponse) GetStderr() []byte {
+	if x != nil {
+		return x.Stderr
+	}
+	return nil
+}
+
 var File_proto_dirq_v1_dirq_proto protoreflect.FileDescriptor
 
 const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
@@ -2128,7 +2380,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\"a\n" +
 	"\fPeerResponse\x12'\n" +
 	"\x05peers\x18\x02 \x03(\v2\x11.dirq.v1.PeerInfoR\x05peers\x12(\n" +
-	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\"\x86\x04\n" +
+	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\"\xca\x04\n" +
 	"\fAgentMessage\x122\n" +
 	"\theartbeat\x18\x01 \x01(\v2\x12.dirq.v1.HeartbeatH\x00R\theartbeat\x129\n" +
 	"\fquery_result\x18\x02 \x01(\v2\x14.dirq.v1.QueryResultH\x00R\vqueryResult\x12+\n" +
@@ -2138,10 +2390,11 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"file_chunk\x18\x05 \x01(\v2\x12.dirq.v1.FileChunkH\x00R\tfileChunk\x12C\n" +
 	"\x0efetch_response\x18\x06 \x01(\v2\x1a.dirq.v1.FetchFileResponseH\x00R\rfetchResponse\x12M\n" +
 	"\x11aggregated_result\x18\a \x01(\v2\x1e.dirq.v1.AggregatedQueryResultH\x00R\x10aggregatedResult\x12H\n" +
-	"\x11peer_disconnected\x18\b \x01(\v2\x19.dirq.v1.PeerDisconnectedH\x00R\x10peerDisconnectedB\t\n" +
+	"\x11peer_disconnected\x18\b \x01(\v2\x19.dirq.v1.PeerDisconnectedH\x00R\x10peerDisconnected\x12B\n" +
+	"\x0fdeploy_response\x18\t \x01(\v2\x17.dirq.v1.DeployResponseH\x00R\x0edeployResponseB\t\n" +
 	"\apayload\"-\n" +
 	"\x10PeerDisconnected\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x8a\x04\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\xcb\x04\n" +
 	"\rServerMessage\x12<\n" +
 	"\rquery_request\x18\x01 \x01(\v2\x15.dirq.v1.QueryRequestH\x00R\fqueryRequest\x126\n" +
 	"\vpeer_update\x18\x02 \x01(\v2\x13.dirq.v1.PeerUpdateH\x00R\n" +
@@ -2151,7 +2404,8 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\fexec_request\x18\x04 \x01(\v2\x14.dirq.v1.ExecRequestH\x00R\vexecRequest\x124\n" +
 	"\bput_file\x18\x05 \x01(\v2\x17.dirq.v1.PutFileRequestH\x00R\aputFile\x12:\n" +
 	"\n" +
-	"fetch_file\x18\x06 \x01(\v2\x19.dirq.v1.FetchFileRequestH\x00R\tfetchFile\x12\"\n" +
+	"fetch_file\x18\x06 \x01(\v2\x19.dirq.v1.FetchFileRequestH\x00R\tfetchFile\x12?\n" +
+	"\x0edeploy_request\x18\v \x01(\v2\x16.dirq.v1.DeployRequestH\x00R\rdeployRequest\x12\"\n" +
 	"\rsigner_key_id\x18\a \x01(\tR\vsignerKeyId\x12$\n" +
 	"\x0esigned_at_unix\x18\b \x01(\x03R\fsignedAtUnix\x12&\n" +
 	"\x0fexpires_at_unix\x18\t \x01(\x03R\rexpiresAtUnix\x12\x1c\n" +
@@ -2284,7 +2538,30 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1a\n" +
 	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\x18\n" +
 	"\asuccess\x18\x04 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error*n\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xae\x02\n" +
+	"\rDeployRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12(\n" +
+	"\x10target_agent_ids\x18\x02 \x03(\tR\x0etargetAgentIds\x12\x1b\n" +
+	"\tdest_path\x18\x03 \x01(\tR\bdestPath\x12\x18\n" +
+	"\acontent\x18\x04 \x01(\fR\acontent\x12\x12\n" +
+	"\x04mode\x18\x05 \x01(\x05R\x04mode\x12'\n" +
+	"\x0finstall_command\x18\x06 \x01(\tR\x0einstallCommand\x12\x16\n" +
+	"\x06become\x18\a \x01(\bR\x06become\x12\x1f\n" +
+	"\vbecome_user\x18\b \x01(\tR\n" +
+	"becomeUser\x12'\n" +
+	"\x0ftimeout_seconds\x18\t \x01(\x05R\x0etimeoutSeconds\"\xec\x01\n" +
+	"\x0eDeployResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1a\n" +
+	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\x18\n" +
+	"\asuccess\x18\x04 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x12\x14\n" +
+	"\x05phase\x18\x06 \x01(\tR\x05phase\x12\x0e\n" +
+	"\x02rc\x18\a \x01(\x05R\x02rc\x12\x16\n" +
+	"\x06stdout\x18\b \x01(\fR\x06stdout\x12\x16\n" +
+	"\x06stderr\x18\t \x01(\fR\x06stderr*n\n" +
 	"\tAgentRole\x12\x1a\n" +
 	"\x16AGENT_ROLE_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fAGENT_ROLE_LEAF\x10\x01\x12\x14\n" +
@@ -2311,7 +2588,7 @@ func file_proto_dirq_v1_dirq_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_dirq_v1_dirq_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_proto_dirq_v1_dirq_proto_goTypes = []any{
 	(AgentRole)(0),                // 0: dirq.v1.AgentRole
 	(*RegisterRequest)(nil),       // 1: dirq.v1.RegisterRequest
@@ -2336,13 +2613,15 @@ var file_proto_dirq_v1_dirq_proto_goTypes = []any{
 	(*FetchFileRequest)(nil),      // 20: dirq.v1.FetchFileRequest
 	(*FetchFileResponse)(nil),     // 21: dirq.v1.FetchFileResponse
 	(*FileChunk)(nil),             // 22: dirq.v1.FileChunk
-	nil,                           // 23: dirq.v1.RegisterRequest.TagsEntry
-	nil,                           // 24: dirq.v1.ExecRequest.EnvironmentEntry
-	(*timestamppb.Timestamp)(nil), // 25: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 26: google.protobuf.Struct
+	(*DeployRequest)(nil),         // 23: dirq.v1.DeployRequest
+	(*DeployResponse)(nil),        // 24: dirq.v1.DeployResponse
+	nil,                           // 25: dirq.v1.RegisterRequest.TagsEntry
+	nil,                           // 26: dirq.v1.ExecRequest.EnvironmentEntry
+	(*timestamppb.Timestamp)(nil), // 27: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 28: google.protobuf.Struct
 }
 var file_proto_dirq_v1_dirq_proto_depIdxs = []int32{
-	23, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
+	25, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
 	0,  // 1: dirq.v1.RegisterResponse.role:type_name -> dirq.v1.AgentRole
 	3,  // 2: dirq.v1.RegisterResponse.peers:type_name -> dirq.v1.PeerInfo
 	3,  // 3: dirq.v1.PeerResponse.peers:type_name -> dirq.v1.PeerInfo
@@ -2354,35 +2633,37 @@ var file_proto_dirq_v1_dirq_proto_depIdxs = []int32{
 	21, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
 	14, // 10: dirq.v1.AgentMessage.aggregated_result:type_name -> dirq.v1.AggregatedQueryResult
 	7,  // 11: dirq.v1.AgentMessage.peer_disconnected:type_name -> dirq.v1.PeerDisconnected
-	11, // 12: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
-	15, // 13: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
-	16, // 14: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
-	17, // 15: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
-	19, // 16: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
-	20, // 17: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
-	25, // 18: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
-	12, // 19: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
-	26, // 20: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
-	25, // 21: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
-	13, // 22: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
-	3,  // 23: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
-	0,  // 24: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
-	24, // 25: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
-	25, // 26: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
-	25, // 27: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
-	1,  // 28: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
-	6,  // 29: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
-	4,  // 30: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
-	6,  // 31: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
-	2,  // 32: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
-	8,  // 33: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
-	5,  // 34: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
-	8,  // 35: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
-	32, // [32:36] is the sub-list for method output_type
-	28, // [28:32] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	24, // 12: dirq.v1.AgentMessage.deploy_response:type_name -> dirq.v1.DeployResponse
+	11, // 13: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
+	15, // 14: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
+	16, // 15: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
+	17, // 16: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
+	19, // 17: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
+	20, // 18: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
+	23, // 19: dirq.v1.ServerMessage.deploy_request:type_name -> dirq.v1.DeployRequest
+	27, // 20: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
+	12, // 21: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
+	28, // 22: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
+	27, // 23: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
+	13, // 24: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
+	3,  // 25: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
+	0,  // 26: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
+	26, // 27: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
+	27, // 28: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
+	27, // 29: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
+	1,  // 30: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
+	6,  // 31: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
+	4,  // 32: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
+	6,  // 33: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
+	2,  // 34: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
+	8,  // 35: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
+	5,  // 36: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
+	8,  // 37: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
+	34, // [34:38] is the sub-list for method output_type
+	30, // [30:34] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_proto_dirq_v1_dirq_proto_init() }
@@ -2399,6 +2680,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 		(*AgentMessage_FetchResponse)(nil),
 		(*AgentMessage_AggregatedResult)(nil),
 		(*AgentMessage_PeerDisconnected)(nil),
+		(*AgentMessage_DeployResponse)(nil),
 	}
 	file_proto_dirq_v1_dirq_proto_msgTypes[7].OneofWrappers = []any{
 		(*ServerMessage_QueryRequest)(nil),
@@ -2407,6 +2689,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 		(*ServerMessage_ExecRequest)(nil),
 		(*ServerMessage_PutFile)(nil),
 		(*ServerMessage_FetchFile)(nil),
+		(*ServerMessage_DeployRequest)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2414,7 +2697,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_dirq_v1_dirq_proto_rawDesc), len(file_proto_dirq_v1_dirq_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

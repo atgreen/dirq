@@ -397,6 +397,132 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 }
 
 // ─────────────────────────────────────────────────────────
+// Broadcast deploy
+// ─────────────────────────────────────────────────────────
+
+// handleDeploy writes a package to disk, runs the install command, cleans up,
+// and sends a DeployResponse. Used by the broadcast deploy path — the package
+// binary travels through the mesh once (like a query) instead of once per host.
+func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
+	hostname, _ := os.Hostname()
+
+	a.log.Info("deploy request received",
+		slog.String("request_id", req.GetRequestId()),
+		slog.String("dest_path", req.GetDestPath()),
+		slog.Int("content_size", len(req.GetContent())),
+		slog.String("install_command", req.GetInstallCommand()),
+	)
+
+	if !a.cfg.ExecEnabled {
+		a.sendDeployResponse(&pb.DeployResponse{
+			RequestId: req.GetRequestId(),
+			AgentId:   a.agentID,
+			Hostname:  hostname,
+			Success:   false,
+			Phase:     "write",
+			Error:     "remote execution is disabled on this agent",
+		})
+		return
+	}
+
+	// Set up timeout.
+	timeout := time.Duration(req.GetTimeoutSeconds()) * time.Second
+	if timeout <= 0 {
+		timeout = 300 * time.Second
+	}
+	deployCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Phase 1: Write the package to disk.
+	destPath := req.GetDestPath()
+	if !filepath.IsAbs(destPath) {
+		a.sendDeployResponse(&pb.DeployResponse{
+			RequestId: req.GetRequestId(),
+			AgentId:   a.agentID,
+			Hostname:  hostname,
+			Success:   false,
+			Phase:     "write",
+			Error:     fmt.Sprintf("dest_path must be absolute, got: %s", destPath),
+		})
+		return
+	}
+
+	mode := os.FileMode(0644)
+	if req.GetMode() != 0 && runtime.GOOS != "windows" {
+		mode = os.FileMode(req.GetMode())
+	}
+	dir := filepath.Dir(destPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		a.sendDeployResponse(&pb.DeployResponse{
+			RequestId: req.GetRequestId(),
+			AgentId:   a.agentID,
+			Hostname:  hostname,
+			Success:   false,
+			Phase:     "write",
+			Error:     fmt.Sprintf("mkdir failed: %v", err),
+		})
+		return
+	}
+	if err := os.WriteFile(destPath, req.GetContent(), mode); err != nil {
+		a.sendDeployResponse(&pb.DeployResponse{
+			RequestId: req.GetRequestId(),
+			AgentId:   a.agentID,
+			Hostname:  hostname,
+			Success:   false,
+			Phase:     "write",
+			Error:     fmt.Sprintf("write failed: %v", err),
+		})
+		return
+	}
+
+	a.log.Info("deploy package written", slog.String("request_id", req.GetRequestId()), slog.String("dest_path", destPath))
+
+	// Phase 2: Run the install command.
+	cmd := buildCommand(deployCtx, req.GetInstallCommand(), req.GetBecome(), req.GetBecomeUser(), "")
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+
+	// Clean up the temp file regardless of install outcome.
+	os.Remove(destPath)
+
+	resp := &pb.DeployResponse{
+		RequestId: req.GetRequestId(),
+		AgentId:   a.agentID,
+		Hostname:  hostname,
+		Phase:     "install",
+		Stdout:    stdoutBuf.Bytes(),
+		Stderr:    stderrBuf.Bytes(),
+	}
+
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			resp.Rc = int32(exitErr.ExitCode())
+			resp.Success = false
+			resp.Error = fmt.Sprintf("install exited with rc=%d", exitErr.ExitCode())
+		} else {
+			resp.Success = false
+			resp.Error = err.Error()
+			resp.Rc = -1
+		}
+	} else {
+		resp.Rc = 0
+		resp.Success = true
+	}
+
+	a.log.Info("deploy completed",
+		slog.String("request_id", req.GetRequestId()),
+		slog.Int("rc", int(resp.Rc)),
+		slog.Bool("success", resp.Success),
+	)
+
+	a.sendDeployResponse(resp)
+}
+
+// ─────────────────────────────────────────────────────────
 // Script execution
 // ─────────────────────────────────────────────────────────
 
@@ -518,6 +644,15 @@ func (a *Agent) sendFetchFileResponse(resp *pb.FetchFileResponse) {
 	})
 	if err != nil {
 		a.log.Error("failed to send fetch file response", slog.String("request_id", resp.GetRequestId()), slog.String("error", err.Error()))
+	}
+}
+
+func (a *Agent) sendDeployResponse(resp *pb.DeployResponse) {
+	err := a.upstreamStream.Send(&pb.AgentMessage{
+		Payload: &pb.AgentMessage_DeployResponse{DeployResponse: resp},
+	})
+	if err != nil {
+		a.log.Error("failed to send deploy response", slog.String("request_id", resp.GetRequestId()), slog.String("error", err.Error()))
 	}
 }
 

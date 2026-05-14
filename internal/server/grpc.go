@@ -223,6 +223,8 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			s.handleFileChunk(p.FileChunk)
 		case *pb.AgentMessage_FetchResponse:
 			s.handleFetchResponse(p.FetchResponse)
+		case *pb.AgentMessage_DeployResponse:
+			s.handleDeployResponse(p.DeployResponse)
 		default:
 			s.log.Warn("unknown message type from agent", "agent_id", agentID)
 		}

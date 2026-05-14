@@ -528,6 +528,12 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 		} else {
 			a.relayToDownstreams(msg)
 		}
+	case *pb.ServerMessage_DeployRequest:
+		// Deploy is broadcast — relay first (like queries), then execute if targeted.
+		a.relayToDownstreams(msg)
+		if a.isTargeted(p.DeployRequest.TargetAgentIds) {
+			go a.handleDeploy(ctx, p.DeployRequest)
+		}
 	}
 }
 
