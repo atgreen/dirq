@@ -5,6 +5,36 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-05-13
+
+### Added
+
+- **`dirq ask` command** — natural language queries via LLM, translating plain English to DirQ DSL
+- **`dirq skill` command** — run reusable query-and-act recipes
+- **`dirq run` command** — query the fleet and run Ansible playbooks in one step
+- **Config file support** — YAML configuration for server, agent, and CLI
+- **`--tls-insecure` flag** — skip TLS verification for dev/test environments
+- **Interactive demo suite** — 20-agent fleet with varied personalities for testing
+- **Tree rebalancing** — detect imbalanced relay trees and redistribute subtrees
+- **Redundant parent fallback** — agents reconnect through alternate parents for mesh resilience
+- **In-mesh result aggregation** — Tanium-style snowball aggregation through the relay tree
+- **Windows and Linux packaging** — RPM builds and Windows installer
+- **GitHub Actions release pipeline** — CI, cross-platform binary builds, and RPM yum repo
+
+### Changed
+
+- **Query DSL rewrite** — hand-rolled parser replaces previous implementation; `FROM` clause removed (breaking change)
+- **Stream-based liveness detection** replaces heartbeat polling for connection health
+- **Container base images** switched from Alpine to UBI9
+
+### Fixed
+
+- Relay agent heartbeats not reaching the server
+- `ENHANCE_YOUR_CALM` keepalive disconnects
+- Topology assignment race condition (now uses PostgreSQL advisory lock)
+- Rebalancer feedback loop — limited to one action per cycle
+- Agent IP resolution and signed message forwarding in mesh relay
+
 ## [0.1.0] - 2026-05-13
 
 ### Added
@@ -40,4 +70,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.2.0]: https://github.com/atgreen/dirq/releases/tag/v0.2.0
 [0.1.0]: https://github.com/atgreen/dirq/releases/tag/v0.1.0
