@@ -109,53 +109,47 @@ Examples:
 			// and display those. Otherwise list all hosts from the API.
 			if len(args) > 0 {
 				queryStr := "SELECT hostname, os_info.os, os_info.os_version, os_info.arch " + strings.Join(args, " ")
-				hosts, err := runQuery(queryStr, 60)
+
+				body, _ := json.Marshal(map[string]any{
+					"query":   queryStr,
+					"timeout": 60,
+				})
+				resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
 				if err != nil {
 					return err
 				}
-				if len(hosts) == 0 {
+
+				var result struct {
+					Results []struct {
+						Hostname string         `json:"hostname"`
+						Success  bool           `json:"success"`
+						Data     map[string]any `json:"data"`
+					} `json:"results"`
+				}
+				if err := json.Unmarshal(resp, &result); err != nil {
+					return err
+				}
+
+				if len(result.Results) == 0 {
 					fmt.Println("No hosts matched the query.")
 					return nil
 				}
 
-				// Fetch full details for each matched host.
-				type hostInfo struct {
-					Hostname     string    `json:"hostname"`
-					OS           string    `json:"os"`
-					OSVersion    string    `json:"os_version"`
-					Arch         string    `json:"arch"`
-					AgentVersion string    `json:"agent_version"`
-					Role         string    `json:"role"`
-					Online       bool      `json:"online"`
-					LastSeenAt   time.Time `json:"last_seen_at"`
-				}
-				var matched []hostInfo
-				for _, h := range hosts {
-					resp, err := apiRequest("GET", "/api/v1/hosts/"+h.agentID, nil)
-					if err != nil {
-						continue
-					}
-					var hi hostInfo
-					json.Unmarshal(resp, &hi)
-					matched = append(matched, hi)
-				}
-
 				if jsonOut {
-					out, _ := json.Marshal(matched)
-					fmt.Println(string(out))
+					fmt.Println(string(resp))
 					return nil
 				}
 
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "HOSTNAME\tOS\tVERSION\tARCH\tROLE\tONLINE\tLAST SEEN")
-				for _, h := range matched {
-					status := "yes"
-					if !h.Online {
-						status = "no"
+				fmt.Fprintln(w, "HOSTNAME\tOS\tVERSION\tARCH")
+				for _, r := range result.Results {
+					if !r.Success {
+						continue
 					}
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-						h.Hostname, h.OS, h.OSVersion, h.Arch, h.Role, status,
-						h.LastSeenAt.Format("2006-01-02 15:04:05"))
+					os := dataField(r.Data, "os_info", "os")
+					ver := dataField(r.Data, "os_info", "os_version")
+					arch := dataField(r.Data, "os_info", "arch")
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Hostname, os, ver, arch)
 				}
 				w.Flush()
 				return nil
@@ -2247,6 +2241,21 @@ func looksLikeID(s string) bool {
 	return len(s) > 16 && strings.Contains(s, "-")
 }
 
+// dataField extracts a nested field from query result data.
+// e.g. dataField(data, "os_info", "os") gets data["os_info"]["os"].
+func dataField(data map[string]any, module, field string) string {
+	if m, ok := data[module].(map[string]any); ok {
+		if v, ok := m[field]; ok {
+			return fmt.Sprintf("%v", v)
+		}
+	}
+	// Also try flattened dotted key (e.g. "os_info.os").
+	if v, ok := data[module+"."+field]; ok {
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
+}
+
 func hostIDOrName(names []string, idx int, fallback string) string {
 	if idx < len(names) {
 		return names[idx]
@@ -2342,6 +2351,27 @@ func connectionPluginDir() string {
 // HTTP client helpers
 // ─────────────────────────────────────────────────────────
 
+// httpClient returns a shared HTTP client, creating it once on first use.
+// When --tls-insecure is set, the client skips certificate verification
+// but still reuses connections (unlike the old code which created a new
+// client + transport on every request).
+var _httpClient *http.Client
+
+func httpClient() *http.Client {
+	if _httpClient == nil {
+		if tlsInsecure {
+			_httpClient = &http.Client{
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				},
+			}
+		} else {
+			_httpClient = http.DefaultClient
+		}
+	}
+	return _httpClient
+}
+
 // apiStreamRequest returns the raw HTTP response for streaming (caller must close Body).
 func apiStreamRequest(method, path string, body io.Reader) (*http.Response, error) {
 	url := strings.TrimRight(serverURL, "/") + path
@@ -2354,15 +2384,7 @@ func apiStreamRequest(method, path string, body io.Reader) (*http.Response, erro
 		req.Header.Set("Authorization", "Bearer "+apiToken)
 	}
 
-	client := http.DefaultClient
-	if tlsInsecure {
-		client = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
-		}
-	}
-	resp, err := client.Do(req)
+	resp, err := httpClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -2380,15 +2402,7 @@ func apiRequest(method, path string, body io.Reader) ([]byte, error) {
 		req.Header.Set("Authorization", "Bearer "+apiToken)
 	}
 
-	client := http.DefaultClient
-	if tlsInsecure {
-		client = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
-		}
-	}
-	resp, err := client.Do(req)
+	resp, err := httpClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
