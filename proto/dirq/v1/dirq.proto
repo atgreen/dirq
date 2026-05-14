@@ -50,6 +50,9 @@ message RegisterRequest {
   string listen_addr  = 7;  // host:port this agent listens on for downstream peers
   map<string,string> tags = 8; // user-defined tags
   bool exec_enabled = 9;      // Phase 2: whether this agent accepts exec requests
+  // Pre-shared secret for registration authentication. Server rejects
+  // registrations that don't match DIRQ_REGISTRATION_SECRET.
+  string registration_secret = 10;
 }
 
 message RegisterResponse {

@@ -37,12 +37,13 @@ func main() {
 	execEnabled := config.EnvOr("DIRQ_EXEC_ENABLED", fileCfg, "exec_enabled", "false") == "true"
 
 	cfg := agent.Config{
-		ServerAddr:  config.EnvOr("DIRQ_SERVER", fileCfg, "server", "localhost:50051"),
-		ListenAddr:  config.EnvOr("DIRQ_LISTEN", fileCfg, "listen", ":50052"),
-		Tags:        tags,
-		Version:     version,
-		ExecEnabled: execEnabled,
-		FileCfg:     fileCfg,
+		ServerAddr:         config.EnvOr("DIRQ_SERVER", fileCfg, "server", "localhost:50051"),
+		ListenAddr:         config.EnvOr("DIRQ_LISTEN", fileCfg, "listen", ":50052"),
+		Tags:               tags,
+		Version:            version,
+		ExecEnabled:        execEnabled,
+		RegistrationSecret: config.EnvOr("DIRQ_REGISTRATION_SECRET", fileCfg, "registration_secret", ""),
+		FileCfg:            fileCfg,
 	}
 
 	log.Info("DirQ agent starting",

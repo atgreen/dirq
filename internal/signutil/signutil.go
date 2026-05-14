@@ -174,6 +174,34 @@ func (v *Verifier) VerifyServerMessage(msg *pb.ServerMessage, now time.Time) err
 	return nil
 }
 
+// SignToken creates a session token for an agent ID: the base64 signature
+// of the agent ID string. The token can be verified by any agent that has
+// the server's signing public key.
+func (s *Signer) SignToken(agentID string) string {
+	sig := ed25519.Sign(s.privateKey, []byte(agentID))
+	return base64.StdEncoding.EncodeToString(sig)
+}
+
+// VerifyToken checks that a session token was signed by this signer for the
+// given agent ID. Returns true if valid.
+func (s *Signer) VerifyToken(agentID, token string) bool {
+	sig, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return false
+	}
+	return ed25519.Verify(s.privateKey.Public().(ed25519.PublicKey), []byte(agentID), sig)
+}
+
+// VerifyToken checks that a session token was signed by the server for the
+// given agent ID. Returns true if valid.
+func (v *Verifier) VerifyToken(agentID, token string) bool {
+	sig, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return false
+	}
+	return ed25519.Verify(v.publicKey, []byte(agentID), sig)
+}
+
 func canonicalMessageBytes(msg *pb.ServerMessage) ([]byte, error) {
 	cloned := proto.Clone(msg).(*pb.ServerMessage)
 	cloned.Signature = nil

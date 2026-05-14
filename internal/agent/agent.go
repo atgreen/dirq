@@ -32,12 +32,13 @@ import (
 
 // Config holds agent configuration.
 type Config struct {
-	ServerAddr  string            // DirQ server address for bootstrap
-	ListenAddr  string            // address this agent listens on for downstream peers
-	Tags        map[string]string // user-defined tags
-	Version     string
-	ExecEnabled bool // Phase 2: whether this agent accepts exec/file requests
-	FileCfg     *config.File      // parsed config file (for TLS/signing fallback)
+	ServerAddr         string            // DirQ server address for bootstrap
+	ListenAddr         string            // address this agent listens on for downstream peers
+	Tags               map[string]string // user-defined tags
+	Version            string
+	ExecEnabled        bool         // Phase 2: whether this agent accepts exec/file requests
+	RegistrationSecret string       // pre-shared secret for registration authentication
+	FileCfg            *config.File // parsed config file (for TLS/signing fallback)
 }
 
 // Agent is the DirQ endpoint agent.
@@ -201,6 +202,15 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 		}
 
 		if !connected {
+			// All connection attempts failed. The server may have restarted
+			// (invalidating our session token). Re-register to get a fresh
+			// token and topology assignment before retrying.
+			a.log.Info("all connections failed, re-registering")
+			if err := a.registerWithRetry(ctx); err != nil {
+				return err
+			}
+			a.log.Info("re-registered", "agent_id", a.agentID, "role", a.role)
+
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
@@ -263,14 +273,15 @@ func (a *Agent) register(ctx context.Context) error {
 	}
 
 	resp, err := client.Register(ctx, &pb.RegisterRequest{
-		Hostname:     hostname,
-		Os:           runtime.GOOS,
-		Arch:         runtime.GOARCH,
-		AgentVersion: a.cfg.Version,
-		Capabilities: caps,
-		ListenAddr:   listenAddr,
-		Tags:         a.cfg.Tags,
-		ExecEnabled:  a.cfg.ExecEnabled,
+		Hostname:           hostname,
+		Os:                 runtime.GOOS,
+		Arch:               runtime.GOARCH,
+		AgentVersion:       a.cfg.Version,
+		Capabilities:       caps,
+		ListenAddr:         listenAddr,
+		Tags:               a.cfg.Tags,
+		ExecEnabled:        a.cfg.ExecEnabled,
+		RegistrationSecret: a.cfg.RegistrationSecret,
 	})
 	if err != nil {
 		return fmt.Errorf("register RPC: %w", err)
@@ -683,9 +694,19 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 	}
 
 	peerID := hello.AgentId
+
+	// Verify the session token: it's the server's Ed25519 signature over
+	// the agent ID. We can verify it using the signing public key we
+	// received during registration.
 	if hello.SessionToken == "" {
-		a.log.Warn("downstream peer connected without session token", "peer_id", peerID)
+		a.log.Warn("downstream peer rejected: no session token", "peer_id", peerID)
+		return fmt.Errorf("peer %s provided no session token", peerID)
 	}
+	if a.serverVerifier != nil && !a.serverVerifier.VerifyToken(peerID, hello.SessionToken) {
+		a.log.Warn("downstream peer rejected: invalid session token", "peer_id", peerID)
+		return fmt.Errorf("invalid session token for peer %s", peerID)
+	}
+
 	a.log.Info("downstream peer connected", "peer_id", peerID)
 
 	ctx, cancel := context.WithCancel(stream.Context())

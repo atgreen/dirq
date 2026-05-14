@@ -24,14 +24,15 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	GRPCAddr           string // e.g. ":50051"
-	HTTPAddr           string // e.g. ":8080"
-	DBURL              string // PostgreSQL connection string
-	PodID              string // unique identifier for this server pod
-	MaxZoneLeaders     int    // topology: max zone leaders (default 50)
-	MaxChildrenPerNode int    // topology: max children per node (default 50)
-	AuthDisabled       bool   // DIRQ_AUTH_DISABLED=true to allow anonymous API access
-	FileCfg            *config.File // parsed config file (for TLS/signing fallback)
+	GRPCAddr            string // e.g. ":50051"
+	HTTPAddr            string // e.g. ":8080"
+	DBURL               string // PostgreSQL connection string
+	PodID               string // unique identifier for this server pod
+	MaxZoneLeaders      int    // topology: max zone leaders (default 50)
+	MaxChildrenPerNode  int    // topology: max children per node (default 50)
+	AuthDisabled        bool   // DIRQ_AUTH_DISABLED=true to allow anonymous API access
+	RegistrationSecret  string // pre-shared secret for agent registration
+	FileCfg             *config.File // parsed config file (for TLS/signing fallback)
 }
 
 // Server is the DirQ server.

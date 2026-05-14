@@ -79,18 +79,21 @@ func (AgentRole) EnumDescriptor() ([]byte, []int) {
 }
 
 type RegisterRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Hostname      string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	Os            string                 `protobuf:"bytes,2,opt,name=os,proto3" json:"os,omitempty"`                                // "linux" or "windows"
-	OsVersion     string                 `protobuf:"bytes,3,opt,name=os_version,json=osVersion,proto3" json:"os_version,omitempty"` // e.g. "RHEL 9.2", "Windows Server 2022"
-	Arch          string                 `protobuf:"bytes,4,opt,name=arch,proto3" json:"arch,omitempty"`                            // e.g. "amd64", "arm64"
-	AgentVersion  string                 `protobuf:"bytes,5,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	Capabilities  []string               `protobuf:"bytes,6,rep,name=capabilities,proto3" json:"capabilities,omitempty"`                                                           // supported query modules: "disk","cpu","memory",...
-	ListenAddr    string                 `protobuf:"bytes,7,opt,name=listen_addr,json=listenAddr,proto3" json:"listen_addr,omitempty"`                                             // host:port this agent listens on for downstream peers
-	Tags          map[string]string      `protobuf:"bytes,8,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // user-defined tags
-	ExecEnabled   bool                   `protobuf:"varint,9,opt,name=exec_enabled,json=execEnabled,proto3" json:"exec_enabled,omitempty"`                                         // Phase 2: whether this agent accepts exec requests
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Hostname     string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Os           string                 `protobuf:"bytes,2,opt,name=os,proto3" json:"os,omitempty"`                                // "linux" or "windows"
+	OsVersion    string                 `protobuf:"bytes,3,opt,name=os_version,json=osVersion,proto3" json:"os_version,omitempty"` // e.g. "RHEL 9.2", "Windows Server 2022"
+	Arch         string                 `protobuf:"bytes,4,opt,name=arch,proto3" json:"arch,omitempty"`                            // e.g. "amd64", "arm64"
+	AgentVersion string                 `protobuf:"bytes,5,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	Capabilities []string               `protobuf:"bytes,6,rep,name=capabilities,proto3" json:"capabilities,omitempty"`                                                           // supported query modules: "disk","cpu","memory",...
+	ListenAddr   string                 `protobuf:"bytes,7,opt,name=listen_addr,json=listenAddr,proto3" json:"listen_addr,omitempty"`                                             // host:port this agent listens on for downstream peers
+	Tags         map[string]string      `protobuf:"bytes,8,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // user-defined tags
+	ExecEnabled  bool                   `protobuf:"varint,9,opt,name=exec_enabled,json=execEnabled,proto3" json:"exec_enabled,omitempty"`                                         // Phase 2: whether this agent accepts exec requests
+	// Pre-shared secret for registration authentication. Server rejects
+	// registrations that don't match DIRQ_REGISTRATION_SECRET.
+	RegistrationSecret string `protobuf:"bytes,10,opt,name=registration_secret,json=registrationSecret,proto3" json:"registration_secret,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *RegisterRequest) Reset() {
@@ -184,6 +187,13 @@ func (x *RegisterRequest) GetExecEnabled() bool {
 		return x.ExecEnabled
 	}
 	return false
+}
+
+func (x *RegisterRequest) GetRegistrationSecret() string {
+	if x != nil {
+		return x.RegistrationSecret
+	}
+	return ""
 }
 
 type RegisterResponse struct {
@@ -2383,7 +2393,7 @@ var File_proto_dirq_v1_dirq_proto protoreflect.FileDescriptor
 
 const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\n" +
-	"\x18proto/dirq/v1/dirq.proto\x12\adirq.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xee\x02\n" +
+	"\x18proto/dirq/v1/dirq.proto\x12\adirq.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x9f\x03\n" +
 	"\x0fRegisterRequest\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x1d\n" +
@@ -2395,7 +2405,9 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\vlisten_addr\x18\a \x01(\tR\n" +
 	"listenAddr\x126\n" +
 	"\x04tags\x18\b \x03(\v2\".dirq.v1.RegisterRequest.TagsEntryR\x04tags\x12!\n" +
-	"\fexec_enabled\x18\t \x01(\bR\vexecEnabled\x1a7\n" +
+	"\fexec_enabled\x18\t \x01(\bR\vexecEnabled\x12/\n" +
+	"\x13registration_secret\x18\n" +
+	" \x01(\tR\x12registrationSecret\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa0\x03\n" +
