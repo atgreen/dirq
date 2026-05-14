@@ -175,18 +175,16 @@ podman logs dirq_dirq-server_1 2>&1 | grep "DIRQ_TOKEN"
 
 ```bash
 go build -o bin/dirq-agent ./cmd/dirq-agent
-DIRQ_TLS_DISABLED=true ./bin/dirq-agent
+./bin/dirq-agent
 ```
 
-(Use `DIRQ_TLS_DISABLED=true` for local dev since the server's auto-generated certs won't match the agent's.)
+The agent auto-generates TLS certs into the same directory as the server (`/tmp/dirq-autotls`). When both run on the same machine, they share the auto-generated CA and verify each other automatically — no TLS flags needed for local dev.
 
 ### 3. Build and use the CLI
 
 ```bash
 go build -o bin/dirq ./cmd/dirq
 export DIRQ_TOKEN=<bootstrap-token-from-step-1>
-
-# For local dev without TLS on the REST API:
 export DIRQ_SERVER_URL=http://localhost:8090
 
 ./bin/dirq hosts list
@@ -194,6 +192,8 @@ export DIRQ_SERVER_URL=http://localhost:8090
 ./bin/dirq select os_info.hostname, packages.name, packages.version WHERE packages.name IN "'openssl', 'curl'"
 ./bin/dirq hosts tag <agent-id> env=dev role=workstation
 ```
+
+`DIRQ_SERVER_URL` is required — there is no default. Set it before using the CLI.
 
 ### 4. Test with Ansible
 
@@ -765,6 +765,32 @@ This is critical because queries and exec requests flow through relay agents. Wi
 
 The signing key pair is auto-generated on first startup and persisted. To use a pre-generated key, set `DIRQ_SIGNING_KEY`.
 
+### Registration Authentication
+
+By default, any client that can reach the server's gRPC port can register as an agent. For production deployments, set a **registration secret** — a pre-shared key that agents must present during registration:
+
+```bash
+# Server
+DIRQ_REGISTRATION_SECRET=my-fleet-secret dirq-server
+
+# Agent
+DIRQ_REGISTRATION_SECRET=my-fleet-secret dirq-agent
+```
+
+Or in config files:
+
+```
+# /etc/dirq/server.conf
+registration_secret: my-fleet-secret
+
+# /etc/dirq/agent.conf
+registration_secret: my-fleet-secret
+```
+
+When configured, the server rejects `Register` calls that don't present the matching secret. This prevents unauthorized hosts from joining the mesh.
+
+Session tokens issued during registration are Ed25519-signed and time-stamped. They expire after 24 hours, at which point the agent re-registers automatically to obtain a fresh token. Relay peers verify session tokens cryptographically using the server's signing public key — no shared state between relays and the server is needed.
+
 ### Execution Security
 
 - **Server-originated only:** exec requests must come from the server and carry a valid Ed25519 signature. Relay agents forward but cannot forge exec requests.
@@ -882,6 +908,7 @@ http_addr: :8080
 db_url: postgres://dirq:dirq@db.internal:5432/dirq?sslmode=require
 max_zone_leaders: 10
 max_children: 50
+registration_secret: my-fleet-secret
 
 tls_ca: /etc/dirq/certs/ca.crt
 tls_cert: /etc/dirq/certs/server.crt
@@ -911,6 +938,7 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 | `max_zone_leaders` | `DIRQ_MAX_ZONE_LEADERS` | `5` | Max direct server connections |
 | `max_children` | `DIRQ_MAX_CHILDREN` | `50` | Max children per node (fan-out) |
 | `auth_disabled` | `DIRQ_AUTH_DISABLED` | `false` | Disable API auth (not recommended) |
+| `registration_secret` | `DIRQ_REGISTRATION_SECRET` | | Pre-shared secret for agent registration (see [Security](#registration-authentication)) |
 
 #### Agent
 
@@ -919,6 +947,7 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 | `server` | `DIRQ_SERVER` | `localhost:50051` | DirQ server gRPC address |
 | `listen` | `DIRQ_LISTEN` | `:50052` | Relay listener (always enabled) |
 | `exec_enabled` | `DIRQ_EXEC_ENABLED` | `false` | Enable remote execution |
+| `registration_secret` | `DIRQ_REGISTRATION_SECRET` | | Must match server's registration secret |
 | `tags:` block | `DIRQ_TAGS` | | Tags: `env=prod,dc=us-east` |
 
 Tags can be set in the config file as an indented block under `tags:`, or via the `DIRQ_TAGS` environment variable as comma-separated `key=value` pairs. Both sources are merged, with environment variables taking precedence for duplicate keys.
@@ -933,11 +962,12 @@ Tags can be set in the config file as an indented block under `tags:`, or via th
 | `tls_insecure` | `DIRQ_TLS_INSECURE` | `false` | Skip cert verification (agent only) |
 | `tls_disabled` | `DIRQ_TLS_DISABLED` | `false` | Disable TLS entirely (not recommended) |
 
-Example agent config with TLS:
+Example agent config with TLS and registration secret:
 
 ```
 server: grpc.example.com:50051
 exec_enabled: true
+registration_secret: my-fleet-secret
 
 tls_ca: /etc/dirq/certs/ca.crt
 tls_cert: /etc/dirq/certs/agent.crt
@@ -958,7 +988,7 @@ tags:
 
 | Variable / Flag | Default | Description |
 |----------------|---------|-------------|
-| `DIRQ_SERVER_URL` / `--server` | `http://localhost:8080` | Server REST URL |
+| `DIRQ_SERVER_URL` / `--server` | *(required)* | Server REST URL |
 | `DIRQ_TOKEN` / `--token` | | API token |
 | `--json` | `false` | Raw JSON output |
 
