@@ -117,8 +117,7 @@ The server always holds exactly `DIRQ_MAX_ZONE_LEADERS` connections regardless o
 Query results aggregate in-mesh, not at the server. Each relay buffers results
 from its children for 2 seconds, then flushes one `AggregatedQueryResult`
 upstream. Zone leaders do the same. The server receives ~5 messages (one per
-zone leader) instead of 100k individual responses. This is similar to Tanium's
-"snowball" aggregation model.
+zone leader) instead of 100k individual responses.
 
 ### Redundant Parents
 

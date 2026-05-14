@@ -5,6 +5,33 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-05-14
+
+### Added
+
+- **`dirq select`** — query the fleet with natural syntax (`dirq select hostname WHERE tag.env = 'prod'`), replacing `dirq query`
+- **`dirq deploy`** — deploy RPM, DEB, or MSI packages through the relay mesh with depth-first rolling waves by default
+- **`dirq doctor`** — validate deployment health: connectivity, auth, database, fleet status, agent version skew, tree topology, local tooling
+- **`dirq run` with WHERE syntax** — playbook as first arg with optional WHERE clause (`dirq run deploy.yml WHERE tag.env = 'prod'`), replacing `--query` flag
+- **Arg flattening** — quoted multi-word args are split by whitespace, so `dirq "select hostname where tag.env = 'prod'"` works naturally
+- **Server status endpoint** — `GET /api/v1/status` returns database health, agent counts, version distribution, and topology stats
+- **Makefile** — `make build`, `make test`, `make install`, `make cross`, `make proto`, `make collection`
+- **DEB packaging** — Debian packages for dirq, dirq-server, and dirq-agent alongside existing RPMs
+
+### Changed
+
+- **`dirq run`** now takes playbook as first positional arg with optional WHERE clause instead of `--query` flag
+- **CLI examples** recommend quoting queries to avoid shell interpretation of `>`, `<`, `*`, `(`, `)`
+- **`dirq skill`** output now documents all CLI commands
+
+### Removed
+
+- **`dirq query`** — replaced by `dirq select`
+
+### Fixed
+
+- **GROUP BY on nested module fields returned null** — server-side aggregation now flattens nested module data into dotted keys before GROUP BY
+
 ## [0.2.1] - 2026-05-13
 
 ### Fixed
@@ -26,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Interactive demo suite** — 20-agent fleet with varied personalities for testing
 - **Tree rebalancing** — detect imbalanced relay trees and redistribute subtrees
 - **Redundant parent fallback** — agents reconnect through alternate parents for mesh resilience
-- **In-mesh result aggregation** — Tanium-style snowball aggregation through the relay tree
+- **In-mesh result aggregation** — snowball aggregation through the relay tree
 - **Windows and Linux packaging** — RPM builds and Windows installer
 - **GitHub Actions release pipeline** — CI, cross-platform binary builds, and RPM yum repo
 
@@ -79,6 +106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.3.0]: https://github.com/atgreen/dirq/releases/tag/v0.3.0
 [0.2.1]: https://github.com/atgreen/dirq/releases/tag/v0.2.1
 [0.2.0]: https://github.com/atgreen/dirq/releases/tag/v0.2.0
 [0.1.0]: https://github.com/atgreen/dirq/releases/tag/v0.1.0
