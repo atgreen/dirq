@@ -5,12 +5,12 @@ DirQ ("Direct Query") is an agent-based platform for querying and managing large
 The key idea is simple:
 
 - **Query the fleet like a dataset** instead of logging into hosts one by one
-- **Execute commands and scripts across the fleet in parallel** — fan out through the mesh, stream results back in real time
-- **Scan for CVEs in real time** — identify every affected host in seconds, not hours
 - **Keep managed hosts outbound-only** instead of opening SSH/WinRM inbound
 - **Reuse Ansible** while replacing the transport underneath
 - **Build Ansible inventories from live DirQ query results** instead of static host lists
 - **Scale with a relay tree** so the server does not need a direct session to every node
+- **Scan for CVEs in real time** — identify every affected host in seconds, not hours
+- **Run ad-hoc commands across the fleet** — parallel exec with streaming results
 
 One of the most practical workflows in DirQ is:
 
@@ -20,12 +20,11 @@ One of the most practical workflows in DirQ is:
 
 Examples:
 
-- Run `dirq exec "uptime" WHERE tag.env = 'prod'` and see every prod host's uptime streaming back in real time — no SSH, no Ansible overhead, just direct parallel execution across the fleet.
-- A new CVE drops — run `dirq cve CVE-2024-6345` and instantly see which hosts are vulnerable and which are already patched, across the entire fleet.
-- Upload and execute a diagnostic script on all Linux hosts: `dirq exec --script ./health-check.sh WHERE os_info.os = 'linux'`
 - Find only hosts with disks over 90%, turn that into an inventory, then run a cleanup or expansion playbook.
 - Query for hosts with vulnerable OpenSSL package versions, build an inventory from the result, and patch only those systems.
+- A new CVE drops — run `dirq cve CVE-2024-6345` and instantly see which hosts are vulnerable and which are already patched, across the entire fleet.
 - Query for hosts where `sshd` or another critical service is stopped, generate an inventory, and run a remediation playbook immediately.
+- Quick ad-hoc check: `dirq exec "uptime" WHERE tag.env = 'prod'` to see every prod host's uptime without setting up a playbook.
 
 ## Why DirQ?
 
@@ -33,29 +32,27 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 
 1. **Large locked-down environments** — managed hosts cannot accept inbound SSH or WinRM.
 2. **Segmented enterprise networks** — a single control plane across data centers, edge sites, or heavily firewalled zones.
-3. **Instant fleet-wide execution** — run a command or script on thousands of hosts in parallel and stream results back in real time, without SSH or Ansible overhead.
-4. **Real-time CVE response** — a vulnerability drops and you need to know which hosts are affected *now*, not after the next scheduled scan.
-5. **Real-time fleet troubleshooting** — answer "which prod hosts have disks over 90%?" and act on it immediately.
-6. **Query-driven Ansible targeting** — inventories based on live fleet state, not stale static groups.
-7. **Ansible without transport pain** — keep your playbooks, drop the SSH/WinRM dependency.
-8. **Very large estates** — server connection count stays bounded while the fleet grows.
+3. **Query-driven Ansible targeting** — inventories based on live fleet state, not stale static groups.
+4. **Ansible without transport pain** — keep your playbooks, drop the SSH/WinRM dependency.
+5. **Real-time CVE response** — a vulnerability drops and you need to know which hosts are affected *now*, not after the next scheduled scan.
+6. **Real-time fleet troubleshooting** — answer "which prod hosts have disks over 90%?" and act on it immediately.
+7. **Very large estates** — server connection count stays bounded while the fleet grows.
 
 **What makes DirQ different:**
 
 - **Mesh-first architecture:** agents relay for each other, so the fleet becomes its own transport.
-- **Parallel fan-out execution:** commands and scripts execute on all targets simultaneously through the mesh, with results streaming back in real time.
 - **Structured query model:** modules return normalized data instead of raw command output.
+- **Ansible compatibility:** DirQ acts as query engine, inventory source, and execution transport — existing playbooks work without modification.
 - **Inventory and execution in one system:** the same platform that knows the fleet can also target it.
-- **Ansible compatibility:** DirQ acts as query engine, inventory source, and execution transport.
 
 ## Table of Contents
 
 - [Architecture](#architecture) — how the mesh works, scaling
 - [Quick Start](#quick-start-podman-on-laptop) — run locally in 5 minutes
 - [Query DSL](#query-dsl) — the fleet query language
-- [Fleet Exec](#fleet-exec) — parallel command & script execution with streaming results
 - [Ansible Integration](#ansible-integration) — inventory, groups, facts, query-based targeting
 - [Execution Transport](#execution-transport) — run Ansible through the mesh
+- [Fleet Exec](#fleet-exec) — ad-hoc parallel command & script execution
 - [Security](#security) — TLS, authentication, exec safety
 - [Multi-Datacenter Deployment](#multi-datacenter-deployment) — isolated meshes, per-DC routing
 - [AAP Integration](#aap-integration) — collection, EE, credentials, setup checklist
@@ -106,7 +103,7 @@ All links are **gRPC over TLS**. Agents connect outbound — no inbound ports re
 |-----------|----------|-------------|
 | `dirq-server` | Go | Central server: gRPC, REST API, query engine, Ansible inventory. Runs on OpenShift or Podman. |
 | `dirq-agent` | Go | Endpoint agent: collects data, relays queries, optionally executes commands. Single static binary. |
-| `dirq` | Go | CLI: submit queries, execute commands/scripts across the fleet, manage hosts/tags/tokens, generate TLS certs. |
+| `dirq` | Go | CLI: submit queries, manage hosts/tags/tokens, run ad-hoc commands, generate TLS certs. |
 | `atgreen.dirq` | Python | Ansible collection: inventory plugin + connection plugin for AAP. |
 
 ### Scaling the Mesh
@@ -424,89 +421,6 @@ dirq run --module ping WHERE os_info.os = 'linux'
 dirq run deploy.yml
 ```
 
----
-
-## Fleet Exec
-
-Run a command or script on hundreds of hosts simultaneously and stream results back in real time. DirQ fans out through the relay mesh — every target agent executes in parallel, and results appear on your terminal the moment each host responds.
-
-### Commands
-
-```bash
-# Run a command on all prod hosts
-dirq exec "uptime" WHERE tag.env = 'prod'
-
-# Check a package version across the fleet
-dirq exec "openssl version" WHERE packages.name = 'openssl'
-
-# Run with sudo
-dirq exec --become "systemctl restart nginx" WHERE tag.role = 'webserver'
-
-# Run on all hosts (no WHERE = all exec-enabled hosts)
-dirq exec "hostname -f"
-
-# Machine-readable streaming output (NDJSON)
-dirq exec "df -h /" --json
-```
-
-### Scripts
-
-Upload and execute a local script file with `--script`. On Linux, shebangs are honored. On Windows, `.ps1` runs with PowerShell.
-
-```bash
-# Linux — shebang determines the interpreter
-dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
-
-# Python script
-dirq exec --script ./audit.py WHERE os_info.os = 'linux'
-
-# PowerShell on Windows
-dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'
-
-# With sudo
-dirq exec --become --script ./patch.sh WHERE tag.role = 'webserver'
-```
-
-The script is uploaded to each agent as a temp file, executed, and cleaned up automatically.
-
-### Streaming Output
-
-Results stream back as each host responds — fastest hosts appear first:
-
-```
-Targets: 3
-
-── web-01  rc=0 ──
-   14:23:01 up 42 days,  3:17,  0 users,  load average: 0.12, 0.08, 0.05
-
-── db-01  rc=0 ──
-   14:23:01 up 91 days, 12:44,  0 users,  load average: 0.45, 0.38, 0.31
-
-── web-02  rc=0 ──
-   14:23:02 up 13 days,  7:02,  0 users,  load average: 0.03, 0.05, 0.01
-
-3/3 completed
-```
-
-With `--json`, output is NDJSON (one JSON object per line), suitable for piping:
-
-```
-{"type":"header","total_targets":3}
-{"type":"result","hostname":"web-01","rc":0,"stdout":"...","success":true}
-{"type":"result","hostname":"db-01","rc":0,"stdout":"...","success":true}
-```
-
-### How It Works
-
-1. The CLI sends a single `POST /api/v1/exec_multi` request with the command/script and a WHERE clause
-2. The server resolves target agents via the query engine (same tag/field filtering as `dirq select`)
-3. The server dispatches exec requests to all targets in parallel through the relay mesh
-4. Each agent executes locally and sends results back through the mesh
-5. The server streams each result as NDJSON, flushed immediately — no buffering
-6. The CLI prints each result the moment it arrives
-
-Exec is fully asynchronous on the agent — long-running scripts don't block queries, heartbeats, or other exec requests.
-
 ### Deploying packages
 
 Deploy RPM, DEB, or MSI packages across the fleet through the relay mesh.
@@ -750,6 +664,53 @@ Every operation is logged in PostgreSQL with AAP job attribution:
 ```bash
 curl "$DIRQ_SERVER_URL/api/v1/exec_log?aap_job_id=42"
 ```
+
+---
+
+## Fleet Exec
+
+For quick ad-hoc tasks that don't need a full Ansible playbook, `dirq exec` runs a command or script across matching hosts in parallel and streams results back in real time.
+
+### Commands
+
+```bash
+dirq exec "uptime" WHERE tag.env = 'prod'
+dirq exec "openssl version" WHERE packages.name = 'openssl'
+dirq exec --become "systemctl restart nginx" WHERE tag.role = 'webserver'
+dirq exec "hostname -f"
+dirq exec "df -h /" --json
+```
+
+### Scripts
+
+Upload and execute a local script file with `--script`. Linux scripts honor their shebang. Windows `.ps1` files run with PowerShell.
+
+```bash
+dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
+dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'
+dirq exec --become --script ./patch.sh WHERE tag.role = 'webserver'
+```
+
+### Streaming output
+
+Results stream back as each host responds — fastest hosts appear first:
+
+```
+Targets: 3
+
+── web-01  rc=0 ──
+   14:23:01 up 42 days,  3:17,  0 users,  load average: 0.12, 0.08, 0.05
+
+── db-01  rc=0 ──
+   14:23:01 up 91 days, 12:44,  0 users,  load average: 0.45, 0.38, 0.31
+
+── web-02  rc=0 ──
+   14:23:02 up 13 days,  7:02,  0 users,  load average: 0.03, 0.05, 0.01
+
+3/3 completed
+```
+
+With `--json`, output is NDJSON (one JSON object per line), suitable for piping.
 
 ---
 
