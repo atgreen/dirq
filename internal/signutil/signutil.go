@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -174,32 +176,57 @@ func (v *Verifier) VerifyServerMessage(msg *pb.ServerMessage, now time.Time) err
 	return nil
 }
 
-// SignToken creates a session token for an agent ID: the base64 signature
-// of the agent ID string. The token can be verified by any agent that has
-// the server's signing public key.
+// SessionTokenTTL is how long a session token remains valid.
+const SessionTokenTTL = 24 * time.Hour
+
+// SignToken creates a session token for an agent ID. The token includes a
+// timestamp so each issuance produces a unique, expiring token. Format:
+// base64(sign(agentID + ":" + unixTimestamp)) + ":" + unixTimestamp
 func (s *Signer) SignToken(agentID string) string {
-	sig := ed25519.Sign(s.privateKey, []byte(agentID))
-	return base64.StdEncoding.EncodeToString(sig)
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	payload := agentID + ":" + ts
+	sig := ed25519.Sign(s.privateKey, []byte(payload))
+	return base64.StdEncoding.EncodeToString(sig) + ":" + ts
 }
 
 // VerifyToken checks that a session token was signed by this signer for the
-// given agent ID. Returns true if valid.
+// given agent ID and has not expired. Returns true if valid.
 func (s *Signer) VerifyToken(agentID, token string) bool {
-	sig, err := base64.StdEncoding.DecodeString(token)
-	if err != nil {
-		return false
-	}
-	return ed25519.Verify(s.privateKey.Public().(ed25519.PublicKey), []byte(agentID), sig)
+	return verifyTokenWith(s.privateKey.Public().(ed25519.PublicKey), agentID, token)
 }
 
 // VerifyToken checks that a session token was signed by the server for the
-// given agent ID. Returns true if valid.
+// given agent ID and has not expired. Returns true if valid.
 func (v *Verifier) VerifyToken(agentID, token string) bool {
-	sig, err := base64.StdEncoding.DecodeString(token)
+	return verifyTokenWith(v.publicKey, agentID, token)
+}
+
+// verifyTokenWith validates a session token against a public key.
+// Token format: base64(signature) + ":" + unixTimestamp
+func verifyTokenWith(pubKey ed25519.PublicKey, agentID, token string) bool {
+	lastColon := strings.LastIndex(token, ":")
+	if lastColon < 0 {
+		return false
+	}
+	sigB64 := token[:lastColon]
+	tsStr := token[lastColon+1:]
+
+	// Check expiry.
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
 	if err != nil {
 		return false
 	}
-	return ed25519.Verify(v.publicKey, []byte(agentID), sig)
+	if time.Now().Unix()-ts > int64(SessionTokenTTL.Seconds()) {
+		return false
+	}
+
+	// Verify signature over "agentID:timestamp".
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return false
+	}
+	payload := agentID + ":" + tsStr
+	return ed25519.Verify(pubKey, []byte(payload), sig)
 }
 
 func canonicalMessageBytes(msg *pb.ServerMessage) ([]byte, error) {
