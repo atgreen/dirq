@@ -45,6 +45,9 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.handlePutFile)))
 	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
 
+	// Status endpoint (authenticated, readonly)
+	mux.HandleFunc("GET /api/v1/status", s.authMiddleware(requireScope("readonly", s.handleStatus)))
+
 	// Health check (no auth)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -582,6 +585,98 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, inventory)
+}
+
+// ─────────────────────────────────────────────────────────
+// Status endpoint
+// ─────────────────────────────────────────────────────────
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Database health.
+	dbOK := true
+	if err := s.db.Ping(ctx); err != nil {
+		dbOK = false
+	}
+
+	// Agent counts.
+	allAgents, _ := s.db.ListAgents(ctx, db.ListAgentsFilter{})
+	online := true
+	onlineAgents, _ := s.db.ListAgents(ctx, db.ListAgentsFilter{Online: &online})
+
+	// Version distribution.
+	versions := map[string]int{}
+	for _, a := range onlineAgents {
+		v := a.AgentVersion
+		if v == "" {
+			v = "unknown"
+		}
+		versions[v]++
+	}
+
+	// Topology stats.
+	s.mu.RLock()
+	zoneLeaders := len(s.streams)
+	s.mu.RUnlock()
+
+	// Find max tree depth and orphans (online agents with offline parents).
+	maxDepth := 0
+	orphans := 0
+	parentOnline := map[string]bool{}
+	for _, a := range allAgents {
+		parentOnline[a.ID] = a.Online
+	}
+	for _, a := range onlineAgents {
+		// Walk parent chain to compute depth.
+		depth := 0
+		seen := map[string]bool{}
+		cur := a.ID
+		for {
+			found := false
+			for _, p := range allAgents {
+				if p.ID == cur && p.ParentID != nil && *p.ParentID != "" {
+					if seen[cur] {
+						break
+					}
+					seen[cur] = true
+					depth++
+					cur = *p.ParentID
+					found = true
+					break
+				}
+			}
+			if !found {
+				break
+			}
+		}
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+
+		// Check for orphans.
+		if a.ParentID != nil && *a.ParentID != "" {
+			if isOnline, exists := parentOnline[*a.ParentID]; exists && !isOnline {
+				orphans++
+			}
+		}
+	}
+
+	status := map[string]any{
+		"database":         dbOK,
+		"agents_total":     len(allAgents),
+		"agents_online":    len(onlineAgents),
+		"zone_leaders":     zoneLeaders,
+		"max_tree_depth":   maxDepth,
+		"orphaned_agents":  orphans,
+		"agent_versions":   versions,
+		"topology": map[string]any{
+			"max_zone_leaders":     s.topoCfg.MaxZoneLeaders,
+			"max_children_per_node": s.topoCfg.MaxChildrenPerNode,
+		},
+	}
+
+	jsonResponse(w, http.StatusOK, status)
 }
 
 // sanitizeGroupName replaces characters that aren't valid in Ansible group

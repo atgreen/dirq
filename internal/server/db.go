@@ -13,6 +13,9 @@ import (
 // DB is the interface satisfied by *db.DB that the server package depends on.
 // Extracting it allows HTTP handler tests to use an in-memory mock.
 type DB interface {
+	// Health
+	Ping(ctx context.Context) error
+
 	// Tokens
 	ValidateToken(ctx context.Context, plaintext string) (db.Token, error)
 	CreateToken(ctx context.Context, name, scope string) (string, error)

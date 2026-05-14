@@ -31,6 +31,11 @@ func New(ctx context.Context, connString string) (*DB, error) {
 	return &DB{pool: pool}, nil
 }
 
+// Ping verifies the database connection is alive.
+func (db *DB) Ping(ctx context.Context) error {
+	return db.pool.Ping(ctx)
+}
+
 // Close shuts down the connection pool.
 func (db *DB) Close() {
 	db.pool.Close()
