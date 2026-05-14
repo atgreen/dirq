@@ -4,6 +4,9 @@
 %:
 	dh $@
 
+override_dh_auto_clean:
+	# Skip — do not run 'make clean' which would delete pre-built binaries in dist/.
+
 override_dh_auto_build:
 	# Binaries are pre-built and provided via _sourcedir.
 
