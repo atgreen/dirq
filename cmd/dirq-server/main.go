@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/atgreen/dirq/internal/config"
 	"github.com/atgreen/dirq/internal/db"
 	"github.com/atgreen/dirq/internal/server"
 )
@@ -18,14 +19,25 @@ import (
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	// Load config file (missing file is fine — returns empty config).
+	cfgPath := os.Getenv("DIRQ_CONFIG")
+	if cfgPath == "" {
+		cfgPath = config.DefaultServerPath()
+	}
+	fileCfg, err := config.Load(cfgPath)
+	if err != nil {
+		log.Error("failed to load config file", "path", cfgPath, "error", err)
+		os.Exit(1)
+	}
+
 	cfg := server.Config{
-		GRPCAddr:           envOr("DIRQ_GRPC_ADDR", ":50051"),
-		HTTPAddr:           envOr("DIRQ_HTTP_ADDR", ":8080"),
-		DBURL:              envOr("DIRQ_DB_URL", "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"),
-		PodID:              envOr("DIRQ_POD_ID", mustHostname()),
-		MaxZoneLeaders:     envInt("DIRQ_MAX_ZONE_LEADERS", 0),
-		MaxChildrenPerNode: envInt("DIRQ_MAX_CHILDREN", 0),
-		AuthDisabled:       os.Getenv("DIRQ_AUTH_DISABLED") == "true",
+		GRPCAddr:           config.EnvOr("DIRQ_GRPC_ADDR", fileCfg, "grpc_addr", ":50051"),
+		HTTPAddr:           config.EnvOr("DIRQ_HTTP_ADDR", fileCfg, "http_addr", ":8080"),
+		DBURL:              config.EnvOr("DIRQ_DB_URL", fileCfg, "db_url", "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"),
+		PodID:              config.EnvOr("DIRQ_POD_ID", fileCfg, "pod_id", mustHostname()),
+		MaxZoneLeaders:     cfgInt("DIRQ_MAX_ZONE_LEADERS", fileCfg, "max_zone_leaders", 0),
+		MaxChildrenPerNode: cfgInt("DIRQ_MAX_CHILDREN", fileCfg, "max_children", 0),
+		AuthDisabled:       config.EnvOr("DIRQ_AUTH_DISABLED", fileCfg, "auth_disabled", "false") == "true",
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -74,18 +86,13 @@ func main() {
 	}
 }
 
-func envInt(key string, fallback int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
+// cfgInt returns env var as int, then config file value, then fallback.
+func cfgInt(env string, fileCfg *config.File, fileKey string, fallback int) int {
+	s := config.EnvOr(env, fileCfg, fileKey, "")
+	if s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
 			return n
 		}
-	}
-	return fallback
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
 	}
 	return fallback
 }

@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,9 +22,10 @@ import (
 )
 
 var (
-	serverURL string
-	apiToken  string
-	jsonOut   bool
+	serverURL   string
+	apiToken    string
+	jsonOut     bool
+	tlsInsecure bool
 )
 
 func main() {
@@ -45,6 +47,7 @@ func main() {
 	}
 	root.PersistentFlags().StringVar(&apiToken, "token", os.Getenv("DIRQ_TOKEN"), "API token")
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "output raw JSON")
+	root.PersistentFlags().BoolVar(&tlsInsecure, "tls-insecure", os.Getenv("DIRQ_TLS_INSECURE") == "true", "skip TLS certificate verification")
 
 	root.AddCommand(queryCmd())
 	root.AddCommand(hostsCmd())
@@ -759,7 +762,15 @@ func apiRequest(method, path string, body io.Reader) ([]byte, error) {
 		req.Header.Set("Authorization", "Bearer "+apiToken)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := http.DefaultClient
+	if tlsInsecure {
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

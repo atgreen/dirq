@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/atgreen/dirq/internal/agent"
+	"github.com/atgreen/dirq/internal/config"
 )
 
 var version = "dev"
@@ -19,13 +20,25 @@ var version = "dev"
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	tags := parseTags(os.Getenv("DIRQ_TAGS"))
+	// Load config file (missing file is fine — returns empty config).
+	cfgPath := os.Getenv("DIRQ_CONFIG")
+	if cfgPath == "" {
+		cfgPath = config.DefaultAgentPath()
+	}
+	fileCfg, err := config.Load(cfgPath)
+	if err != nil {
+		log.Error("failed to load config file", "path", cfgPath, "error", err)
+		os.Exit(1)
+	}
 
-	execEnabled := envOr("DIRQ_EXEC_ENABLED", "false") == "true"
+	// Build agent config: env vars override config file, which overrides defaults.
+	tags := mergeTags(fileCfg.GetTags(), os.Getenv("DIRQ_TAGS"))
+
+	execEnabled := config.EnvOr("DIRQ_EXEC_ENABLED", fileCfg, "exec_enabled", "false") == "true"
 
 	cfg := agent.Config{
-		ServerAddr:  envOr("DIRQ_SERVER", "localhost:50051"),
-		ListenAddr:  envOr("DIRQ_LISTEN", ":50052"),
+		ServerAddr:  config.EnvOr("DIRQ_SERVER", fileCfg, "server", "localhost:50051"),
+		ListenAddr:  config.EnvOr("DIRQ_LISTEN", fileCfg, "listen", ":50052"),
 		Tags:        tags,
 		Version:     version,
 		ExecEnabled: execEnabled,
@@ -56,11 +69,18 @@ func main() {
 	}
 }
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// mergeTags combines config file tags with DIRQ_TAGS env var.
+// Env var tags override file tags for the same key.
+func mergeTags(fileTags map[string]string, envTagStr string) map[string]string {
+	tags := make(map[string]string)
+	for k, v := range fileTags {
+		tags[k] = v
 	}
-	return fallback
+	// Env var overrides.
+	for k, v := range parseTags(envTagStr) {
+		tags[k] = v
+	}
+	return tags
 }
 
 // parseTags parses "key=value,key2=value2" into a map.

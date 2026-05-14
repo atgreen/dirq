@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -110,6 +111,16 @@ func installService() error {
 		return fmt.Errorf("create service: %w", err)
 	}
 	defer s.Close()
+
+	// Configure automatic restart on failure: 5s, 10s, 30s delays.
+	recoveryActions := []mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 30 * time.Second},
+	}
+	if err := s.SetRecoveryActions(recoveryActions, 60); err != nil {
+		fmt.Printf("Warning: failed to set recovery actions: %v\n", err)
+	}
 
 	fmt.Println("Service installed successfully. Start with: sc start DirQAgent")
 	return nil
