@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/atgreen/dirq/internal/config"
 	"google.golang.org/grpc/credentials"
 )
 
@@ -39,14 +40,19 @@ func (c Config) HasUserCerts() bool {
 	return c.CertFile != "" && c.KeyFile != ""
 }
 
-// ConfigFromEnv reads TLS configuration from environment variables.
-func ConfigFromEnv() Config {
+// ConfigFromEnv reads TLS configuration from environment variables,
+// falling back to config file values.
+func ConfigFromEnv(fileCfg ...*config.File) Config {
+	var fc *config.File
+	if len(fileCfg) > 0 {
+		fc = fileCfg[0]
+	}
 	return Config{
-		CAFile:   os.Getenv("DIRQ_TLS_CA"),
-		CertFile: os.Getenv("DIRQ_TLS_CERT"),
-		KeyFile:  os.Getenv("DIRQ_TLS_KEY"),
-		Insecure: os.Getenv("DIRQ_TLS_INSECURE") == "true",
-		Disabled: os.Getenv("DIRQ_TLS_DISABLED") == "true",
+		CAFile:   config.EnvOr("DIRQ_TLS_CA", fc, "tls_ca", ""),
+		CertFile: config.EnvOr("DIRQ_TLS_CERT", fc, "tls_cert", ""),
+		KeyFile:  config.EnvOr("DIRQ_TLS_KEY", fc, "tls_key", ""),
+		Insecure: config.EnvOr("DIRQ_TLS_INSECURE", fc, "tls_insecure", "false") == "true",
+		Disabled: config.EnvOr("DIRQ_TLS_DISABLED", fc, "tls_disabled", "false") == "true",
 	}
 }
 

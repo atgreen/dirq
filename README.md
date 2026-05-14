@@ -921,6 +921,10 @@ http_addr: :8080
 db_url: postgres://dirq:dirq@db.internal:5432/dirq?sslmode=require
 max_zone_leaders: 10
 max_children: 50
+
+tls_ca: /etc/dirq/certs/ca.crt
+tls_cert: /etc/dirq/certs/server.crt
+tls_key: /etc/dirq/certs/server.key
 ```
 
 Override the config file path with `DIRQ_CONFIG`:
@@ -958,15 +962,36 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 
 Tags can be set in the config file as an indented block under `tags:`, or via the `DIRQ_TAGS` environment variable as comma-separated `key=value` pairs. Both sources are merged, with environment variables taking precedence for duplicate keys.
 
-### TLS (server and agent)
+#### TLS (server and agent)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DIRQ_TLS_CA` | | CA certificate (enables mTLS) |
-| `DIRQ_TLS_CERT` | | This process's certificate |
-| `DIRQ_TLS_KEY` | | This process's private key |
-| `DIRQ_TLS_INSECURE` | `false` | Skip cert verification (agent only) |
-| `DIRQ_TLS_DISABLED` | `false` | Disable TLS entirely (not recommended) |
+| Config key | Environment variable | Default | Description |
+|-----------|----------|---------|-------------|
+| `tls_ca` | `DIRQ_TLS_CA` | | CA certificate path (enables mTLS) |
+| `tls_cert` | `DIRQ_TLS_CERT` | | This process's certificate path |
+| `tls_key` | `DIRQ_TLS_KEY` | | This process's private key path |
+| `tls_insecure` | `DIRQ_TLS_INSECURE` | `false` | Skip cert verification (agent only) |
+| `tls_disabled` | `DIRQ_TLS_DISABLED` | `false` | Disable TLS entirely (not recommended) |
+
+Example agent config with TLS:
+
+```
+server: grpc.example.com:50051
+exec_enabled: true
+
+tls_ca: /etc/dirq/certs/ca.crt
+tls_cert: /etc/dirq/certs/agent.crt
+tls_key: /etc/dirq/certs/agent.key
+
+tags:
+  env: prod
+```
+
+#### Signing (server only)
+
+| Config key | Environment variable | Default | Description |
+|-----------|----------|---------|-------------|
+| `signing_key` | `DIRQ_SIGNING_KEY` | | Ed25519 private key file |
+| `signing_pub` | `DIRQ_SIGNING_PUB` | | Ed25519 public key file |
 
 ### CLI
 

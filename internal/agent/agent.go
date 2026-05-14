@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/atgreen/dirq/internal/config"
 	"github.com/atgreen/dirq/internal/modules"
 	"github.com/atgreen/dirq/internal/query"
 	"github.com/atgreen/dirq/internal/signutil"
@@ -36,6 +37,7 @@ type Config struct {
 	Tags        map[string]string // user-defined tags
 	Version     string
 	ExecEnabled bool // Phase 2: whether this agent accepts exec/file requests
+	FileCfg     *config.File      // parsed config file (for TLS/signing fallback)
 }
 
 // Agent is the DirQ endpoint agent.
@@ -109,7 +111,7 @@ func New(cfg Config, log *slog.Logger) *Agent {
 // If the upstream connection drops, Run reconnects with exponential backoff.
 func (a *Agent) Run(ctx context.Context) error {
 	// Step 0: Ensure TLS certs exist (auto-generate if needed).
-	tlsCfg := tlsutil.ConfigFromEnv()
+	tlsCfg := tlsutil.ConfigFromEnv(a.cfg.FileCfg)
 	tlsCfg, err := tlsutil.EnsureCerts(tlsCfg, "agent", a.log)
 	if err != nil {
 		return fmt.Errorf("TLS setup: %w", err)

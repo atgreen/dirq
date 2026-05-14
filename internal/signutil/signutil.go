@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/atgreen/dirq/internal/config"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -40,10 +41,14 @@ type Verifier struct {
 	keyID     string
 }
 
-func ConfigFromEnv() Config {
+func ConfigFromEnv(fileCfg ...*config.File) Config {
+	var fc *config.File
+	if len(fileCfg) > 0 {
+		fc = fileCfg[0]
+	}
 	return Config{
-		PrivateKeyFile: os.Getenv("DIRQ_SIGNING_KEY"),
-		PublicKeyFile:  os.Getenv("DIRQ_SIGNING_PUB"),
+		PrivateKeyFile: config.EnvOr("DIRQ_SIGNING_KEY", fc, "signing_key", ""),
+		PublicKeyFile:  config.EnvOr("DIRQ_SIGNING_PUB", fc, "signing_pub", ""),
 	}
 }
 

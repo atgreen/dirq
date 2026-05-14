@@ -42,6 +42,7 @@ func main() {
 		Tags:        tags,
 		Version:     version,
 		ExecEnabled: execEnabled,
+		FileCfg:     fileCfg,
 	}
 
 	log.Info("DirQ agent starting",

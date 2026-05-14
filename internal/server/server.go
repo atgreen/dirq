@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/atgreen/dirq/internal/config"
 	"github.com/atgreen/dirq/internal/signutil"
 	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
@@ -30,6 +31,7 @@ type Config struct {
 	MaxZoneLeaders     int    // topology: max zone leaders (default 50)
 	MaxChildrenPerNode int    // topology: max children per node (default 50)
 	AuthDisabled       bool   // DIRQ_AUTH_DISABLED=true to allow anonymous API access
+	FileCfg            *config.File // parsed config file (for TLS/signing fallback)
 }
 
 // Server is the DirQ server.
@@ -102,7 +104,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// TLS is on by default. Auto-generates self-signed certs if none provided.
-	tlsCfg := tlsutil.ConfigFromEnv()
+	tlsCfg := tlsutil.ConfigFromEnv(s.cfg.FileCfg)
 	tlsCfg, err := tlsutil.EnsureCerts(tlsCfg, "server", s.log)
 	if err != nil {
 		return fmt.Errorf("TLS setup: %w", err)
@@ -114,10 +116,10 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		grpcOpts = append(grpcOpts, grpc.Creds(creds))
 	} else {
-		// Only reached when DIRQ_TLS_DISABLED=true
+		// Only reached when tls_disabled=true
 	}
 
-	signer, err := signutil.EnsureServerSigner(signutil.ConfigFromEnv(), s.log)
+	signer, err := signutil.EnsureServerSigner(signutil.ConfigFromEnv(s.cfg.FileCfg), s.log)
 	if err != nil {
 		return fmt.Errorf("signing setup: %w", err)
 	}
