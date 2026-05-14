@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/atgreen/dirq/internal/db"
@@ -541,7 +542,7 @@ func (s *Server) handleListExecLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─────────────────────────────────────────────────────────
-// REST API: exec_multi (fan-out exec to multiple agents)
+// REST API: exec_multi (broadcast exec to multiple agents)
 // ─────────────────────────────────────────────────────────
 
 type execMultiRequest struct {
@@ -557,25 +558,52 @@ type execMultiRequest struct {
 	Timeout      int               `json:"timeout"`
 }
 
-// execMultiHeader is the first NDJSON line, sent before any results stream back.
-type execMultiHeader struct {
-	Type         string `json:"type"`
-	TotalTargets int    `json:"total_targets"`
-}
-
-// execMultiResult is each subsequent NDJSON line, streamed as agents respond.
+// execMultiResult is each NDJSON line streamed as agents respond.
 type execMultiResult struct {
 	Type       string `json:"type"`
 	RequestID  string `json:"request_id,omitempty"`
-	AgentID    string `json:"agent_id"`
-	Hostname   string `json:"hostname"`
-	RC         int    `json:"rc"`
-	Stdout     string `json:"stdout"`          // base64-encoded
-	Stderr     string `json:"stderr"`          // base64-encoded
+	AgentID    string `json:"agent_id,omitempty"`
+	Hostname   string `json:"hostname,omitempty"`
+	RC         int    `json:"rc,omitempty"`
+	Stdout     string `json:"stdout,omitempty"`          // base64-encoded
+	Stderr     string `json:"stderr,omitempty"`          // base64-encoded
 	Success    bool   `json:"success"`
 	Error      string `json:"error,omitempty"`
 	StartedAt  string `json:"started_at,omitempty"`
 	FinishedAt string `json:"finished_at,omitempty"`
+	TotalTargets int  `json:"total_targets,omitempty"`
+}
+
+// execBroadcastSession tracks an in-flight broadcast exec.
+type execBroadcastSession struct {
+	requestID string
+	results   chan *pb.ExecResponse
+	startedAt time.Time
+	timeout   time.Duration
+}
+
+var (
+	execBroadcastSessions   = make(map[string]*execBroadcastSession)
+	execBroadcastSessionsMu sync.RWMutex
+)
+
+func (s *Server) handleExecBroadcastResponse(resp *pb.ExecResponse) {
+	// Check broadcast sessions first.
+	execBroadcastSessionsMu.RLock()
+	bs, ok := execBroadcastSessions[resp.RequestId]
+	execBroadcastSessionsMu.RUnlock()
+
+	if ok {
+		select {
+		case bs.results <- resp:
+		default:
+			s.log.Warn("broadcast exec result channel full", "request_id", resp.RequestId)
+		}
+		return
+	}
+
+	// Fall through to single-agent exec session handling.
+	s.handleExecResponse(resp)
 }
 
 func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
@@ -655,22 +683,20 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Verify we can flush (required for streaming).
+	// Set up streaming.
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		httpError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
 
-	// Start streaming NDJSON.
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
-
 	enc := json.NewEncoder(w)
 
-	// First line: header with target count.
-	enc.Encode(execMultiHeader{
+	// Header line.
+	enc.Encode(execMultiResult{
 		Type:         "header",
 		TotalTargets: len(targets),
 	})
@@ -680,100 +706,124 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dispatch exec to all targets in parallel.
-	type execResult struct {
-		resp  *pb.ExecResponse
-		err   error
-		agent db.Agent
+	// Build target ID list.
+	targetIDs := make([]string, len(targets))
+	for i, a := range targets {
+		targetIDs[i] = a.ID
 	}
 
-	resultCh := make(chan execResult, len(targets))
-	execTimeout := time.Duration(timeout) * time.Second
+	requestID := fmt.Sprintf("execm-%d", time.Now().UnixNano())
 
-	for _, agent := range targets {
-		go func(a db.Agent) {
-			requestID := fmt.Sprintf("exec-%s-%d", a.ID[:8], time.Now().UnixNano())
-
-			// Audit log.
-			cmd := req.Command
-			s.db.CreateExecLog(ctx, db.ExecLog{
-				RequestID:  requestID,
-				AgentID:    a.ID,
-				Hostname:   a.Hostname,
-				Operation:  "exec_command",
-				Command:    &cmd,
-				Become:     req.Become,
-				BecomeUser: strPtr(req.BecomeUser),
-				StartedAt:  timePtr(time.Now()),
-			})
-
-			pbReq := &pb.ServerMessage{
-				Payload: &pb.ServerMessage_ExecRequest{
-					ExecRequest: &pb.ExecRequest{
-						RequestId:      requestID,
-						AgentId:        a.ID,
-						Command:        req.Command,
-						Stdin:          stdinBytes,
-						Script:         scriptBytes,
-						ScriptName:     req.ScriptName,
-						Become:         req.Become,
-						BecomeUser:     req.BecomeUser,
-						BecomeMethod:   req.BecomeMethod,
-						Environment:    req.Environment,
-						TimeoutSeconds: int32(timeout),
-					},
-				},
-			}
-
-			result, err := s.dispatchExec(ctx, a.ID, pbReq, requestID, execTimeout)
-			if err != nil {
-				resultCh <- execResult{err: err, agent: a}
-				return
-			}
-			resp, ok := result.(*pb.ExecResponse)
-			if !ok {
-				resultCh <- execResult{err: fmt.Errorf("unexpected response type"), agent: a}
-				return
-			}
-			resultCh <- execResult{resp: resp, agent: a}
-		}(agent)
+	// Create broadcast session to collect responses.
+	bs := &execBroadcastSession{
+		requestID: requestID,
+		results:   make(chan *pb.ExecResponse, len(targets)),
+		startedAt: time.Now(),
+		timeout:   time.Duration(timeout) * time.Second,
 	}
 
-	// Stream each result as it arrives.
-	for i := 0; i < len(targets); i++ {
+	execBroadcastSessionsMu.Lock()
+	execBroadcastSessions[requestID] = bs
+	execBroadcastSessionsMu.Unlock()
+
+	defer func() {
+		execBroadcastSessionsMu.Lock()
+		delete(execBroadcastSessions, requestID)
+		execBroadcastSessionsMu.Unlock()
+	}()
+
+	// Build one broadcast message with all target IDs.
+	msg := &pb.ServerMessage{
+		Payload: &pb.ServerMessage_ExecRequest{
+			ExecRequest: &pb.ExecRequest{
+				RequestId:      requestID,
+				TargetAgentIds: targetIDs,
+				Command:        req.Command,
+				Stdin:          stdinBytes,
+				Script:         scriptBytes,
+				ScriptName:     req.ScriptName,
+				Become:         req.Become,
+				BecomeUser:     req.BecomeUser,
+				BecomeMethod:   req.BecomeMethod,
+				Environment:    req.Environment,
+				TimeoutSeconds: int32(timeout),
+			},
+		},
+	}
+
+	if err := s.signServerMessage(msg); err != nil {
+		enc.Encode(execMultiResult{
+			Type:    "result",
+			Success: false,
+			Error:   "sign failed: " + err.Error(),
+		})
+		flusher.Flush()
+		return
+	}
+
+	// Broadcast to all zone leaders (same as query dispatch).
+	sent := 0
+	s.mu.RLock()
+	for _, as := range s.streams {
 		select {
-		case r := <-resultCh:
-			out := execMultiResult{Type: "result"}
-			if r.err != nil {
-				out.AgentID = r.agent.ID
-				out.Hostname = r.agent.Hostname
-				out.Success = false
-				out.Error = r.err.Error()
-			} else {
-				out.RequestID = r.resp.RequestId
-				out.AgentID = r.resp.AgentId
-				out.Hostname = r.resp.Hostname
-				out.RC = int(r.resp.Rc)
-				out.Stdout = encodeBase64(r.resp.Stdout)
-				out.Stderr = encodeBase64(r.resp.Stderr)
-				out.Success = r.resp.Success
-				out.Error = r.resp.Error
-				if r.resp.StartedAt != nil {
-					out.StartedAt = r.resp.StartedAt.AsTime().Format(time.RFC3339)
-				}
-				if r.resp.FinishedAt != nil {
-					out.FinishedAt = r.resp.FinishedAt.AsTime().Format(time.RFC3339)
-				}
+		case as.send <- msg:
+			sent++
+		default:
+			s.log.Warn("zone leader send buffer full during exec broadcast", "agent_id", as.agentID)
+		}
+	}
+	s.mu.RUnlock()
+
+	s.log.Info("exec broadcast sent",
+		"request_id", requestID,
+		"targets", len(targetIDs),
+		"zone_leaders", sent,
+	)
+
+	// Stream results as agents respond.
+	hardTimeout := time.NewTimer(bs.timeout)
+	defer hardTimeout.Stop()
+	idleTimeout := time.NewTimer(30 * time.Second)
+	defer idleTimeout.Stop()
+
+	received := 0
+	for received < len(targets) {
+		select {
+		case resp := <-bs.results:
+			received++
+			out := execMultiResult{
+				Type:      "result",
+				RequestID: resp.RequestId,
+				AgentID:   resp.AgentId,
+				Hostname:  resp.Hostname,
+				RC:        int(resp.Rc),
+				Stdout:    encodeBase64(resp.Stdout),
+				Stderr:    encodeBase64(resp.Stderr),
+				Success:   resp.Success,
+				Error:     resp.Error,
+			}
+			if resp.StartedAt != nil {
+				out.StartedAt = resp.StartedAt.AsTime().Format(time.RFC3339)
+			}
+			if resp.FinishedAt != nil {
+				out.FinishedAt = resp.FinishedAt.AsTime().Format(time.RFC3339)
 			}
 			enc.Encode(out)
 			flusher.Flush()
+
+			if !idleTimeout.Stop() {
+				select {
+				case <-idleTimeout.C:
+				default:
+				}
+			}
+			idleTimeout.Reset(30 * time.Second)
+		case <-idleTimeout.C:
+			return
+		case <-hardTimeout.C:
+			s.log.Warn("exec broadcast timed out", "request_id", requestID, "received", received, "targets", len(targets))
+			return
 		case <-ctx.Done():
-			enc.Encode(execMultiResult{
-				Type:    "result",
-				Success: false,
-				Error:   "request cancelled",
-			})
-			flusher.Flush()
 			return
 		}
 	}

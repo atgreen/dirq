@@ -510,10 +510,17 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 	case *pb.ServerMessage_UpdatePush:
 		a.log.Info("update push received", "version", p.UpdatePush.Version)
 	case *pb.ServerMessage_ExecRequest:
-		// Exec is targeted — if it's for us, execute. Otherwise relay downstream.
-		if p.ExecRequest.AgentId == a.agentID {
+		if len(p.ExecRequest.TargetAgentIds) > 0 {
+			// Broadcast mode — relay first, then execute if targeted.
+			a.relayToDownstreams(msg)
+			if a.isTargeted(p.ExecRequest.TargetAgentIds) {
+				go a.handleExecRequest(ctx, p.ExecRequest)
+			}
+		} else if p.ExecRequest.AgentId == a.agentID {
+			// Point-to-point mode — execute locally.
 			go a.handleExecRequest(ctx, p.ExecRequest)
 		} else {
+			// Point-to-point mode — relay downstream toward target.
 			a.relayToDownstreams(msg)
 		}
 	case *pb.ServerMessage_PutFile:

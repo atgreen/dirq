@@ -218,7 +218,7 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 				s.handleQueryResult(r)
 			}
 		case *pb.AgentMessage_ExecResponse:
-			s.handleExecResponse(p.ExecResponse)
+			s.handleExecBroadcastResponse(p.ExecResponse)
 		case *pb.AgentMessage_FileChunk:
 			s.handleFileChunk(p.FileChunk)
 		case *pb.AgentMessage_FetchResponse:

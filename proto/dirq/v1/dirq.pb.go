@@ -1453,10 +1453,15 @@ func (x *AgentUpdatePush) GetArch() string {
 }
 
 // ExecRequest asks the agent to run a command.
+//
+// Two modes:
+//   - Point-to-point: agent_id is set, routed through mesh to one agent.
+//   - Broadcast: target_agent_ids is set, relayed through tree like queries.
+//     Each agent self-filters; only targeted agents execute.
 type ExecRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	RequestId      string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                                                              // unique ID for this exec operation
-	AgentId        string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`                                                                    // target agent
+	AgentId        string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`                                                                    // target agent (point-to-point mode)
 	Command        string                 `protobuf:"bytes,3,opt,name=command,proto3" json:"command,omitempty"`                                                                                   // command to execute (shell command string)
 	Become         bool                   `protobuf:"varint,4,opt,name=become,proto3" json:"become,omitempty"`                                                                                    // run with privilege escalation (sudo/runas)
 	BecomeUser     string                 `protobuf:"bytes,5,opt,name=become_user,json=becomeUser,proto3" json:"become_user,omitempty"`                                                           // user to become (default: root/Administrator)
@@ -1476,9 +1481,12 @@ type ExecRequest struct {
 	Script []byte `protobuf:"bytes,13,opt,name=script,proto3" json:"script,omitempty"`
 	// Original filename (e.g. "deploy.sh", "check.ps1"). Used to pick the
 	// right temp extension and execution method.
-	ScriptName    string `protobuf:"bytes,14,opt,name=script_name,json=scriptName,proto3" json:"script_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ScriptName string `protobuf:"bytes,14,opt,name=script_name,json=scriptName,proto3" json:"script_name,omitempty"`
+	// Broadcast mode: if set, the request is relayed through the tree
+	// like a query. Only agents in this list execute; others just relay.
+	TargetAgentIds []string `protobuf:"bytes,15,rep,name=target_agent_ids,json=targetAgentIds,proto3" json:"target_agent_ids,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ExecRequest) Reset() {
@@ -1607,6 +1615,13 @@ func (x *ExecRequest) GetScriptName() string {
 		return x.ScriptName
 	}
 	return ""
+}
+
+func (x *ExecRequest) GetTargetAgentIds() []string {
+	if x != nil {
+		return x.TargetAgentIds
+	}
+	return nil
 }
 
 // ExecResponse returns the result of command execution.
@@ -2456,7 +2471,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x06binary\x18\x02 \x01(\fR\x06binary\x12\x1c\n" +
 	"\tsignature\x18\x03 \x01(\fR\tsignature\x12\x0e\n" +
 	"\x02os\x18\x04 \x01(\tR\x02os\x12\x12\n" +
-	"\x04arch\x18\x05 \x01(\tR\x04arch\"\xa3\x04\n" +
+	"\x04arch\x18\x05 \x01(\tR\x04arch\"\xcd\x04\n" +
 	"\vExecRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
@@ -2476,7 +2491,8 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x05stdin\x18\f \x01(\fR\x05stdin\x12\x16\n" +
 	"\x06script\x18\r \x01(\fR\x06script\x12\x1f\n" +
 	"\vscript_name\x18\x0e \x01(\tR\n" +
-	"scriptName\x1a>\n" +
+	"scriptName\x12(\n" +
+	"\x10target_agent_ids\x18\x0f \x03(\tR\x0etargetAgentIds\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcc\x02\n" +

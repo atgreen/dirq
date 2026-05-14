@@ -216,9 +216,14 @@ message AgentUpdatePush {
 // ─────────────────────────────────────────────────────────
 
 // ExecRequest asks the agent to run a command.
+//
+// Two modes:
+//   - Point-to-point: agent_id is set, routed through mesh to one agent.
+//   - Broadcast: target_agent_ids is set, relayed through tree like queries.
+//     Each agent self-filters; only targeted agents execute.
 message ExecRequest {
   string request_id    = 1;  // unique ID for this exec operation
-  string agent_id      = 2;  // target agent
+  string agent_id      = 2;  // target agent (point-to-point mode)
   string command       = 3;  // command to execute (shell command string)
   bool   become        = 4;  // run with privilege escalation (sudo/runas)
   string become_user   = 5;  // user to become (default: root/Administrator)
@@ -239,6 +244,9 @@ message ExecRequest {
   // Original filename (e.g. "deploy.sh", "check.ps1"). Used to pick the
   // right temp extension and execution method.
   string script_name = 14;
+  // Broadcast mode: if set, the request is relayed through the tree
+  // like a query. Only agents in this list execute; others just relay.
+  repeated string target_agent_ids = 15;
 }
 
 // ExecResponse returns the result of command execution.
