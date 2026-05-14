@@ -8,9 +8,9 @@ PREFIX    ?= /usr/local
 
 CMDS := dirq-server dirq-agent dirq
 
-.PHONY: all build test lint clean install proto collection cross help
+.PHONY: build test lint clean install proto collection cross help
 
-all: build  ## Build all binaries (default)
+.DEFAULT_GOAL := help
 
 build: $(addprefix $(BINDIR)/,$(CMDS))  ## Build all binaries to bin/
 
