@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -29,6 +31,19 @@ var (
 )
 
 func main() {
+	// Flatten args: split any multi-word quoted arguments by whitespace.
+	// This lets users write dirq "select hostname where tag.env = 'prod'"
+	// instead of dirq select hostname where tag.env = 'prod'
+	flatArgs := []string{}
+	for _, arg := range os.Args[1:] {
+		if strings.ContainsAny(arg, " \t") && !strings.HasPrefix(arg, "-") {
+			flatArgs = append(flatArgs, strings.Fields(arg)...)
+		} else {
+			flatArgs = append(flatArgs, arg)
+		}
+	}
+	os.Args = append([]string{os.Args[0]}, flatArgs...)
+
 	root := &cobra.Command{
 		Use:   "dirq",
 		Short: "DirQ — Real-Time Endpoint Query CLI",
@@ -60,6 +75,8 @@ func main() {
 	root.AddCommand(runCmd())
 	root.AddCommand(skillCmd())
 	root.AddCommand(askCmd())
+	root.AddCommand(selectCmd())
+	root.AddCommand(deployCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -467,75 +484,50 @@ For self-signed certs without distributing the CA, agents can use:
 
 func runCmd() *cobra.Command {
 	var (
-		queryStr    string
-		playbook    string
-		module      string
-		moduleArgs  string
-		command     string
-		forks       int
-		extraArgs   []string
+		module     string
+		moduleArgs string
+		command    string
+		forks      int
+		extraArgs  []string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "run",
-		Short: "Query the fleet and run Ansible against the results",
-		Long: `Run a DirQ query to select hosts, then execute an Ansible playbook,
-module, or ad-hoc command against exactly those hosts.
+		Use:   "run [playbook.yml] [WHERE ...]",
+		Short: "Run an Ansible playbook or command against the fleet",
+		Long: `Query the fleet and run Ansible against matching hosts.
+
+The first argument is a playbook file (or use --module/--command).
+An optional WHERE clause filters which agents are targeted.
+Without WHERE, all online agents are targeted.
 
 Examples:
-  # Run a playbook against hosts with full disks
-  dirq run --query "SELECT os_info.hostname WHERE disk.pct_used > 90" \
-    --playbook cleanup-disks.yml
-
-  # Ad-hoc command against hosts with a vulnerable package
-  dirq run --query "SELECT os_info.hostname WHERE packages.name = 'openssl' AND packages.version LIKE '1.%%'" \
-    --command "yum update -y openssl"
-
-  # Run a module against hosts where sshd is stopped
-  dirq run --query "SELECT os_info.hostname WHERE services.name = 'sshd' AND services.state = 'stopped'" \
-    --module service --module-args "name=sshd state=started"
-
-  # Ping all linux hosts
-  dirq run --query "SELECT os_info.hostname WHERE os_info.os = 'linux'" \
-    --module ping`,
+  dirq run deploy.yml WHERE tag.env = 'prod'
+  dirq run cleanup.yml
+  dirq run --command "yum update -y openssl" WHERE packages.name = 'openssl'
+  dirq run --module ping WHERE os_info.os = 'linux'
+  dirq "run deploy.yml where tag.env = 'prod'"`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if queryStr == "" {
-				return fmt.Errorf("--query is required")
+			// Determine playbook from first arg (if it's a file, not a WHERE keyword).
+			var playbook string
+			var whereArgs []string
+
+			if len(args) > 0 && !strings.EqualFold(args[0], "WHERE") {
+				playbook = args[0]
+				whereArgs = args[1:]
+			} else {
+				whereArgs = args
 			}
+
 			if playbook == "" && module == "" && command == "" {
-				return fmt.Errorf("one of --playbook, --module, or --command is required")
+				return fmt.Errorf("provide a playbook file as the first argument, or use --module or --command")
 			}
 
-			// Run the query to get matching hostnames.
-			body, _ := json.Marshal(map[string]any{
-				"query":   queryStr,
-				"timeout": 60,
-			})
-			resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
+			queryStr := buildWhereQuery(whereArgs)
+
+			hosts, err := runQuery(queryStr, 60)
 			if err != nil {
-				return fmt.Errorf("query failed: %w", err)
-			}
-
-			var result struct {
-				Results []struct {
-					AgentID  string `json:"agent_id"`
-					Hostname string `json:"hostname"`
-					Success  bool   `json:"success"`
-				} `json:"results"`
-			}
-			if err := json.Unmarshal(resp, &result); err != nil {
-				return fmt.Errorf("parse query result: %w", err)
-			}
-
-			type hostInfo struct {
-				hostname string
-				agentID  string
-			}
-			var hosts []hostInfo
-			for _, r := range result.Results {
-				if r.Success && r.Hostname != "" {
-					hosts = append(hosts, hostInfo{r.Hostname, r.AgentID})
-				}
+				return err
 			}
 
 			if len(hosts) == 0 {
@@ -549,37 +541,24 @@ Examples:
 			}
 			fmt.Printf("Query matched %d host(s): %s\n\n", len(hosts), strings.Join(names, ", "))
 
-			// Write ephemeral inventory with DirQ connection settings.
-			// Write YAML inventory — host vars are more reliably available
-			// to connection plugins than INI host vars.
-			tmpInv, err := os.CreateTemp("", "dirq-inventory-*.yml")
+			invPath, err := writeInventory(hosts)
 			if err != nil {
-				return fmt.Errorf("create temp inventory: %w", err)
+				return err
 			}
-			defer os.Remove(tmpInv.Name())
-
-			fmt.Fprintf(tmpInv, "all:\n  hosts:\n")
-			for _, h := range hosts {
-				fmt.Fprintf(tmpInv, "    %s:\n", h.hostname)
-				fmt.Fprintf(tmpInv, "      dirq_agent_id: %s\n", h.agentID)
-				fmt.Fprintf(tmpInv, "      dirq_server_url: %s\n", serverURL)
-				fmt.Fprintf(tmpInv, "      ansible_connection: dirq\n")
-				fmt.Fprintf(tmpInv, "      ansible_python_interpreter: /usr/bin/python3\n")
-			}
-			tmpInv.Close()
+			defer os.Remove(invPath)
 
 			// Build the ansible command.
 			var ansibleCmd []string
 
 			if playbook != "" {
-				ansibleCmd = []string{"ansible-playbook", "-i", tmpInv.Name(), playbook}
+				ansibleCmd = []string{"ansible-playbook", "-i", invPath, playbook}
 			} else if module != "" {
-				ansibleCmd = []string{"ansible", "all", "-i", tmpInv.Name(), "-m", module}
+				ansibleCmd = []string{"ansible", "all", "-i", invPath, "-m", module}
 				if moduleArgs != "" {
 					ansibleCmd = append(ansibleCmd, "-a", moduleArgs)
 				}
 			} else {
-				ansibleCmd = []string{"ansible", "all", "-i", tmpInv.Name(), "-m", "raw", "-a", command}
+				ansibleCmd = []string{"ansible", "all", "-i", invPath, "-m", "raw", "-a", command}
 			}
 
 			if forks > 0 {
@@ -590,30 +569,20 @@ Examples:
 
 			fmt.Printf("Running: %s\n\n", strings.Join(ansibleCmd, " "))
 
-			// Execute ansible.
 			proc := exec.Command(ansibleCmd[0], ansibleCmd[1:]...)
 			proc.Stdout = os.Stdout
 			proc.Stderr = os.Stderr
 			proc.Stdin = os.Stdin
-
-			// Pass through env vars + point Ansible at the DirQ connection plugin.
 			proc.Env = os.Environ()
 
-			// Find the standalone connection plugin relative to our binary.
-			exePath, _ := os.Executable()
-			pluginDir := filepath.Join(filepath.Dir(exePath), "..", "ansible", "connection_plugins")
-			if absDir, err := filepath.Abs(pluginDir); err == nil {
-				if _, err := os.Stat(absDir); err == nil {
-					proc.Env = append(proc.Env, "ANSIBLE_CONNECTION_PLUGINS="+absDir)
-				}
+			if pluginDir := connectionPluginDir(); pluginDir != "" {
+				proc.Env = append(proc.Env, "ANSIBLE_CONNECTION_PLUGINS="+pluginDir)
 			}
 
 			return proc.Run()
 		},
 	}
 
-	cmd.Flags().StringVar(&queryStr, "query", "", "DirQ query to select hosts (required)")
-	cmd.Flags().StringVar(&playbook, "playbook", "", "Ansible playbook to run")
 	cmd.Flags().StringVar(&module, "module", "", "Ansible module to run")
 	cmd.Flags().StringVar(&moduleArgs, "module-args", "", "Arguments for the module")
 	cmd.Flags().StringVar(&command, "command", "", "Ad-hoc command to run (uses raw module)")
@@ -702,19 +671,22 @@ Used with GROUP BY for fleet-wide summaries.
 
 ## CLI commands
 
-    # Ad-hoc query
-    dirq query "SELECT hostname, disk.pct_used WHERE disk.pct_used > 80"
+    # Query the fleet
+    dirq select hostname, disk.pct_used WHERE disk.pct_used > 80
+    dirq select * --json
 
-    # JSON output
-    dirq query "SELECT *" --json
-
-    # Run a command on matching hosts
-    dirq run --query "SELECT hostname WHERE tag.env = 'prod'" \
-             --command "systemctl restart nginx"
+    # Quoted form (avoids shell interpretation of > < etc.)
+    dirq "select hostname where memory.pct_used > 90"
 
     # Run an Ansible playbook on matching hosts
-    dirq run --query "SELECT hostname WHERE packages.name = 'openssl'" \
-             --playbook update-openssl.yml
+    dirq run update-openssl.yml WHERE packages.name = 'openssl'
+
+    # Run a command on matching hosts
+    dirq run --command "systemctl restart nginx" WHERE tag.env = 'prod'
+
+    # Deploy a package (rolling wave by default)
+    dirq deploy ./patch.rpm WHERE tag.env = 'prod'
+    dirq deploy ./agent-0.3.0.msi WHERE os_info.os = 'windows'
 
     # List all agents
     dirq hosts list
@@ -995,6 +967,445 @@ func cleanQuery(s string) string {
 	// Collapse multi-line queries to single line.
 	s = strings.Join(strings.Fields(s), " ")
 	return s
+}
+
+// ─────────────────────────────────────────────────────────
+// dirq select
+// ─────────────────────────────────────────────────────────
+
+func selectCmd() *cobra.Command {
+	var timeout int
+
+	cmd := &cobra.Command{
+		Use:   "select [fields] [WHERE ...]",
+		Short: "Query the fleet",
+		Long: `Run a DirQ query with natural syntax.
+
+Examples:
+  dirq select hostname, disk.pct_used WHERE disk.pct_used > 80
+  dirq select hostname, cpu.cores WHERE tag.env = 'prod'
+  dirq select os_info.os, COUNT(hostname) GROUP BY os_info.os
+  dirq "select hostname where memory.pct_used > 90"`,
+		Args:               cobra.MinimumNArgs(1),
+		DisableFlagParsing: false,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			queryStr := buildSelectQuery(args)
+
+			body, _ := json.Marshal(map[string]any{
+				"query":   queryStr,
+				"timeout": timeout,
+			})
+
+			resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
+			if err != nil {
+				return err
+			}
+
+			if jsonOut {
+				fmt.Println(string(resp))
+				return nil
+			}
+
+			var result struct {
+				QueryID      string `json:"query_id"`
+				Status       string `json:"status"`
+				TotalTargets int    `json:"total_targets"`
+				Received     int    `json:"received"`
+				Results      []struct {
+					Hostname string         `json:"hostname"`
+					Success  bool           `json:"success"`
+					Error    string         `json:"error"`
+					Data     map[string]any `json:"data"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(resp, &result); err != nil {
+				return err
+			}
+
+			fmt.Printf("Query: %s\n", result.QueryID)
+			fmt.Printf("Status: %s | Targets: %d | Received: %d\n\n", result.Status, result.TotalTargets, result.Received)
+
+			if len(result.Results) == 0 {
+				fmt.Println("No results.")
+				return nil
+			}
+
+			for _, r := range result.Results {
+				if r.Success {
+					data, _ := json.MarshalIndent(r.Data, "  ", "  ")
+					fmt.Printf("  %s:\n  %s\n\n", r.Hostname, string(data))
+				} else {
+					fmt.Printf("  %s: ERROR: %s\n\n", r.Hostname, r.Error)
+				}
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&timeout, "timeout", 60, "query timeout in seconds")
+	return cmd
+}
+
+// ─────────────────────────────────────────────────────────
+// dirq deploy
+// ─────────────────────────────────────────────────────────
+
+func deployCmd() *cobra.Command {
+	var (
+		parallel bool
+		timeout  int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "deploy [package] [WHERE ...]",
+		Short: "Deploy a package across the fleet",
+		Long: `Deploy an RPM, DEB, or MSI package to agents through the relay mesh.
+
+Uses rolling wave deployment by default (leaves first, then relays,
+then zone leaders). Use --parallel to install on all targets at once.
+
+Examples:
+  dirq deploy ./patch-2026-05.rpm
+  dirq deploy ./patch.rpm WHERE tag.env = 'prod'
+  dirq deploy ./agent-0.3.0.msi WHERE os_info.os = 'windows'
+  dirq deploy ./dirq-agent-0.3.0.rpm --parallel`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pkgPath := args[0]
+
+			// Validate the package file exists.
+			info, err := os.Stat(pkgPath)
+			if err != nil {
+				return fmt.Errorf("package file not found: %s", pkgPath)
+			}
+
+			// Determine install command from extension.
+			ext := strings.ToLower(filepath.Ext(pkgPath))
+			var installCmd string
+			switch ext {
+			case ".rpm":
+				installCmd = "rpm -U --force /tmp/_dirq_deploy_pkg" + ext
+			case ".deb":
+				installCmd = "dpkg -i /tmp/_dirq_deploy_pkg" + ext
+			case ".msi":
+				installCmd = `msiexec /i C:\Windows\Temp\_dirq_deploy_pkg.msi /qn`
+			default:
+				return fmt.Errorf("unsupported package type %q (expected .rpm, .deb, or .msi)", ext)
+			}
+
+			// Read package content.
+			pkgContent, err := os.ReadFile(pkgPath)
+			if err != nil {
+				return fmt.Errorf("read package: %w", err)
+			}
+
+			fmt.Printf("Package: %s (%.1f MB)\n", filepath.Base(pkgPath), float64(info.Size())/(1024*1024))
+
+			// Build query from remaining args (after the package path).
+			queryStr := buildWhereQuery(args[1:])
+
+			// Query for target hosts.
+			hosts, err := runQuery(queryStr, timeout)
+			if err != nil {
+				return err
+			}
+
+			if len(hosts) == 0 {
+				fmt.Println("No hosts matched the query.")
+				return nil
+			}
+
+			names := make([]string, len(hosts))
+			for i, h := range hosts {
+				names[i] = h.hostname
+			}
+			fmt.Printf("Targets: %d host(s): %s\n", len(hosts), strings.Join(names, ", "))
+
+			if parallel {
+				fmt.Println("Mode: parallel (all at once)")
+			} else {
+				fmt.Println("Mode: depth-first (deepest nodes first)")
+			}
+			fmt.Println()
+
+			// Fetch topology for each target to determine depth.
+			type targetHost struct {
+				queryHost
+				parentID string
+				depth    int
+			}
+
+			targetSet := make(map[string]bool)
+			for _, h := range hosts {
+				targetSet[h.agentID] = true
+			}
+
+			var targets []targetHost
+			for _, h := range hosts {
+				resp, err := apiRequest("GET", "/api/v1/hosts/"+h.agentID, nil)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: could not fetch agent %s: %v\n", h.hostname, err)
+					targets = append(targets, targetHost{h, "", 0})
+					continue
+				}
+				var agent struct {
+					ParentID *string `json:"parent_id"`
+				}
+				json.Unmarshal(resp, &agent)
+				pid := ""
+				if agent.ParentID != nil {
+					pid = *agent.ParentID
+				}
+				targets = append(targets, targetHost{h, pid, 0})
+			}
+
+			// Compute depth for each target by walking parent chains.
+			// Build a parent lookup from all agents (not just targets).
+			allResp, err := apiRequest("GET", "/api/v1/hosts", nil)
+			if err == nil {
+				var allAgents []struct {
+					ID       string  `json:"id"`
+					ParentID *string `json:"parent_id"`
+				}
+				json.Unmarshal(allResp, &allAgents)
+
+				parentMap := make(map[string]string) // agentID → parentID
+				for _, a := range allAgents {
+					if a.ParentID != nil {
+						parentMap[a.ID] = *a.ParentID
+					}
+				}
+
+				for i := range targets {
+					depth := 0
+					cur := targets[i].agentID
+					seen := make(map[string]bool)
+					for {
+						pid, ok := parentMap[cur]
+						if !ok || pid == "" || seen[cur] {
+							break
+						}
+						seen[cur] = true
+						depth++
+						cur = pid
+					}
+					targets[i].depth = depth
+				}
+			}
+
+			// Sort by depth descending (deepest first).
+			// Targets at the same depth are deployed in parallel within a wave.
+			sort.Slice(targets, func(i, j int) bool {
+				return targets[i].depth > targets[j].depth
+			})
+
+			// Group into waves by depth level.
+			var waves [][]targetHost
+			if parallel {
+				waves = [][]targetHost{targets}
+			} else {
+				currentDepth := -1
+				for _, t := range targets {
+					if t.depth != currentDepth {
+						waves = append(waves, []targetHost{})
+						currentDepth = t.depth
+					}
+					waves[len(waves)-1] = append(waves[len(waves)-1], t)
+				}
+			}
+
+			// Deploy wave by wave (deepest first).
+			b64Content := base64.StdEncoding.EncodeToString(pkgContent)
+			destPath := "/tmp/_dirq_deploy_pkg" + ext
+			if ext == ".msi" {
+				destPath = `C:\Windows\Temp\_dirq_deploy_pkg.msi`
+			}
+
+			totalSuccess := 0
+			totalFail := 0
+
+			for wi, wave := range waves {
+				if !parallel {
+					waveNames := make([]string, len(wave))
+					for i, t := range wave {
+						waveNames[i] = t.hostname
+					}
+					fmt.Printf("Wave %d/%d (depth %d): %s\n", wi+1, len(waves), wave[0].depth, strings.Join(waveNames, ", "))
+				}
+
+				for _, t := range wave {
+					fmt.Printf("  %s: uploading... ", t.hostname)
+
+					// Put file.
+					putBody, _ := json.Marshal(map[string]any{
+						"agent_id":  t.agentID,
+						"dest_path": destPath,
+						"content":   b64Content,
+						"mode":      0644,
+						"timeout":   timeout,
+					})
+					putResp, err := apiRequest("POST", "/api/v1/put_file", bytes.NewReader(putBody))
+					if err != nil {
+						fmt.Printf("FAILED (upload: %v)\n", err)
+						totalFail++
+						continue
+					}
+					var putResult struct {
+						Success bool   `json:"success"`
+						Error   string `json:"error"`
+					}
+					json.Unmarshal(putResp, &putResult)
+					if !putResult.Success {
+						fmt.Printf("FAILED (upload: %s)\n", putResult.Error)
+						totalFail++
+						continue
+					}
+
+					fmt.Printf("installing... ")
+
+					// Exec install command.
+					execBody, _ := json.Marshal(map[string]any{
+						"agent_id": t.agentID,
+						"command":  installCmd,
+						"become":   true,
+						"timeout":  timeout,
+					})
+					execResp, err := apiRequest("POST", "/api/v1/exec", bytes.NewReader(execBody))
+					if err != nil {
+						fmt.Printf("FAILED (install: %v)\n", err)
+						totalFail++
+						continue
+					}
+					var execResult struct {
+						RC      int    `json:"rc"`
+						Stdout  string `json:"stdout"`
+						Stderr  string `json:"stderr"`
+						Success bool   `json:"success"`
+						Error   string `json:"error"`
+					}
+					json.Unmarshal(execResp, &execResult)
+					if !execResult.Success || execResult.RC != 0 {
+						errMsg := execResult.Error
+						if errMsg == "" {
+							errMsg = execResult.Stderr
+						}
+						fmt.Printf("FAILED (rc=%d: %s)\n", execResult.RC, errMsg)
+						totalFail++
+						continue
+					}
+
+					fmt.Println("OK")
+					totalSuccess++
+				}
+
+				// Wait between waves for agents to reconnect (if not parallel and not last wave).
+				if !parallel && wi < len(waves)-1 {
+					fmt.Printf("  Waiting for wave %d agents to reconnect...\n", wi+1)
+					time.Sleep(10 * time.Second)
+				}
+			}
+
+			fmt.Printf("\nDeploy complete: %d succeeded, %d failed\n", totalSuccess, totalFail)
+			if totalFail > 0 {
+				return fmt.Errorf("%d deployment(s) failed", totalFail)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&parallel, "parallel", false, "deploy to all targets at once instead of rolling waves")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "timeout in seconds for each operation")
+
+	return cmd
+}
+
+// ─────────────────────────────────────────────────────────
+// Shared query helpers
+// ─────────────────────────────────────────────────────────
+
+// buildSelectQuery reconstructs a SELECT query from positional args.
+// Args like ["hostname,", "cpu.count", "WHERE", "tag.env", "=", "'prod'"]
+// become "SELECT hostname, cpu.count WHERE tag.env = 'prod'"
+func buildSelectQuery(args []string) string {
+	return "SELECT " + strings.Join(args, " ")
+}
+
+// buildWhereQuery reconstructs a "SELECT hostname WHERE ..." from args
+// that follow the first positional arg (a file path). If no WHERE is
+// found, returns "SELECT hostname" (all online agents).
+func buildWhereQuery(args []string) string {
+	if len(args) == 0 {
+		return "SELECT hostname"
+	}
+	return "SELECT hostname " + strings.Join(args, " ")
+}
+
+type queryHost struct {
+	hostname string
+	agentID  string
+}
+
+// runQuery executes a DirQ query and returns matching hosts.
+func runQuery(queryStr string, timeout int) ([]queryHost, error) {
+	body, _ := json.Marshal(map[string]any{
+		"query":   queryStr,
+		"timeout": timeout,
+	})
+	resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+
+	var result struct {
+		Results []struct {
+			AgentID  string `json:"agent_id"`
+			Hostname string `json:"hostname"`
+			Success  bool   `json:"success"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("parse query result: %w", err)
+	}
+
+	var hosts []queryHost
+	for _, r := range result.Results {
+		if r.Success && r.Hostname != "" {
+			hosts = append(hosts, queryHost{r.Hostname, r.AgentID})
+		}
+	}
+	return hosts, nil
+}
+
+// writeInventory creates a temporary YAML inventory file for Ansible.
+func writeInventory(hosts []queryHost) (string, error) {
+	tmpInv, err := os.CreateTemp("", "dirq-inventory-*.yml")
+	if err != nil {
+		return "", fmt.Errorf("create temp inventory: %w", err)
+	}
+
+	fmt.Fprintf(tmpInv, "all:\n  hosts:\n")
+	for _, h := range hosts {
+		fmt.Fprintf(tmpInv, "    %s:\n", h.hostname)
+		fmt.Fprintf(tmpInv, "      dirq_agent_id: %s\n", h.agentID)
+		fmt.Fprintf(tmpInv, "      dirq_server_url: %s\n", serverURL)
+		fmt.Fprintf(tmpInv, "      ansible_connection: dirq\n")
+		fmt.Fprintf(tmpInv, "      ansible_python_interpreter: /usr/bin/python3\n")
+	}
+	tmpInv.Close()
+	return tmpInv.Name(), nil
+}
+
+// connectionPluginDir returns the path to the DirQ Ansible connection plugin.
+func connectionPluginDir() string {
+	exePath, _ := os.Executable()
+	pluginDir := filepath.Join(filepath.Dir(exePath), "..", "ansible", "connection_plugins")
+	if absDir, err := filepath.Abs(pluginDir); err == nil {
+		if _, err := os.Stat(absDir); err == nil {
+			return absDir
+		}
+	}
+	return ""
 }
 
 // ─────────────────────────────────────────────────────────

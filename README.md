@@ -185,8 +185,8 @@ export DIRQ_TOKEN=<bootstrap-token-from-step-1>
 export DIRQ_SERVER_URL=http://localhost:8090
 
 ./bin/dirq hosts list
-./bin/dirq query "SELECT os_info.hostname, cpu.logical_cores, memory.pct_used"
-./bin/dirq query "SELECT os_info.hostname, packages.name, packages.version WHERE packages.name IN ('openssl', 'curl')"
+./bin/dirq select os_info.hostname, cpu.logical_cores, memory.pct_used
+./bin/dirq select os_info.hostname, packages.name, packages.version WHERE packages.name IN "'openssl', 'curl'"
 ./bin/dirq hosts tag <agent-id> env=dev role=workstation
 ```
 
@@ -347,9 +347,19 @@ SELECT *
 ### CLI usage
 
 ```bash
+# Natural syntax — no quoting needed for simple queries
+dirq select os_info.hostname, cpu.logical_cores
+dirq select os_info.hostname, disk.pct_used WHERE disk.pct_used = 80
+
+# Quoted form — avoids shell interpretation of > < etc.
+dirq "select os_info.hostname, disk.pct_used where disk.pct_used > 80"
+
+# Flags
+dirq select os_info.os, COUNT(os_info.hostname) GROUP BY os_info.os --json
+dirq "select * where tag.env = 'prod'" --timeout 30
+
+# The old dirq query command still works
 dirq query "SELECT os_info.hostname, cpu.logical_cores"
-dirq query "SELECT os_info.hostname, disk.pct_used WHERE disk.pct_used > 80" --timeout 30
-dirq query "SELECT os_info.os, COUNT(os_info.hostname) GROUP BY os_info.os" --json
 ```
 
 ### Natural language queries
@@ -386,6 +396,63 @@ Generate an AI-readable reference for the query language:
 ```bash
 dirq skill            # print to stdout
 dirq skill | pbcopy   # copy to clipboard (macOS)
+```
+
+### Running playbooks
+
+Query the fleet and run Ansible against the results in one step:
+
+```bash
+# Run a playbook against hosts matching a WHERE clause
+dirq run cleanup-disks.yml WHERE disk.pct_used = 90
+
+# Quoted form
+dirq "run deploy.yml where tag.env = 'prod'"
+
+# Ad-hoc command
+dirq run --command "yum update -y openssl" WHERE packages.name = 'openssl'
+
+# Ansible module
+dirq run --module ping WHERE os_info.os = 'linux'
+
+# All online hosts (no WHERE clause)
+dirq run deploy.yml
+```
+
+### Deploying packages
+
+Deploy RPM, DEB, or MSI packages across the fleet through the relay mesh.
+Uses depth-first rolling deployment by default — deepest nodes first, working
+up the tree so a parent is never updated while its children are mid-install.
+
+```bash
+# Deploy to all agents (rolling wave)
+dirq deploy ./patch-2026-05.rpm
+
+# Deploy to specific hosts
+dirq deploy ./patch.rpm WHERE tag.env = 'prod'
+
+# Windows packages
+dirq deploy ./agent-0.3.0.msi WHERE os_info.os = 'windows'
+
+# Override rolling deployment — install everywhere at once
+dirq deploy ./monitoring.rpm --parallel
+```
+
+Package type is detected from the file extension:
+- `.rpm` → `rpm -U`
+- `.deb` → `dpkg -i`
+- `.msi` → `msiexec /i ... /qn`
+
+### Arg flattening
+
+Any quoted argument containing spaces is split into individual args before
+parsing. This means all DirQ commands work both quoted and unquoted:
+
+```bash
+dirq "hosts list"                    # same as: dirq hosts list
+dirq "select hostname where tag.env = 'prod'"  # same as: dirq select hostname where ...
+dirq "run deploy.yml where tag.env = 'prod'"   # same as: dirq run deploy.yml where ...
 ```
 
 ---
@@ -568,6 +635,10 @@ dirq token create ops-team --scope admin
 dirq token create monitoring --scope readonly
 export DIRQ_TOKEN=<token>
 ```
+
+**Token scopes are enforced per-endpoint:**
+- `readonly` — queries, host listing, facts, inventory, query history, exec log
+- `admin` — all of the above, plus tag management, token management, exec, put_file, fetch_file, deploy
 
 Set `DIRQ_AUTH_DISABLED=true` to disable (not recommended).
 
