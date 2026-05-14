@@ -230,6 +230,13 @@ message ExecRequest {
   // stdin data piped to the process. Required for Ansible modules — they
   // send Python module code via stdin.
   bytes  stdin = 12;
+  // Script content. If set, agent writes to a temp file and executes it.
+  // On Linux: preserves shebang, chmod +x, runs directly.
+  // On Windows: writes as .ps1, runs with PowerShell.
+  bytes  script = 13;
+  // Original filename (e.g. "deploy.sh", "check.ps1"). Used to pick the
+  // right temp extension and execution method.
+  string script_name = 14;
 }
 
 // ExecResponse returns the result of command execution.

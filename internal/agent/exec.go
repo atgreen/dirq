@@ -52,7 +52,26 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := buildCommand(execCtx, req.GetCommand(), req.GetBecome(), req.GetBecomeUser(), req.GetBecomeMethod())
+	// If a script was provided, write it to a temp file and execute it.
+	var cmd *exec.Cmd
+	if len(req.GetScript()) > 0 {
+		scriptCmd, cleanup, err := buildScriptCommand(execCtx, req.GetScript(), req.GetScriptName(), req.GetBecome(), req.GetBecomeUser(), req.GetBecomeMethod())
+		if err != nil {
+			a.sendExecResponse(&pb.ExecResponse{
+				RequestId: req.GetRequestId(),
+				AgentId:   a.agentID,
+				Hostname:  hostname,
+				Success:   false,
+				Error:     "script setup failed: " + err.Error(),
+				Rc:        -1,
+			})
+			return
+		}
+		defer cleanup()
+		cmd = scriptCmd
+	} else {
+		cmd = buildCommand(execCtx, req.GetCommand(), req.GetBecome(), req.GetBecomeUser(), req.GetBecomeMethod())
+	}
 
 	// Set extra environment variables.
 	if len(req.GetEnvironment()) > 0 {
@@ -375,6 +394,100 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 	}
 
 	a.sendFetchFileResponse(resp)
+}
+
+// ─────────────────────────────────────────────────────────
+// Script execution
+// ─────────────────────────────────────────────────────────
+
+// buildScriptCommand writes script content to a temp file and returns a
+// command to execute it. The cleanup function removes the temp file.
+//
+// On Linux: preserves the original extension (for shebang dispatch), writes
+// to /tmp, chmod +x, and runs it directly. If become is set, runs via sudo.
+//
+// On Windows: writes as .ps1, runs with PowerShell.
+func buildScriptCommand(ctx context.Context, script []byte, scriptName string, become bool, becomeUser, becomeMethod string) (*exec.Cmd, func(), error) {
+	ext := filepath.Ext(scriptName)
+
+	if runtime.GOOS == "windows" {
+		return buildScriptCommandWindows(ctx, script, ext, become, becomeUser)
+	}
+	return buildScriptCommandUnix(ctx, script, ext, become, becomeUser, becomeMethod)
+}
+
+func buildScriptCommandUnix(ctx context.Context, script []byte, ext string, become bool, becomeUser, becomeMethod string) (*exec.Cmd, func(), error) {
+	if ext == "" {
+		ext = ".sh"
+	}
+
+	tmpFile, err := os.CreateTemp("", "dirq-script-*"+ext)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create temp script: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	cleanup := func() { os.Remove(tmpPath) }
+
+	if _, err := tmpFile.Write(script); err != nil {
+		tmpFile.Close()
+		cleanup()
+		return nil, nil, fmt.Errorf("write script: %w", err)
+	}
+	tmpFile.Close()
+
+	if err := os.Chmod(tmpPath, 0700); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("chmod script: %w", err)
+	}
+
+	if become {
+		if becomeUser == "" {
+			becomeUser = "root"
+		}
+		if becomeMethod == "" {
+			becomeMethod = "sudo"
+		}
+		var cmdStr string
+		switch becomeMethod {
+		case "su":
+			cmdStr = fmt.Sprintf("su - %s -c %s", shellQuote(becomeUser), shellQuote(tmpPath))
+		default: // sudo
+			cmdStr = fmt.Sprintf("sudo -n -u %s -- %s", shellQuote(becomeUser), tmpPath)
+		}
+		return exec.CommandContext(ctx, "sh", "-c", cmdStr), cleanup, nil
+	}
+
+	return exec.CommandContext(ctx, tmpPath), cleanup, nil
+}
+
+func buildScriptCommandWindows(ctx context.Context, script []byte, ext string, become bool, becomeUser string) (*exec.Cmd, func(), error) {
+	if ext == "" || ext == ".sh" {
+		// Default to PowerShell on Windows.
+		ext = ".ps1"
+	}
+
+	tmpFile, err := os.CreateTemp("", "dirq-script-*"+ext)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create temp script: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	cleanup := func() { os.Remove(tmpPath) }
+
+	if _, err := tmpFile.Write(script); err != nil {
+		tmpFile.Close()
+		cleanup()
+		return nil, nil, fmt.Errorf("write script: %w", err)
+	}
+	tmpFile.Close()
+
+	if ext == ".ps1" {
+		return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpPath), cleanup, nil
+	}
+
+	// For other extensions (.bat, .cmd), run via cmd.
+	return exec.CommandContext(ctx, "cmd", "/c", tmpPath), cleanup, nil
 }
 
 // ─────────────────────────────────────────────────────────

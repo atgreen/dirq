@@ -174,13 +174,16 @@ class Connection(ConnectionBase):
             raise AnsibleConnectionFailure(f"DirQ exec failed: {e}")
 
         rc = result.get("rc", -1)
-        stdout = result.get("stdout", "")
-        stderr = result.get("stderr", "")
+        stdout_b64 = result.get("stdout", "")
+        stderr_b64 = result.get("stderr", "")
+
+        stdout = base64.b64decode(stdout_b64) if stdout_b64 else b""
+        stderr = base64.b64decode(stderr_b64) if stderr_b64 else b""
 
         if result.get("error") and not result.get("success"):
-            stderr = result["error"] + "\n" + stderr
+            stderr = result["error"].encode("utf-8") + b"\n" + stderr
 
-        return rc, stdout.encode("utf-8"), stderr.encode("utf-8")
+        return rc, stdout, stderr
 
     def put_file(self, in_path, out_path):
         self._connect()

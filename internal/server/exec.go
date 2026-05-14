@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/atgreen/dirq/internal/db"
+	"github.com/atgreen/dirq/internal/query"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -177,8 +178,8 @@ type execCommandResponse struct {
 	AgentID    string `json:"agent_id"`
 	Hostname   string `json:"hostname"`
 	RC         int    `json:"rc"`
-	Stdout     string `json:"stdout"`
-	Stderr     string `json:"stderr"`
+	Stdout     string `json:"stdout"`          // base64-encoded
+	Stderr     string `json:"stderr"`          // base64-encoded
 	Success    bool   `json:"success"`
 	Error      string `json:"error,omitempty"`
 	StartedAt  string `json:"started_at,omitempty"`
@@ -279,8 +280,8 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		AgentID:   resp.AgentId,
 		Hostname:  resp.Hostname,
 		RC:        int(resp.Rc),
-		Stdout:    string(resp.Stdout),
-		Stderr:    string(resp.Stderr),
+		Stdout:    encodeBase64(resp.Stdout),
+		Stderr:    encodeBase64(resp.Stderr),
 		Success:   resp.Success,
 		Error:     resp.Error,
 	}
@@ -537,6 +538,245 @@ func (s *Server) handleListExecLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, logs)
+}
+
+// ─────────────────────────────────────────────────────────
+// REST API: exec_multi (fan-out exec to multiple agents)
+// ─────────────────────────────────────────────────────────
+
+type execMultiRequest struct {
+	Query        string            `json:"query"`
+	Command      string            `json:"command"`
+	Script       string            `json:"script"`       // base64-encoded script content
+	ScriptName   string            `json:"script_name"`  // original filename (e.g. "deploy.sh")
+	Stdin        string            `json:"stdin"`         // base64-encoded stdin data
+	Become       bool              `json:"become"`
+	BecomeUser   string            `json:"become_user"`
+	BecomeMethod string            `json:"become_method"`
+	Environment  map[string]string `json:"environment"`
+	Timeout      int               `json:"timeout"`
+}
+
+// execMultiHeader is the first NDJSON line, sent before any results stream back.
+type execMultiHeader struct {
+	Type         string `json:"type"`
+	TotalTargets int    `json:"total_targets"`
+}
+
+// execMultiResult is each subsequent NDJSON line, streamed as agents respond.
+type execMultiResult struct {
+	Type       string `json:"type"`
+	RequestID  string `json:"request_id,omitempty"`
+	AgentID    string `json:"agent_id"`
+	Hostname   string `json:"hostname"`
+	RC         int    `json:"rc"`
+	Stdout     string `json:"stdout"`          // base64-encoded
+	Stderr     string `json:"stderr"`          // base64-encoded
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
+	StartedAt  string `json:"started_at,omitempty"`
+	FinishedAt string `json:"finished_at,omitempty"`
+}
+
+func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
+	var req execMultiRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if req.Command == "" && req.Script == "" {
+		httpError(w, http.StatusBadRequest, "command or script is required")
+		return
+	}
+	if req.Query == "" {
+		httpError(w, http.StatusBadRequest, "query is required (used to select target agents)")
+		return
+	}
+
+	timeout := req.Timeout
+	if timeout == 0 {
+		timeout = 300
+	}
+
+	// Decode stdin if provided.
+	var stdinBytes []byte
+	if req.Stdin != "" {
+		var decErr error
+		stdinBytes, decErr = decodeBase64(req.Stdin)
+		if decErr != nil {
+			httpError(w, http.StatusBadRequest, "invalid base64 stdin: "+decErr.Error())
+			return
+		}
+	}
+
+	// Decode script if provided.
+	var scriptBytes []byte
+	if req.Script != "" {
+		var decErr error
+		scriptBytes, decErr = decodeBase64(req.Script)
+		if decErr != nil {
+			httpError(w, http.StatusBadRequest, "invalid base64 script: "+decErr.Error())
+			return
+		}
+	}
+
+	// Resolve target agents using the query engine.
+	ctx := r.Context()
+	parsed, err := query.Parse(req.Query)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "query parse error: "+err.Error())
+		return
+	}
+
+	online := true
+	allAgents, err := s.db.ListAgents(ctx, db.ListAgentsFilter{Online: &online})
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "failed to list agents: "+err.Error())
+		return
+	}
+
+	// Pre-filter by tag conditions.
+	agents := allAgents
+	if query.HasTagConditions(parsed.Where) {
+		agents = make([]db.Agent, 0, len(allAgents))
+		for _, a := range allAgents {
+			if query.MatchesAgentTags(parsed.Where, a.Tags) {
+				agents = append(agents, a)
+			}
+		}
+	}
+
+	// Filter to agents with exec enabled.
+	var targets []db.Agent
+	for _, a := range agents {
+		if a.ExecEnabled {
+			targets = append(targets, a)
+		}
+	}
+
+	// Verify we can flush (required for streaming).
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		httpError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	// Start streaming NDJSON.
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+
+	enc := json.NewEncoder(w)
+
+	// First line: header with target count.
+	enc.Encode(execMultiHeader{
+		Type:         "header",
+		TotalTargets: len(targets),
+	})
+	flusher.Flush()
+
+	if len(targets) == 0 {
+		return
+	}
+
+	// Dispatch exec to all targets in parallel.
+	type execResult struct {
+		resp  *pb.ExecResponse
+		err   error
+		agent db.Agent
+	}
+
+	resultCh := make(chan execResult, len(targets))
+	execTimeout := time.Duration(timeout) * time.Second
+
+	for _, agent := range targets {
+		go func(a db.Agent) {
+			requestID := fmt.Sprintf("exec-%s-%d", a.ID[:8], time.Now().UnixNano())
+
+			// Audit log.
+			cmd := req.Command
+			s.db.CreateExecLog(ctx, db.ExecLog{
+				RequestID:  requestID,
+				AgentID:    a.ID,
+				Hostname:   a.Hostname,
+				Operation:  "exec_command",
+				Command:    &cmd,
+				Become:     req.Become,
+				BecomeUser: strPtr(req.BecomeUser),
+				StartedAt:  timePtr(time.Now()),
+			})
+
+			pbReq := &pb.ServerMessage{
+				Payload: &pb.ServerMessage_ExecRequest{
+					ExecRequest: &pb.ExecRequest{
+						RequestId:      requestID,
+						AgentId:        a.ID,
+						Command:        req.Command,
+						Stdin:          stdinBytes,
+						Script:         scriptBytes,
+						ScriptName:     req.ScriptName,
+						Become:         req.Become,
+						BecomeUser:     req.BecomeUser,
+						BecomeMethod:   req.BecomeMethod,
+						Environment:    req.Environment,
+						TimeoutSeconds: int32(timeout),
+					},
+				},
+			}
+
+			result, err := s.dispatchExec(ctx, a.ID, pbReq, requestID, execTimeout)
+			if err != nil {
+				resultCh <- execResult{err: err, agent: a}
+				return
+			}
+			resp, ok := result.(*pb.ExecResponse)
+			if !ok {
+				resultCh <- execResult{err: fmt.Errorf("unexpected response type"), agent: a}
+				return
+			}
+			resultCh <- execResult{resp: resp, agent: a}
+		}(agent)
+	}
+
+	// Stream each result as it arrives.
+	for i := 0; i < len(targets); i++ {
+		select {
+		case r := <-resultCh:
+			out := execMultiResult{Type: "result"}
+			if r.err != nil {
+				out.AgentID = r.agent.ID
+				out.Hostname = r.agent.Hostname
+				out.Success = false
+				out.Error = r.err.Error()
+			} else {
+				out.RequestID = r.resp.RequestId
+				out.AgentID = r.resp.AgentId
+				out.Hostname = r.resp.Hostname
+				out.RC = int(r.resp.Rc)
+				out.Stdout = encodeBase64(r.resp.Stdout)
+				out.Stderr = encodeBase64(r.resp.Stderr)
+				out.Success = r.resp.Success
+				out.Error = r.resp.Error
+				if r.resp.StartedAt != nil {
+					out.StartedAt = r.resp.StartedAt.AsTime().Format(time.RFC3339)
+				}
+				if r.resp.FinishedAt != nil {
+					out.FinishedAt = r.resp.FinishedAt.AsTime().Format(time.RFC3339)
+				}
+			}
+			enc.Encode(out)
+			flusher.Flush()
+		case <-ctx.Done():
+			enc.Encode(execMultiResult{
+				Type:    "result",
+				Success: false,
+				Error:   "request cancelled",
+			})
+			flusher.Flush()
+			return
+		}
+	}
 }
 
 // ─────────────────────────────────────────────────────────

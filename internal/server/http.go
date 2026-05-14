@@ -42,6 +42,7 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 
 	// Exec endpoints (admin scope only)
 	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(requireScope("admin", s.handleExecCommand)))
+	mux.HandleFunc("POST /api/v1/exec_multi", s.authMiddleware(requireScope("admin", s.handleExecMulti)))
 	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.handlePutFile)))
 	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
 

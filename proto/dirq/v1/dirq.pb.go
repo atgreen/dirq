@@ -1437,7 +1437,14 @@ type ExecRequest struct {
 	AapUser        string `protobuf:"bytes,11,opt,name=aap_user,json=aapUser,proto3" json:"aap_user,omitempty"`
 	// stdin data piped to the process. Required for Ansible modules — they
 	// send Python module code via stdin.
-	Stdin         []byte `protobuf:"bytes,12,opt,name=stdin,proto3" json:"stdin,omitempty"`
+	Stdin []byte `protobuf:"bytes,12,opt,name=stdin,proto3" json:"stdin,omitempty"`
+	// Script content. If set, agent writes to a temp file and executes it.
+	// On Linux: preserves shebang, chmod +x, runs directly.
+	// On Windows: writes as .ps1, runs with PowerShell.
+	Script []byte `protobuf:"bytes,13,opt,name=script,proto3" json:"script,omitempty"`
+	// Original filename (e.g. "deploy.sh", "check.ps1"). Used to pick the
+	// right temp extension and execution method.
+	ScriptName    string `protobuf:"bytes,14,opt,name=script_name,json=scriptName,proto3" json:"script_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1554,6 +1561,20 @@ func (x *ExecRequest) GetStdin() []byte {
 		return x.Stdin
 	}
 	return nil
+}
+
+func (x *ExecRequest) GetScript() []byte {
+	if x != nil {
+		return x.Script
+	}
+	return nil
+}
+
+func (x *ExecRequest) GetScriptName() string {
+	if x != nil {
+		return x.ScriptName
+	}
+	return ""
 }
 
 // ExecResponse returns the result of command execution.
@@ -2181,7 +2202,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x06binary\x18\x02 \x01(\fR\x06binary\x12\x1c\n" +
 	"\tsignature\x18\x03 \x01(\fR\tsignature\x12\x0e\n" +
 	"\x02os\x18\x04 \x01(\tR\x02os\x12\x12\n" +
-	"\x04arch\x18\x05 \x01(\tR\x04arch\"\xea\x03\n" +
+	"\x04arch\x18\x05 \x01(\tR\x04arch\"\xa3\x04\n" +
 	"\vExecRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
@@ -2198,7 +2219,10 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x10aap_job_template\x18\n" +
 	" \x01(\tR\x0eaapJobTemplate\x12\x19\n" +
 	"\baap_user\x18\v \x01(\tR\aaapUser\x12\x14\n" +
-	"\x05stdin\x18\f \x01(\fR\x05stdin\x1a>\n" +
+	"\x05stdin\x18\f \x01(\fR\x05stdin\x12\x16\n" +
+	"\x06script\x18\r \x01(\fR\x06script\x12\x1f\n" +
+	"\vscript_name\x18\x0e \x01(\tR\n" +
+	"scriptName\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcc\x02\n" +

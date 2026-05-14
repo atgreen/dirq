@@ -72,6 +72,7 @@ func main() {
 	root.AddCommand(queriesCmd())
 	root.AddCommand(tlsCmd())
 	root.AddCommand(runCmd())
+	root.AddCommand(execCmd())
 	root.AddCommand(skillCmd())
 	root.AddCommand(askCmd())
 	root.AddCommand(selectCmd())
@@ -95,9 +96,72 @@ func hostsCmd() *cobra.Command {
 	}
 
 	listCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all registered hosts",
+		Use:   "list [WHERE ...]",
+		Short: "List registered hosts",
+		Long: `List registered hosts, optionally filtered by a WHERE clause.
+
+Examples:
+  dirq hosts list
+  dirq hosts list WHERE tag.env = 'prod'
+  dirq hosts list WHERE os_info.os = 'linux'`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// If a WHERE clause is provided, query for matching hosts
+			// and display those. Otherwise list all hosts from the API.
+			if len(args) > 0 {
+				queryStr := "SELECT hostname, os_info.os, os_info.os_version, os_info.arch " + strings.Join(args, " ")
+				hosts, err := runQuery(queryStr, 60)
+				if err != nil {
+					return err
+				}
+				if len(hosts) == 0 {
+					fmt.Println("No hosts matched the query.")
+					return nil
+				}
+
+				// Fetch full details for each matched host.
+				type hostInfo struct {
+					Hostname     string    `json:"hostname"`
+					OS           string    `json:"os"`
+					OSVersion    string    `json:"os_version"`
+					Arch         string    `json:"arch"`
+					AgentVersion string    `json:"agent_version"`
+					Role         string    `json:"role"`
+					Online       bool      `json:"online"`
+					LastSeenAt   time.Time `json:"last_seen_at"`
+				}
+				var matched []hostInfo
+				for _, h := range hosts {
+					resp, err := apiRequest("GET", "/api/v1/hosts/"+h.agentID, nil)
+					if err != nil {
+						continue
+					}
+					var hi hostInfo
+					json.Unmarshal(resp, &hi)
+					matched = append(matched, hi)
+				}
+
+				if jsonOut {
+					out, _ := json.Marshal(matched)
+					fmt.Println(string(out))
+					return nil
+				}
+
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "HOSTNAME\tOS\tVERSION\tARCH\tROLE\tONLINE\tLAST SEEN")
+				for _, h := range matched {
+					status := "yes"
+					if !h.Online {
+						status = "no"
+					}
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+						h.Hostname, h.OS, h.OSVersion, h.Arch, h.Role, status,
+						h.LastSeenAt.Format("2006-01-02 15:04:05"))
+				}
+				w.Flush()
+				return nil
+			}
+
 			resp, err := apiRequest("GET", "/api/v1/hosts", nil)
 			if err != nil {
 				return err
@@ -172,51 +236,121 @@ func hostsCmd() *cobra.Command {
 	}
 
 	tagCmd := &cobra.Command{
-		Use:   "tag [id] [key=value ...]",
-		Short: "Add or update tags on a host",
-		Long:  "Add or update tags. Example: dirq hosts tag abc-123 env=prod role=webserver",
-		Args:  cobra.MinimumNArgs(2),
+		Use:   "tag [key=value ...] [WHERE ...]",
+		Short: "Add or update tags on hosts",
+		Long: `Add or update tags on one or more hosts.
+
+Use a WHERE clause to target multiple hosts by query, or pass a host ID
+as the first argument to tag a single host.
+
+Examples:
+  dirq hosts tag abc-123 env=prod role=webserver
+  dirq hosts tag env=prod WHERE os_info.os = 'linux'
+  dirq hosts tag role=webserver WHERE tag.dc = 'us-east'`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
-			tags := make(map[string]string)
-			for _, kv := range args[1:] {
-				parts := strings.SplitN(kv, "=", 2)
-				if len(parts) != 2 {
-					return fmt.Errorf("invalid tag format %q, expected key=value", kv)
+			tags, whereArgs, hostID := parseTagArgs(args)
+			if len(tags) == 0 {
+				return fmt.Errorf("no key=value tags provided")
+			}
+
+			// Determine target host(s).
+			var hostIDs []string
+			var hostNames []string
+
+			if hostID != "" {
+				// Single host by ID.
+				hostIDs = []string{hostID}
+			} else if len(whereArgs) > 0 {
+				// Query for matching hosts.
+				queryStr := buildWhereQuery(whereArgs)
+				hosts, err := runQuery(queryStr, 60)
+				if err != nil {
+					return err
 				}
-				tags[parts[0]] = parts[1]
+				if len(hosts) == 0 {
+					fmt.Println("No hosts matched the query.")
+					return nil
+				}
+				for _, h := range hosts {
+					hostIDs = append(hostIDs, h.agentID)
+					hostNames = append(hostNames, h.hostname)
+				}
+				fmt.Printf("Tagging %d host(s): %s\n\n", len(hosts), strings.Join(hostNames, ", "))
+			} else {
+				return fmt.Errorf("provide a host ID or a WHERE clause")
 			}
+
 			body, _ := json.Marshal(tags)
-			resp, err := apiRequest("PATCH", "/api/v1/hosts/"+id+"/tags", bytes.NewReader(body))
-			if err != nil {
-				return err
-			}
-			var agent struct {
-				Hostname string            `json:"hostname"`
-				Tags     map[string]string `json:"tags"`
-			}
-			json.Unmarshal(resp, &agent)
-			fmt.Printf("Tags updated for %s:\n", agent.Hostname)
-			for k, v := range agent.Tags {
-				fmt.Printf("  %s=%s\n", k, v)
+			for i, id := range hostIDs {
+				resp, err := apiRequest("PATCH", "/api/v1/hosts/"+id+"/tags", bytes.NewReader(body))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  %s: FAILED: %v\n", hostIDOrName(hostNames, i, id), err)
+					continue
+				}
+				var agent struct {
+					Hostname string            `json:"hostname"`
+					Tags     map[string]string `json:"tags"`
+				}
+				json.Unmarshal(resp, &agent)
+				fmt.Printf("  %s: tags updated\n", agent.Hostname)
 			}
 			return nil
 		},
 	}
 
 	untagCmd := &cobra.Command{
-		Use:   "untag [id] [key ...]",
-		Short: "Remove tags from a host",
-		Long:  "Remove tags by key. Example: dirq hosts untag abc-123 env role",
-		Args:  cobra.MinimumNArgs(2),
+		Use:   "untag [key ...] [WHERE ...]",
+		Short: "Remove tags from hosts",
+		Long: `Remove tags by key from one or more hosts.
+
+Use a WHERE clause to target multiple hosts by query, or pass a host ID
+as the first argument to untag a single host.
+
+Examples:
+  dirq hosts untag abc-123 env role
+  dirq hosts untag env WHERE tag.env = 'staging'
+  dirq hosts untag role WHERE os_info.os = 'windows'`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
-			for _, key := range args[1:] {
-				_, err := apiRequest("DELETE", "/api/v1/hosts/"+id+"/tags/"+key, nil)
+			keys, whereArgs, hostID := parseUntagArgs(args)
+			if len(keys) == 0 {
+				return fmt.Errorf("no tag keys provided")
+			}
+
+			var hostIDs []string
+			var hostNames []string
+
+			if hostID != "" {
+				hostIDs = []string{hostID}
+			} else if len(whereArgs) > 0 {
+				queryStr := buildWhereQuery(whereArgs)
+				hosts, err := runQuery(queryStr, 60)
 				if err != nil {
-					return fmt.Errorf("failed to remove tag %q: %w", key, err)
+					return err
 				}
-				fmt.Printf("Removed tag: %s\n", key)
+				if len(hosts) == 0 {
+					fmt.Println("No hosts matched the query.")
+					return nil
+				}
+				for _, h := range hosts {
+					hostIDs = append(hostIDs, h.agentID)
+					hostNames = append(hostNames, h.hostname)
+				}
+				fmt.Printf("Untagging %d host(s): %s\n\n", len(hosts), strings.Join(hostNames, ", "))
+			} else {
+				return fmt.Errorf("provide a host ID or a WHERE clause")
+			}
+
+			for i, id := range hostIDs {
+				for _, key := range keys {
+					_, err := apiRequest("DELETE", "/api/v1/hosts/"+id+"/tags/"+key, nil)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "  %s: FAILED to remove %s: %v\n", hostIDOrName(hostNames, i, id), key, err)
+						continue
+					}
+				}
+				fmt.Printf("  %s: removed %s\n", hostIDOrName(hostNames, i, id), strings.Join(keys, ", "))
 			}
 			return nil
 		},
@@ -519,6 +653,185 @@ Examples:
 }
 
 // ─────────────────────────────────────────────────────────
+// dirq exec
+// ─────────────────────────────────────────────────────────
+
+func execCmd() *cobra.Command {
+	var (
+		scriptFile   string
+		become       bool
+		becomeUser   string
+		becomeMethod string
+		timeout      int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "exec [command] [WHERE ...]",
+		Short: "Execute a command or script across the fleet in parallel",
+		Long: `Run a command or script on multiple agents simultaneously and stream results.
+
+The first argument is a command string to execute on each target agent.
+Use --script to upload and execute a local script file instead.
+
+Script handling by platform:
+  Linux:   Shebang (#!) is honored. Scripts are chmod +x and run directly.
+  Windows: .ps1 files run with PowerShell. .bat/.cmd run with cmd.exe.
+
+An optional WHERE clause filters which agents are targeted.
+
+Examples:
+  dirq exec "uptime"
+  dirq exec "uptime" WHERE tag.env = 'prod'
+  dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
+  dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'
+  dirq exec --become --script ./patch.sh WHERE tag.role = 'webserver'
+  dirq exec --become "/opt/scripts/check.sh" WHERE tag.env = 'prod'
+  dirq exec "df -h /" --json`,
+		Args: cobra.MinimumNArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if scriptFile == "" && len(args) == 0 {
+				return fmt.Errorf("provide a command string or use --script <file>")
+			}
+
+			// Separate the WHERE clause from the command/args.
+			var commandStr string
+			var whereArgs []string
+			if scriptFile == "" {
+				commandStr = args[0]
+				whereArgs = args[1:]
+			} else {
+				whereArgs = args
+			}
+			queryStr := buildWhereQuery(whereArgs)
+
+			payload := map[string]any{
+				"query":         queryStr,
+				"become":        become,
+				"become_user":   becomeUser,
+				"become_method": becomeMethod,
+				"timeout":       timeout,
+			}
+
+			if scriptFile != "" {
+				content, err := os.ReadFile(scriptFile)
+				if err != nil {
+					return fmt.Errorf("read script %s: %w", scriptFile, err)
+				}
+				payload["script"] = base64.StdEncoding.EncodeToString(content)
+				payload["script_name"] = filepath.Base(scriptFile)
+				fmt.Fprintf(os.Stderr, "Script: %s (%.1f KB)\n", filepath.Base(scriptFile), float64(len(content))/1024)
+			} else {
+				payload["command"] = commandStr
+			}
+
+			body, _ := json.Marshal(payload)
+
+			// Use raw HTTP so we can stream the NDJSON response.
+			resp, err := apiStreamRequest("POST", "/api/v1/exec_multi", bytes.NewReader(body))
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode >= 400 {
+				data, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
+			}
+
+			dec := json.NewDecoder(resp.Body)
+
+			// First line is the header with target count.
+			var header struct {
+				Type         string `json:"type"`
+				TotalTargets int    `json:"total_targets"`
+			}
+			if err := dec.Decode(&header); err != nil {
+				return fmt.Errorf("failed to read response header: %w", err)
+			}
+
+			if header.TotalTargets == 0 {
+				fmt.Println("No hosts matched the query (or none have exec enabled).")
+				return nil
+			}
+
+			if !jsonOut {
+				fmt.Printf("Targets: %d\n\n", header.TotalTargets)
+			}
+
+			// Stream results as they arrive.
+			hasFailures := false
+			received := 0
+
+			for dec.More() {
+				var r struct {
+					Type     string `json:"type"`
+					Hostname string `json:"hostname"`
+					RC       int    `json:"rc"`
+					Stdout   string `json:"stdout"`
+					Stderr   string `json:"stderr"`
+					Success  bool   `json:"success"`
+					Error    string `json:"error"`
+				}
+				if err := dec.Decode(&r); err != nil {
+					return fmt.Errorf("failed to read result: %w", err)
+				}
+
+				received++
+
+				if jsonOut {
+					line, _ := json.Marshal(r)
+					fmt.Println(string(line))
+					continue
+				}
+
+				if !r.Success {
+					fmt.Printf("── %s  ERROR ──\n", r.Hostname)
+					fmt.Printf("  %s\n\n", r.Error)
+					hasFailures = true
+					continue
+				}
+
+				// Decode base64-encoded stdout/stderr.
+				stdout, _ := base64.StdEncoding.DecodeString(r.Stdout)
+				stderr, _ := base64.StdEncoding.DecodeString(r.Stderr)
+
+				fmt.Printf("── %s  rc=%d ──\n", r.Hostname, r.RC)
+				if len(stdout) > 0 {
+					for _, line := range strings.Split(strings.TrimRight(string(stdout), "\n"), "\n") {
+						fmt.Printf("  %s\n", line)
+					}
+				}
+				if len(stderr) > 0 {
+					fmt.Printf("  (stderr) %s\n", strings.TrimRight(string(stderr), "\n"))
+				}
+				fmt.Println()
+
+				if r.RC != 0 {
+					hasFailures = true
+				}
+			}
+
+			if !jsonOut {
+				fmt.Printf("%d/%d completed\n", received, header.TotalTargets)
+			}
+
+			if hasFailures {
+				return fmt.Errorf("one or more hosts returned errors")
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&scriptFile, "script", "", "local script file to upload and execute")
+	cmd.Flags().BoolVar(&become, "become", false, "run with privilege escalation (sudo)")
+	cmd.Flags().StringVar(&becomeUser, "become-user", "", "user to become (default: root)")
+	cmd.Flags().StringVar(&becomeMethod, "become-method", "", "privilege escalation method (default: sudo)")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "timeout in seconds")
+
+	return cmd
+}
+
+// ─────────────────────────────────────────────────────────
 // dirq skill
 // ─────────────────────────────────────────────────────────
 
@@ -614,6 +927,23 @@ identically to typing each word as a separate argument.
     dirq "select hostname, disk.pct_used where disk.pct_used > 80"
     dirq "select * --json"
     dirq select hostname, cpu.cores WHERE tag.env = 'prod'
+
+### dirq exec — execute a command or script across the fleet in parallel
+
+    dirq exec "uptime" WHERE tag.env = 'prod'
+    dirq exec "openssl version" WHERE packages.name = 'openssl'
+    dirq exec --become "systemctl status nginx" WHERE tag.role = 'webserver'
+    dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
+    dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'
+    dirq exec "df -h /" --json
+
+Fan-out exec: runs the command or script on all matching agents
+simultaneously, streaming results back in real time.
+
+Use --script to upload and execute a local script file. Without
+--script, the argument is a command string run on the remote hosts.
+Linux scripts use their shebang (#!) line. Windows scripts run as
+PowerShell (.ps1) or cmd (.bat/.cmd).
 
 ### dirq run — run Ansible against matching hosts
 
@@ -1977,6 +2307,82 @@ func isAlpha(c byte) bool {
 // Shared query helpers
 // ─────────────────────────────────────────────────────────
 
+// parseTagArgs splits args into key=value tags, WHERE clause args, and an
+// optional host ID. If the first arg doesn't contain "=" and isn't "WHERE",
+// it's treated as a host ID (backwards-compatible with the old syntax).
+func parseTagArgs(args []string) (tags map[string]string, whereArgs []string, hostID string) {
+	tags = make(map[string]string)
+
+	// Check if the first arg is a host ID (not key=value, not WHERE).
+	startIdx := 0
+	if len(args) > 0 && !strings.Contains(args[0], "=") && !strings.EqualFold(args[0], "WHERE") {
+		hostID = args[0]
+		startIdx = 1
+	}
+
+	for i := startIdx; i < len(args); i++ {
+		if strings.EqualFold(args[i], "WHERE") {
+			whereArgs = args[i:]
+			break
+		}
+		parts := strings.SplitN(args[i], "=", 2)
+		if len(parts) == 2 {
+			tags[parts[0]] = parts[1]
+		}
+	}
+	return
+}
+
+// parseUntagArgs splits args into tag keys, WHERE clause args, and an
+// optional host ID. If the first arg isn't "WHERE" and later args include
+// WHERE, or if no WHERE exists and there are 2+ args, the first arg is
+// treated as a host ID (backwards-compatible).
+func parseUntagArgs(args []string) (keys []string, whereArgs []string, hostID string) {
+	// Find WHERE boundary.
+	whereIdx := -1
+	for i, a := range args {
+		if strings.EqualFold(a, "WHERE") {
+			whereIdx = i
+			break
+		}
+	}
+
+	if whereIdx >= 0 {
+		whereArgs = args[whereIdx:]
+		beforeWhere := args[:whereIdx]
+		// If the first arg before WHERE looks like a host ID (UUID-like),
+		// treat it as one. Otherwise all args before WHERE are tag keys.
+		if len(beforeWhere) > 0 && looksLikeID(beforeWhere[0]) {
+			hostID = beforeWhere[0]
+			keys = beforeWhere[1:]
+		} else {
+			keys = beforeWhere
+		}
+	} else {
+		// No WHERE — old syntax: first arg is host ID, rest are keys.
+		if len(args) >= 2 {
+			hostID = args[0]
+			keys = args[1:]
+		} else {
+			keys = args
+		}
+	}
+	return
+}
+
+// looksLikeID returns true if s looks like a UUID or agent ID rather than
+// a simple tag key name. Agent IDs contain hyphens and are long.
+func looksLikeID(s string) bool {
+	return len(s) > 16 && strings.Contains(s, "-")
+}
+
+func hostIDOrName(names []string, idx int, fallback string) string {
+	if idx < len(names) {
+		return names[idx]
+	}
+	return fallback
+}
+
 // buildSelectQuery reconstructs a SELECT query from positional args.
 // Args like ["hostname,", "cpu.count", "WHERE", "tag.env", "=", "'prod'"]
 // become "SELECT hostname, cpu.count WHERE tag.env = 'prod'"
@@ -2064,6 +2470,33 @@ func connectionPluginDir() string {
 // ─────────────────────────────────────────────────────────
 // HTTP client helpers
 // ─────────────────────────────────────────────────────────
+
+// apiStreamRequest returns the raw HTTP response for streaming (caller must close Body).
+func apiStreamRequest(method, path string, body io.Reader) (*http.Response, error) {
+	url := strings.TrimRight(serverURL, "/") + path
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+apiToken)
+	}
+
+	client := http.DefaultClient
+	if tlsInsecure {
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	return resp, nil
+}
 
 func apiRequest(method, path string, body io.Reader) ([]byte, error) {
 	url := strings.TrimRight(serverURL, "/") + path
