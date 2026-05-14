@@ -892,26 +892,71 @@ Import from `collection/atgreen/dirq/docs/aap-credential-type.yml` or create man
 
 ## Configuration Reference
 
-### Server
+Both the server and agent support configuration via **config files**, **environment variables**, or both. Environment variables always override config file values, which override defaults.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DIRQ_GRPC_ADDR` | `:50051` | gRPC listen address |
-| `DIRQ_HTTP_ADDR` | `:8080` | REST API listen address |
-| `DIRQ_DB_URL` | `postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable` | PostgreSQL connection string |
-| `DIRQ_POD_ID` | hostname | Unique pod identifier |
-| `DIRQ_MAX_ZONE_LEADERS` | `5` | Max direct server connections |
-| `DIRQ_MAX_CHILDREN` | `50` | Max children per node (fan-out) |
-| `DIRQ_AUTH_DISABLED` | `false` | Disable API auth (not recommended) |
+### Config Files
 
-### Agent
+Config files use a simple `key: value` format with optional indented `tags:` block. Comments start with `#`.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DIRQ_SERVER` | `localhost:50051` | DirQ server gRPC address |
-| `DIRQ_LISTEN` | `:50052` | Relay listener (always enabled) |
-| `DIRQ_TAGS` | | Tags: `env=prod,dc=us-east` |
-| `DIRQ_EXEC_ENABLED` | `false` | Enable remote execution |
+**Agent config** — `/etc/dirq/agent.conf` (Linux) or `C:\ProgramData\dirq\agent.conf` (Windows):
+
+```
+# DirQ agent configuration
+server: grpc.example.com:50051
+listen: 0.0.0.0:50052
+exec_enabled: true
+
+tags:
+  env: prod
+  dc: us-east
+  role: webserver
+```
+
+**Server config** — `/etc/dirq/server.conf` (Linux) or `C:\ProgramData\dirq\server.conf` (Windows):
+
+```
+# DirQ server configuration
+grpc_addr: :50051
+http_addr: :8080
+db_url: postgres://dirq:dirq@db.internal:5432/dirq?sslmode=require
+max_zone_leaders: 10
+max_children: 50
+```
+
+Override the config file path with `DIRQ_CONFIG`:
+
+```bash
+DIRQ_CONFIG=/opt/dirq/custom.conf dirq-agent
+```
+
+If the config file doesn't exist, it is silently ignored — all values fall back to environment variables or defaults.
+
+### Config file keys ↔ environment variables
+
+**Priority:** environment variable > config file > default.
+
+#### Server
+
+| Config key | Environment variable | Default | Description |
+|-----------|----------|---------|-------------|
+| `grpc_addr` | `DIRQ_GRPC_ADDR` | `:50051` | gRPC listen address |
+| `http_addr` | `DIRQ_HTTP_ADDR` | `:8080` | REST API listen address |
+| `db_url` | `DIRQ_DB_URL` | `postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable` | PostgreSQL connection string |
+| `pod_id` | `DIRQ_POD_ID` | hostname | Unique pod identifier |
+| `max_zone_leaders` | `DIRQ_MAX_ZONE_LEADERS` | `5` | Max direct server connections |
+| `max_children` | `DIRQ_MAX_CHILDREN` | `50` | Max children per node (fan-out) |
+| `auth_disabled` | `DIRQ_AUTH_DISABLED` | `false` | Disable API auth (not recommended) |
+
+#### Agent
+
+| Config key | Environment variable | Default | Description |
+|-----------|----------|---------|-------------|
+| `server` | `DIRQ_SERVER` | `localhost:50051` | DirQ server gRPC address |
+| `listen` | `DIRQ_LISTEN` | `:50052` | Relay listener (always enabled) |
+| `exec_enabled` | `DIRQ_EXEC_ENABLED` | `false` | Enable remote execution |
+| `tags:` block | `DIRQ_TAGS` | | Tags: `env=prod,dc=us-east` |
+
+Tags can be set in the config file as an indented block under `tags:`, or via the `DIRQ_TAGS` environment variable as comma-separated `key=value` pairs. Both sources are merged, with environment variables taking precedence for duplicate keys.
 
 ### TLS (server and agent)
 
