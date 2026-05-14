@@ -601,8 +601,8 @@ by whitespace, so dirq "hosts list" works like dirq hosts list.
 
 ### dirq select — query the fleet
 
-    dirq select hostname, disk.pct_used WHERE disk.pct_used > 80
-    dirq select * --json
+    dirq select hostname, disk.pct_used WHERE disk.pct_used \> 80
+    dirq select \* --json
     dirq "select hostname where memory.pct_used > 90"
 
 ### dirq run — run Ansible against matching hosts
@@ -936,7 +936,7 @@ func selectCmd() *cobra.Command {
 		Long: `Run a DirQ query with natural syntax.
 
 Examples:
-  dirq select hostname, disk.pct_used WHERE disk.pct_used > 80
+  dirq select hostname, disk.pct_used WHERE disk.pct_used \> 80
   dirq select hostname, cpu.cores WHERE tag.env = 'prod'
   dirq select os_info.os, COUNT(hostname) GROUP BY os_info.os
   dirq "select hostname where memory.pct_used > 90"`,
