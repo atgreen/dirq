@@ -672,28 +672,57 @@ Used with GROUP BY for fleet-wide summaries.
 
 ## CLI commands
 
-    # Query the fleet
+All commands support arg flattening — quoted multi-word args are split
+by whitespace, so dirq "hosts list" works like dirq hosts list.
+
+### dirq select — query the fleet
+
     dirq select hostname, disk.pct_used WHERE disk.pct_used > 80
     dirq select * --json
-
-    # Quoted form (avoids shell interpretation of > < etc.)
     dirq "select hostname where memory.pct_used > 90"
 
-    # Run an Ansible playbook on matching hosts
-    dirq run update-openssl.yml WHERE packages.name = 'openssl'
+### dirq run — run Ansible against matching hosts
 
-    # Run a command on matching hosts
+    dirq run deploy.yml WHERE tag.env = 'prod'
+    dirq run cleanup.yml
     dirq run --command "systemctl restart nginx" WHERE tag.env = 'prod'
+    dirq run --module ping WHERE os_info.os = 'linux'
 
-    # Deploy a package (rolling wave by default)
+### dirq deploy — deploy packages through the mesh
+
     dirq deploy ./patch.rpm WHERE tag.env = 'prod'
     dirq deploy ./agent-0.3.0.msi WHERE os_info.os = 'windows'
+    dirq deploy ./fix.deb --parallel
 
-    # List all agents
+Depth-first rolling wave by default. Supports .rpm, .deb, .msi.
+
+### dirq ask — natural language queries (requires LLM API key)
+
+    dirq ask "which prod hosts have full disks?"
+    dirq ask "how many hosts are running linux?" --dry-run
+
+### dirq doctor — check deployment health
+
+    dirq doctor
+
+### dirq hosts — manage hosts and tags
+
     dirq hosts list
+    dirq hosts show <agent-id>
+    dirq hosts facts <agent-id>
+    dirq hosts tag <agent-id> env=prod role=webserver
+    dirq hosts untag <agent-id> env
 
-    # Tag an agent
-    dirq hosts tag <agent-id> env=prod group=webservers
+### dirq token — manage API tokens
+
+    dirq token create ops-team --scope admin
+    dirq token create monitoring --scope readonly
+    dirq token list
+    dirq token delete <name>
+
+### dirq skill — print this reference for LLM context
+
+    dirq skill
 
 ## Example queries
 
