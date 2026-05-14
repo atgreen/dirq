@@ -440,6 +440,58 @@ Package type is detected from the file extension:
 - `.deb` → `dpkg -i`
 - `.msi` → `msiexec /i ... /qn`
 
+### CVE scanning
+
+Scan RHEL systems for known vulnerabilities. DirQ fetches affected package
+data from the Red Hat Security Data API, then queries the fleet to find
+hosts running vulnerable versions.
+
+```bash
+# Scan all RHEL hosts
+dirq cve CVE-2024-6345
+
+# Scan only production
+dirq cve CVE-2024-6345 WHERE tag.env = 'prod'
+
+# Machine-readable output
+dirq cve CVE-2024-6345 --json
+```
+
+Output shows each host's status:
+
+```
+CVE-2024-6345: pypa/setuptools: Remote code execution via download functions...
+Severity: Important
+
+  web1.prod     python-setuptools    39.2.0-7.el8         VULNERABLE (fixed in 39.2.0-8.el8_10)
+  web2.prod     python-setuptools    39.2.0-8.el8_10      patched
+  db1.prod      python-setuptools    39.2.0-7.el8         VULNERABLE (fixed in 39.2.0-8.el8_10)
+
+2 vulnerable, 1 patched
+```
+
+### Deployment health
+
+Check the health of your DirQ deployment with `dirq doctor`:
+
+```bash
+dirq doctor
+```
+
+```
+  DIRQ_SERVER_URL               ok   https://dirq.example.com:8080
+  API token valid                ok   authenticated
+  TLS certificate                ok   valid
+  PostgreSQL                     ok   connected
+  Agents online                  ok   47/50
+  Agent version skew             !!   3 agents on v0.2.0 (server is v0.3.0)
+  Relay tree                     ok   depth 3, 5 zone leader(s)
+  Ansible installed              ok   ansible-playbook [core 2.20.5]
+  Connection plugin              ok   /usr/local/ansible/connection_plugins
+
+  9 passed, 1 warnings, 0 failed
+```
+
 ### Arg flattening
 
 Any quoted argument containing spaces is split into individual args before
