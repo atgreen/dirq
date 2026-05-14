@@ -383,6 +383,11 @@ jobs:
         with:
           path: artifacts
 
+      - name: Delete existing release if re-tagging
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete "v${VERSION}" --repo "${{ github.repository }}" --yes 2>/dev/null || true
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
