@@ -833,7 +833,6 @@ ansible/                  Standalone plugins for CLI Ansible
 Containerfile             Multi-stage build
 podman-compose.yml        Dev environment
 execution-environment.yml EE definition for ansible-builder
-PRD.md                    Product requirements document
 ```
 
 ## License
