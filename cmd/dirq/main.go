@@ -596,14 +596,23 @@ Used with GROUP BY for fleet-wide summaries.
 
 ## CLI commands
 
-All commands support arg flattening — quoted multi-word args are split
-by whitespace, so dirq "hosts list" works like dirq hosts list.
+Shell characters like >, <, *, (, and ) will be interpreted by your
+shell if left unquoted. The safest approach is to quote the entire
+command and let dirq parse it:
+
+    dirq "select hostname, disk.pct_used where disk.pct_used > 80"
+    dirq "select * where (tag.env = 'prod' or tag.env = 'staging') and disk.pct_used > 90"
+    dirq "run deploy.yml where tag.env = 'prod'"
+    dirq "deploy ./patch.rpm where tag.env = 'prod'"
+
+DirQ splits quoted args by whitespace internally, so this works
+identically to typing each word as a separate argument.
 
 ### dirq select — query the fleet
 
-    dirq select hostname, disk.pct_used WHERE disk.pct_used \> 80
-    dirq select \* --json
-    dirq "select hostname where memory.pct_used > 90"
+    dirq "select hostname, disk.pct_used where disk.pct_used > 80"
+    dirq "select * --json"
+    dirq select hostname, cpu.cores WHERE tag.env = 'prod'
 
 ### dirq run — run Ansible against matching hosts
 
@@ -935,11 +944,13 @@ func selectCmd() *cobra.Command {
 		Short: "Query the fleet",
 		Long: `Run a DirQ query with natural syntax.
 
+Quote the query to avoid shell interpretation of >, <, *, (, ):
+
 Examples:
-  dirq select hostname, disk.pct_used WHERE disk.pct_used \> 80
+  dirq "select hostname, disk.pct_used where disk.pct_used > 80"
+  dirq "select * where (tag.env = 'prod' or tag.env = 'staging')"
   dirq select hostname, cpu.cores WHERE tag.env = 'prod'
-  dirq select os_info.os, COUNT(hostname) GROUP BY os_info.os
-  dirq "select hostname where memory.pct_used > 90"`,
+  dirq select os_info.os, COUNT(hostname) GROUP BY os_info.os`,
 		Args:               cobra.MinimumNArgs(1),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
