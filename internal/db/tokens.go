@@ -13,10 +13,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const tokenByteLength = 32
+const (
+	tokenByteLength  = 32
+	tokenPrefixChars = 8 // hex chars stored for indexed lookup
+)
 
-// CreateToken generates a random API token, stores its bcrypt hash, and returns
-// the plaintext token. The plaintext is never stored.
+// CreateToken generates a random API token, stores its bcrypt hash and a
+// non-secret prefix for fast lookup, and returns the plaintext token.
 func (db *DB) CreateToken(ctx context.Context, name, scope string) (string, error) {
 	raw := make([]byte, tokenByteLength)
 	if _, err := rand.Read(raw); err != nil {
@@ -29,10 +32,12 @@ func (db *DB) CreateToken(ctx context.Context, name, scope string) (string, erro
 		return "", fmt.Errorf("hash token: %w", err)
 	}
 
+	prefix := plaintext[:tokenPrefixChars]
+
 	_, err = db.pool.Exec(ctx, `
-		INSERT INTO api_tokens (name, token_hash, scope)
-		VALUES ($1, $2, $3)`,
-		name, string(hash), scope,
+		INSERT INTO api_tokens (name, token_prefix, token_hash, scope)
+		VALUES ($1, $2, $3, $4)`,
+		name, prefix, string(hash), scope,
 	)
 	if err != nil {
 		return "", err
@@ -42,11 +47,18 @@ func (db *DB) CreateToken(ctx context.Context, name, scope string) (string, erro
 }
 
 // ValidateToken checks a plaintext token against stored hashes.
+// Uses the token prefix for an indexed lookup, then verifies with bcrypt.
 // On success it updates last_used and returns the matching Token.
 func (db *DB) ValidateToken(ctx context.Context, plaintext string) (Token, error) {
+	if len(plaintext) < tokenPrefixChars {
+		return Token{}, pgx.ErrNoRows
+	}
+	prefix := plaintext[:tokenPrefixChars]
+
 	rows, err := db.pool.Query(ctx, `
 		SELECT id, name, token_hash, scope, created_at, last_used
-		FROM api_tokens`)
+		FROM api_tokens
+		WHERE token_prefix = $1`, prefix)
 	if err != nil {
 		return Token{}, err
 	}
@@ -59,7 +71,6 @@ func (db *DB) ValidateToken(ctx context.Context, plaintext string) (Token, error
 			return Token{}, err
 		}
 		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(plaintext)) == nil {
-			// Update last_used timestamp.
 			_, _ = db.pool.Exec(ctx, `
 				UPDATE api_tokens SET last_used = now() WHERE id = $1`, t.ID)
 			return t, nil

@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/atgreen/dirq/internal/db"
 	"github.com/atgreen/dirq/internal/signutil"
 	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
@@ -39,7 +38,7 @@ type Server struct {
 
 	cfg     Config
 	topoCfg TopologyConfig
-	db      *db.DB
+	db      DB
 	log     *slog.Logger
 	grpcSv  *grpc.Server
 	httpSv  *http.Server
@@ -68,7 +67,7 @@ type agentStream struct {
 }
 
 // New creates a new DirQ server.
-func New(cfg Config, database *db.DB, log *slog.Logger) *Server {
+func New(cfg Config, database DB, log *slog.Logger) *Server {
 	topoCfg := DefaultTopologyConfig()
 	if cfg.MaxZoneLeaders > 0 {
 		topoCfg.MaxZoneLeaders = cfg.MaxZoneLeaders

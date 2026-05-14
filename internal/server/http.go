@@ -89,7 +89,12 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func requireScope(scope string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s, _ := r.Context().Value(tokenScopeKey).(string)
+		s, ok := r.Context().Value(tokenScopeKey).(string)
+		if !ok {
+			// No scope in context — auth was disabled, allow through.
+			next(w, r)
+			return
+		}
 		if s != "admin" && s != scope {
 			httpError(w, http.StatusForbidden, "this endpoint requires "+scope+" or admin scope")
 			return

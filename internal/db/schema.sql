@@ -74,13 +74,16 @@ CREATE TABLE IF NOT EXISTS queries (
 -- ─────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS api_tokens (
-    id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    name       TEXT NOT NULL UNIQUE,
-    token_hash TEXT NOT NULL,            -- bcrypt hash
-    scope      TEXT NOT NULL DEFAULT 'admin', -- 'admin' or 'readonly'
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_used  TIMESTAMPTZ
+    id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    name         TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL DEFAULT '',  -- first 8 hex chars for indexed lookup
+    token_hash   TEXT NOT NULL,             -- bcrypt hash
+    scope        TEXT NOT NULL DEFAULT 'admin', -- 'admin' or 'readonly'
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used    TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens (token_prefix);
 
 -- ─────────────────────────────────────────────────────────
 -- Server peers (for Podman dev — pod discovery)
