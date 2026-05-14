@@ -54,6 +54,11 @@ type Server struct {
 	execMu       sync.RWMutex
 	execSessions map[string]*execSession
 
+	// Session tokens: agentID -> token (generated during registration,
+	// validated when an agent opens a stream).
+	sessionMu     sync.RWMutex
+	sessionTokens map[string]string
+
 	// Agents currently being reassigned by the rebalancer. Their
 	// disconnect from the old parent is expected — don't mark offline.
 	reassigningMu sync.Mutex
@@ -79,13 +84,14 @@ func New(cfg Config, database DB, log *slog.Logger) *Server {
 	}
 
 	return &Server{
-		cfg:          cfg,
-		topoCfg:      topoCfg,
-		db:           database,
-		log:          log,
-		streams:      make(map[string]*agentStream),
-		execSessions: make(map[string]*execSession),
-		reassigning:  make(map[string]time.Time),
+		cfg:           cfg,
+		topoCfg:       topoCfg,
+		db:            database,
+		log:           log,
+		streams:       make(map[string]*agentStream),
+		execSessions:  make(map[string]*execSession),
+		sessionTokens: make(map[string]string),
+		reassigning:   make(map[string]time.Time),
 	}
 }
 

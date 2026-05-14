@@ -44,10 +44,11 @@ type Config struct {
 type Agent struct {
 	pb.UnimplementedDirQRelayServer
 
-	cfg        Config
-	log        *slog.Logger
-	agentID    string
-	role       pb.AgentRole
+	cfg          Config
+	log          *slog.Logger
+	agentID      string
+	role         pb.AgentRole
+	sessionToken string   // from RegisterResponse, presented in AgentHello
 	parentAddr    string   // where to connect upstream (server addr or parent's listen_addr)
 	fallbackAddrs []string // backup parent addresses, tried before server on failure
 
@@ -277,6 +278,7 @@ func (a *Agent) register(ctx context.Context) error {
 
 	a.agentID = resp.AgentId
 	a.role = resp.Role
+	a.sessionToken = resp.SessionToken
 	if err := a.setServerVerifier(resp.GetServerSigningPublicKey(), resp.GetServerSigningKeyId()); err != nil {
 		return fmt.Errorf("load server signing key: %w", err)
 	}
@@ -375,6 +377,7 @@ func (a *Agent) sendHello() error {
 				AgentId:      a.agentID,
 				Capabilities: caps,
 				ExecEnabled:  a.cfg.ExecEnabled,
+				SessionToken: a.sessionToken,
 			},
 		},
 	})
@@ -680,6 +683,9 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 	}
 
 	peerID := hello.AgentId
+	if hello.SessionToken == "" {
+		a.log.Warn("downstream peer connected without session token", "peer_id", peerID)
+	}
 	a.log.Info("downstream peer connected", "peer_id", peerID)
 
 	ctx, cancel := context.WithCancel(stream.Context())

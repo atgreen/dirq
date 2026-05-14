@@ -5,6 +5,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"sync"
@@ -88,6 +90,16 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		"parent_addr", a.ParentAddr,
 	)
 
+	// Generate a session token for this agent. It must present this token
+	// when opening a stream (AgentHello) to prove it registered legitimately.
+	token, err := generateSessionToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate session token: %w", err)
+	}
+	s.sessionMu.Lock()
+	s.sessionTokens[agent.ID] = token
+	s.sessionMu.Unlock()
+
 	return &pb.RegisterResponse{
 		AgentId:                  agent.ID,
 		Role:                     a.Role,
@@ -96,6 +108,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		ServerSigningPublicKey:   s.signer.PublicKey(),
 		ServerSigningKeyId:       s.signer.KeyID(),
 		FallbackAddrs:            a.FallbackAddrs,
+		SessionToken:             token,
 	}, nil
 }
 
@@ -113,6 +126,20 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 	}
 
 	agentID := hello.AgentId
+
+	// Validate session token — reject unauthenticated streams.
+	s.sessionMu.RLock()
+	expectedToken, hasToken := s.sessionTokens[agentID]
+	s.sessionMu.RUnlock()
+
+	if !hasToken {
+		return fmt.Errorf("agent %s has no session token (not registered?)", agentID)
+	}
+	if hello.SessionToken != expectedToken {
+		s.log.Warn("agent stream rejected: invalid session token", "agent_id", agentID)
+		return fmt.Errorf("invalid session token for agent %s", agentID)
+	}
+
 	s.log.Info("agent stream opened", "agent_id", agentID, "capabilities", hello.Capabilities)
 
 	ctx, cancel := context.WithCancel(stream.Context())
@@ -383,4 +410,13 @@ func (s *Server) handleQueryResult(result *pb.QueryResult) {
 			}
 		}()
 	}
+}
+
+// generateSessionToken creates a cryptographically random 32-byte hex token.
+func generateSessionToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

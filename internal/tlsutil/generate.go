@@ -39,6 +39,23 @@ func GenerateSelfSigned(dir string) (*GenerateResult, error) {
 		return nil, fmt.Errorf("create dir: %w", err)
 	}
 
+	// If all cert files already exist, reuse them. This avoids regenerating
+	// a new CA when server and agent share the same auto-gen directory —
+	// both must use the same CA for mutual verification.
+	result := &GenerateResult{
+		CAFile:         filepath.Join(dir, "ca.crt"),
+		CAKeyFile:      filepath.Join(dir, "ca.key"),
+		ServerCertFile: filepath.Join(dir, "server.crt"),
+		ServerKeyFile:  filepath.Join(dir, "server.key"),
+		AgentCertFile:  filepath.Join(dir, "agent.crt"),
+		AgentKeyFile:   filepath.Join(dir, "agent.key"),
+	}
+	if filesExist(result.CAFile, result.CAKeyFile,
+		result.ServerCertFile, result.ServerKeyFile,
+		result.AgentCertFile, result.AgentKeyFile) {
+		return result, nil
+	}
+
 	// Generate CA.
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -66,15 +83,6 @@ func GenerateSelfSigned(dir string) (*GenerateResult, error) {
 	caCert, err := x509.ParseCertificate(caCertDER)
 	if err != nil {
 		return nil, fmt.Errorf("parse CA cert: %w", err)
-	}
-
-	result := &GenerateResult{
-		CAFile:         filepath.Join(dir, "ca.crt"),
-		CAKeyFile:      filepath.Join(dir, "ca.key"),
-		ServerCertFile: filepath.Join(dir, "server.crt"),
-		ServerKeyFile:  filepath.Join(dir, "server.key"),
-		AgentCertFile:  filepath.Join(dir, "agent.crt"),
-		AgentKeyFile:   filepath.Join(dir, "agent.key"),
 	}
 
 	// Write CA files.
@@ -150,6 +158,15 @@ func GenerateSelfSigned(dir string) (*GenerateResult, error) {
 	}
 
 	return result, nil
+}
+
+func filesExist(paths ...string) bool {
+	for _, p := range paths {
+		if _, err := os.Stat(p); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func writePEM(path, blockType string, data []byte) error {

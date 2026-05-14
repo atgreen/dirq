@@ -67,14 +67,11 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("Authorization")
 		if token == "" {
-			token = r.URL.Query().Get("token")
-		}
-		if token == "" {
 			if s.cfg.AuthDisabled {
 				next(w, r)
 				return
 			}
-			httpError(w, http.StatusUnauthorized, "authentication required — provide an API token via Authorization header or ?token= query parameter")
+			httpError(w, http.StatusUnauthorized, "authentication required — provide an API token via Authorization: Bearer <token> header")
 			return
 		}
 

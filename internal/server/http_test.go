@@ -250,7 +250,7 @@ func TestAuthMiddleware_ValidToken_SetsScope(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_QueryParamToken(t *testing.T) {
+func TestAuthMiddleware_QueryParamTokenRejected(t *testing.T) {
 	mock := &mockDB{
 		tokens: []mockToken{
 			{plaintext: "query-token", token: db.Token{Scope: "admin"}},
@@ -262,12 +262,13 @@ func TestAuthMiddleware_QueryParamToken(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// Query param tokens are no longer accepted — must use Authorization header.
 	req := httptest.NewRequest("GET", "/test?token=query-token", nil)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
 	}
 }
 

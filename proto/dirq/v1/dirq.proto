@@ -63,6 +63,9 @@ message RegisterResponse {
   // Fallback parent addresses, tried in order if primary parent fails.
   // Chosen from different branches for fault isolation.
   repeated string fallback_addrs = 8;
+  // Session token: must be presented in AgentHello to authenticate the
+  // stream connection. Prevents unauthenticated clients from impersonating agents.
+  string session_token = 9;
 }
 
 enum AgentRole {
@@ -132,6 +135,9 @@ message AgentHello {
   string agent_id = 1;
   repeated string capabilities = 2;
   bool exec_enabled = 3; // Phase 2: whether exec is enabled on this agent
+  // Session token from RegisterResponse. Server and relay peers validate
+  // this before accepting the stream.
+  string session_token = 4;
 }
 
 message Heartbeat {

@@ -198,6 +198,9 @@ type RegisterResponse struct {
 	// Fallback parent addresses, tried in order if primary parent fails.
 	// Chosen from different branches for fault isolation.
 	FallbackAddrs []string `protobuf:"bytes,8,rep,name=fallback_addrs,json=fallbackAddrs,proto3" json:"fallback_addrs,omitempty"`
+	// Session token: must be presented in AgentHello to authenticate the
+	// stream connection. Prevents unauthenticated clients from impersonating agents.
+	SessionToken  string `protobuf:"bytes,9,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -286,6 +289,13 @@ func (x *RegisterResponse) GetFallbackAddrs() []string {
 		return x.FallbackAddrs
 	}
 	return nil
+}
+
+func (x *RegisterResponse) GetSessionToken() string {
+	if x != nil {
+		return x.SessionToken
+	}
+	return ""
 }
 
 type PeerInfo struct {
@@ -873,10 +883,13 @@ func (*ServerMessage_DeployRequest) isServerMessage_Payload() {}
 
 // Agent identifies itself when opening a stream.
 type AgentHello struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	Capabilities  []string               `protobuf:"bytes,2,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
-	ExecEnabled   bool                   `protobuf:"varint,3,opt,name=exec_enabled,json=execEnabled,proto3" json:"exec_enabled,omitempty"` // Phase 2: whether exec is enabled on this agent
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	AgentId      string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Capabilities []string               `protobuf:"bytes,2,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	ExecEnabled  bool                   `protobuf:"varint,3,opt,name=exec_enabled,json=execEnabled,proto3" json:"exec_enabled,omitempty"` // Phase 2: whether exec is enabled on this agent
+	// Session token from RegisterResponse. Server and relay peers validate
+	// this before accepting the stream.
+	SessionToken  string `protobuf:"bytes,4,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -930,6 +943,13 @@ func (x *AgentHello) GetExecEnabled() bool {
 		return x.ExecEnabled
 	}
 	return false
+}
+
+func (x *AgentHello) GetSessionToken() string {
+	if x != nil {
+		return x.SessionToken
+	}
+	return ""
 }
 
 type Heartbeat struct {
@@ -2378,7 +2398,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\fexec_enabled\x18\t \x01(\bR\vexecEnabled\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xfb\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa0\x03\n" +
 	"\x10RegisterResponse\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12&\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x12.dirq.v1.AgentRoleR\x04role\x12'\n" +
@@ -2387,7 +2407,8 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x1aheartbeat_interval_seconds\x18\x05 \x01(\x05R\x18heartbeatIntervalSeconds\x129\n" +
 	"\x19server_signing_public_key\x18\x06 \x01(\fR\x16serverSigningPublicKey\x121\n" +
 	"\x15server_signing_key_id\x18\a \x01(\tR\x12serverSigningKeyId\x12%\n" +
-	"\x0efallback_addrs\x18\b \x03(\tR\rfallbackAddrs\"9\n" +
+	"\x0efallback_addrs\x18\b \x03(\tR\rfallbackAddrs\x12#\n" +
+	"\rsession_token\x18\t \x01(\tR\fsessionToken\"9\n" +
 	"\bPeerInfo\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\"(\n" +
@@ -2426,12 +2447,13 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x0fexpires_at_unix\x18\t \x01(\x03R\rexpiresAtUnix\x12\x1c\n" +
 	"\tsignature\x18\n" +
 	" \x01(\fR\tsignatureB\t\n" +
-	"\apayload\"n\n" +
+	"\apayload\"\x93\x01\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\"\n" +
 	"\fcapabilities\x18\x02 \x03(\tR\fcapabilities\x12!\n" +
-	"\fexec_enabled\x18\x03 \x01(\bR\vexecEnabled\"\x89\x01\n" +
+	"\fexec_enabled\x18\x03 \x01(\bR\vexecEnabled\x12#\n" +
+	"\rsession_token\x18\x04 \x01(\tR\fsessionToken\"\x89\x01\n" +
 	"\tHeartbeat\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12'\n" +

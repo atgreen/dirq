@@ -82,14 +82,19 @@ func EnsureCerts(cfg Config, role string, log *slog.Logger) (Config, error) {
 	// No user certs — auto-generate self-signed.
 	log.Warn("No TLS certs configured — auto-generating self-signed certificates. " +
 		"Set DIRQ_TLS_CERT and DIRQ_TLS_KEY for production use.")
+	log.Warn("SECURITY: auto-generated certs protect against passive sniffing but are " +
+		"vulnerable to MITM if an attacker is on-path during agent registration. " +
+		"For production, use dirq tls generate and distribute the CA cert to all agents.")
 
 	result, err := GenerateSelfSigned(autoGenDir)
 	if err != nil {
 		return cfg, fmt.Errorf("auto-generate TLS certs: %w", err)
 	}
 
+	// Use the auto-generated CA for verification instead of skipping
+	// verification entirely. Server and agent share the same auto-gen
+	// directory, so they use the same CA.
 	cfg.CAFile = result.CAFile
-	cfg.Insecure = true // self-signed: skip verification by default
 
 	switch role {
 	case "server":
