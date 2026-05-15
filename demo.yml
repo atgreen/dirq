@@ -40,8 +40,6 @@ spec:
           value: "/certs/server.crt"
         - name: DIRQ_TLS_KEY
           value: "/certs/server.key"
-        - name: DIRQ_AUTH_DISABLED
-          value: "true"
       ports:
         - containerPort: 50051
           hostPort: 19051
