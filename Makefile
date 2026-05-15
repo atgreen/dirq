@@ -77,10 +77,8 @@ demo: demo-down build  ## Start local demo (server + 10 agents)
 	sed 's|DEMO_CERTS_DIR|$(DEMO_CERTS)|g' demo.yml | podman kube play --network dirq-demo -
 	@echo
 	@echo "Waiting for fleet to register..."
-	@sleep 6
+	@sleep 8
 	@echo
-	@# Extract the bootstrap token from the server container.
-	$(eval DEMO_TOKEN := $(shell podman exec dirq-server-server cat /var/lib/dirq/bootstrap-token 2>/dev/null))
 	@echo "Demo fleet running (10 agents, TLS enabled):"
 	@echo "  Server:  https://localhost:19080"
 	@echo "  gRPC:    localhost:19051 (TLS)"
@@ -88,7 +86,7 @@ demo: demo-down build  ## Start local demo (server + 10 agents)
 	@echo "Setup:"
 	@echo "  export DIRQ_SERVER_URL=https://localhost:19080"
 	@echo "  export DIRQ_TLS_INSECURE=true"
-	@echo "  export DIRQ_TOKEN=$(DEMO_TOKEN)"
+	@printf "  export DIRQ_TOKEN=%s\n" "$$(podman exec dirq-server-server cat /var/lib/dirq/bootstrap-token 2>/dev/null)"
 	@echo
 	@echo "Try:"
 	@echo "  ./bin/dirq hosts list"
