@@ -5,6 +5,24 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-05-15
+
+### Added
+
+- **Rate limiting on query and exec endpoints** — per-token token-bucket limiter (10 req/s, burst 20) prevents a single client from flooding the fleet with broadcast queries
+- **Real-time exec progress** — `dirq exec` now shows "X/Y hosts responded..." while waiting for results; server emits NDJSON progress heartbeats every 5 seconds during streaming exec
+
+### Fixed
+
+- **Rebalancer DB-before-send in promotions** — `promoteOneRelay` now updates the DB only after successfully delivering the PeerUpdate message, matching the pattern already used for demotions and redistributions
+- **Registration defaults to zone_leader on failure** — topology assignment errors now reject the registration instead of silently creating excess zone leaders; the agent retries with backoff
+- **Windows exec race conditions** — scheduled task name and output file are now unique per request (UnixNano suffix), preventing collisions on concurrent `become=true` requests
+- **Windows PowerShell injection** — switched the become-user execution path to `-EncodedCommand` (UTF-16LE base64), eliminating metacharacter injection via `$`, backtick, and `$()` in command strings
+- **Insecure temp files on Windows** — output file now uses a per-request unique path instead of a predictable hardcoded name, preventing symlink privilege escalation
+- **Path traversal in agent file transfers** — `filepath.Clean` applied to all paths in `put_file`, `fetch_file`, and `deploy` before use
+- **Fact cache storm** — replaced unbounded goroutine-per-result with a bounded 8-worker pool, preventing DB connection exhaustion on large broadcast queries
+- **Inventory N+1 queries** — replaced per-agent `GetFacts` calls with a single bulk `GetAllFacts` query, reducing DB round-trips from N+1 to 2
+
 ## [0.7.1] - 2026-05-15
 
 ### Added
@@ -213,6 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.8.0]: https://github.com/atgreen/dirq/releases/tag/v0.8.0
 [0.7.1]: https://github.com/atgreen/dirq/releases/tag/v0.7.1
 [0.7.0]: https://github.com/atgreen/dirq/releases/tag/v0.7.0
 [0.6.0]: https://github.com/atgreen/dirq/releases/tag/v0.6.0
