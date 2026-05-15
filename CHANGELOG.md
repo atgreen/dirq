@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] - 2026-05-15
+
+### Added
+
+- **Default server config file** — RPM and DEB packages now install `/etc/dirq/server.conf` with all options documented and commented; marked as `config(noreplace)` so upgrades preserve edits
+
+### Changed
+
+- **RPMs built on AlmaLinux 8** — server binary now links against glibc 2.28, making it installable on both RHEL 8 and RHEL 9
+
 ## [0.7.0] - 2026-05-15
 
 ### Added
@@ -203,6 +213,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.7.1]: https://github.com/atgreen/dirq/releases/tag/v0.7.1
 [0.7.0]: https://github.com/atgreen/dirq/releases/tag/v0.7.0
 [0.6.0]: https://github.com/atgreen/dirq/releases/tag/v0.6.0
 [0.5.1]: https://github.com/atgreen/dirq/releases/tag/v0.5.1
