@@ -633,6 +633,11 @@ Examples:
 				proc.Env = append(proc.Env, "ANSIBLE_CONNECTION_PLUGINS="+pluginDir)
 			}
 
+			// Forward CLI settings to the Ansible connection plugin.
+			if tlsInsecure {
+				proc.Env = append(proc.Env, "DIRQ_TLS_INSECURE=true")
+			}
+
 			return proc.Run()
 		},
 	}
