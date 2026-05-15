@@ -20,6 +20,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	prompt "github.com/c-bata/go-prompt"
+
 	"github.com/atgreen/dirq/internal/tlsutil"
 	"github.com/spf13/cobra"
 )
@@ -85,6 +87,7 @@ func main() {
 	root.AddCommand(doctorCmd())
 	root.AddCommand(cveCmd())
 	root.AddCommand(graphCmd())
+	root.AddCommand(shellCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -495,6 +498,367 @@ func graphCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&dotOut, "dot", false, "output in Graphviz DOT format")
 	return cmd
+}
+
+// ─────────────────────────────────────────────────────────
+// dirq shell
+// ─────────────────────────────────────────────────────────
+
+func shellCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "shell",
+		Short: "Interactive query REPL with ghost completions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runShell()
+		},
+	}
+}
+
+func runShell() error {
+	fmt.Println("DirQ interactive shell. Type queries or 'exit' to quit.")
+	fmt.Println("  SELECT hostname WHERE tag.env = 'prod'")
+	fmt.Println("  EXEC \"uname -r\" WHERE os_info.os = 'linux'")
+	fmt.Println()
+
+	p := prompt.New(
+		shellExecutor,
+		shellCompleter,
+		prompt.OptionPrefix("dirq> "),
+		prompt.OptionTitle("DirQ Shell"),
+		prompt.OptionSuggestionBGColor(prompt.DarkGray),
+		prompt.OptionSuggestionTextColor(prompt.LightGray),
+		prompt.OptionSelectedSuggestionBGColor(prompt.Blue),
+		prompt.OptionSelectedSuggestionTextColor(prompt.White),
+		prompt.OptionDescriptionBGColor(prompt.DarkGray),
+		prompt.OptionDescriptionTextColor(prompt.LightGray),
+		prompt.OptionSelectedDescriptionBGColor(prompt.Blue),
+		prompt.OptionSelectedDescriptionTextColor(prompt.White),
+		prompt.OptionCompletionOnDown(),
+	)
+	p.Run()
+	return nil
+}
+
+func shellExecutor(input string) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return
+	}
+	if input == "exit" || input == "quit" {
+		fmt.Println("Bye.")
+		os.Exit(0)
+	}
+
+	upper := strings.ToUpper(input)
+	if strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "SELECT") {
+		shellExecQuery(input)
+	} else if strings.HasPrefix(upper, "EXEC ") {
+		shellExecCommand(input)
+	} else if strings.HasPrefix(upper, "HELP") {
+		fmt.Println("Commands:")
+		fmt.Println("  SELECT <fields> [WHERE ...]   — query the fleet")
+		fmt.Println("  EXEC \"<command>\" [WHERE ...]   — execute a command")
+		fmt.Println("  exit                          — quit the shell")
+	} else {
+		// Assume it's a SELECT query without the keyword.
+		shellExecQuery("SELECT " + input)
+	}
+	fmt.Println()
+}
+
+func shellExecQuery(queryStr string) {
+	body, _ := json.Marshal(map[string]any{
+		"query":   queryStr,
+		"timeout": 60,
+	})
+
+	resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	var result struct {
+		Status       string `json:"status"`
+		TotalTargets int    `json:"total_targets"`
+		Received     int    `json:"received"`
+		Results      []struct {
+			Hostname string         `json:"hostname"`
+			Success  bool           `json:"success"`
+			Error    string         `json:"error"`
+			Data     map[string]any `json:"data"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	if len(result.Results) == 0 {
+		fmt.Println("No results.")
+		return
+	}
+
+	// Detect flat results for table rendering.
+	isFlat := true
+	if result.Results[0].Data != nil {
+		for _, v := range result.Results[0].Data {
+			switch v.(type) {
+			case map[string]any, []any:
+				isFlat = false
+			}
+		}
+	}
+
+	if isFlat {
+		var columns []string
+		for k := range result.Results[0].Data {
+			columns = append(columns, k)
+		}
+		sort.Strings(columns)
+		for i, c := range columns {
+			if c == "hostname" {
+				columns = append(columns[:i], columns[i+1:]...)
+				columns = append([]string{"hostname"}, columns...)
+				break
+			}
+		}
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, strings.Join(columns, "\t"))
+		for _, r := range result.Results {
+			if !r.Success {
+				continue
+			}
+			vals := make([]string, len(columns))
+			for i, col := range columns {
+				if v, ok := r.Data[col]; ok {
+					vals[i] = fmt.Sprintf("%v", v)
+				}
+			}
+			fmt.Fprintln(w, strings.Join(vals, "\t"))
+		}
+		w.Flush()
+	} else {
+		for _, r := range result.Results {
+			if r.Success {
+				data, _ := json.MarshalIndent(r.Data, "  ", "  ")
+				fmt.Printf("  %s:\n  %s\n", r.Hostname, string(data))
+			} else {
+				fmt.Printf("  %s: ERROR: %s\n", r.Hostname, r.Error)
+			}
+		}
+	}
+}
+
+func shellExecCommand(input string) {
+	// Parse: EXEC "command" [WHERE ...]
+	upper := strings.ToUpper(input)
+	rest := strings.TrimSpace(input[5:]) // strip "EXEC "
+
+	// Extract the command (quoted or first word).
+	var cmdStr, whereClause string
+	if rest[0] == '"' {
+		endQuote := strings.Index(rest[1:], "\"")
+		if endQuote < 0 {
+			fmt.Println("Error: unterminated quote in command")
+			return
+		}
+		cmdStr = rest[1 : endQuote+1]
+		remainder := strings.TrimSpace(rest[endQuote+2:])
+		if strings.HasPrefix(strings.ToUpper(remainder), "WHERE ") {
+			whereClause = remainder
+		}
+	} else {
+		whereIdx := strings.Index(upper[5:], " WHERE ")
+		if whereIdx >= 0 {
+			cmdStr = strings.TrimSpace(rest[:whereIdx])
+			whereClause = strings.TrimSpace(rest[whereIdx:])
+		} else {
+			cmdStr = rest
+		}
+	}
+
+	query := "SELECT hostname"
+	if whereClause != "" {
+		query += " " + whereClause
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"command": cmdStr,
+		"query":   query,
+		"timeout": 300,
+	})
+
+	resp, err := apiStreamRequest("POST", "/api/v1/exec_multi", bytes.NewReader(body))
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	dec := json.NewDecoder(resp.Body)
+
+	var header struct {
+		Type         string `json:"type"`
+		TotalTargets int    `json:"total_targets"`
+	}
+	if err := dec.Decode(&header); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	if header.TotalTargets == 0 {
+		fmt.Println("No hosts matched.")
+		return
+	}
+	fmt.Printf("Targets: %d\n\n", header.TotalTargets)
+
+	for dec.More() {
+		var r struct {
+			Type     string `json:"type"`
+			Hostname string `json:"hostname"`
+			RC       int    `json:"rc"`
+			Stdout   string `json:"stdout"`
+			Stderr   string `json:"stderr"`
+			Success  bool   `json:"success"`
+			Error    string `json:"error"`
+		}
+		if err := dec.Decode(&r); err != nil {
+			break
+		}
+		if r.Type == "progress" {
+			continue
+		}
+		if !r.Success {
+			fmt.Printf("── %s  ERROR ──\n  %s\n", r.Hostname, r.Error)
+			continue
+		}
+		stdout, _ := base64.StdEncoding.DecodeString(r.Stdout)
+		stderr, _ := base64.StdEncoding.DecodeString(r.Stderr)
+		fmt.Printf("── %s  rc=%d ──\n", r.Hostname, r.RC)
+		if len(stdout) > 0 {
+			for _, line := range strings.Split(strings.TrimRight(string(stdout), "\n"), "\n") {
+				fmt.Printf("  %s\n", line)
+			}
+		}
+		if len(stderr) > 0 {
+			fmt.Printf("  (stderr) %s\n", strings.TrimRight(string(stderr), "\n"))
+		}
+	}
+}
+
+// shellCompleter provides ghost completions for the DirQ query DSL.
+func shellCompleter(d prompt.Document) []prompt.Suggest {
+	text := d.TextBeforeCursor()
+	word := d.GetWordBeforeCursor()
+
+	if word == "" {
+		return nil
+	}
+
+	// Top-level commands.
+	if !strings.Contains(text, " ") {
+		return prompt.FilterHasPrefix([]prompt.Suggest{
+			{Text: "SELECT", Description: "query the fleet"},
+			{Text: "EXEC", Description: "execute a command"},
+			{Text: "help", Description: "show available commands"},
+			{Text: "exit", Description: "quit the shell"},
+		}, word, true)
+	}
+
+	upper := strings.ToUpper(text)
+
+	// After WHERE / AND / OR — suggest field names.
+	if endsWithKeyword(upper, "WHERE") || endsWithKeyword(upper, "AND") || endsWithKeyword(upper, "OR") {
+		return prompt.FilterHasPrefix(fieldSuggestions(), word, true)
+	}
+
+	// After SELECT — suggest field names.
+	if strings.HasPrefix(upper, "SELECT") && !strings.Contains(upper, "WHERE") {
+		suggestions := append(fieldSuggestions(),
+			prompt.Suggest{Text: "WHERE", Description: "filter results"},
+			prompt.Suggest{Text: "*", Description: "all fields"},
+		)
+		return prompt.FilterHasPrefix(suggestions, word, true)
+	}
+
+	// After a field name with operator — suggest operators and values.
+	if endsWithKeyword(upper, "=") || endsWithKeyword(upper, "LIKE") || endsWithKeyword(upper, "IN") || endsWithKeyword(upper, ">") || endsWithKeyword(upper, "<") {
+		return nil // value position — no suggestions
+	}
+
+	// After a field value — suggest conjunctions.
+	keywords := []prompt.Suggest{
+		{Text: "WHERE", Description: "filter results"},
+		{Text: "AND", Description: "additional condition"},
+		{Text: "OR", Description: "alternative condition"},
+		{Text: "ORDER BY", Description: "sort results"},
+		{Text: "GROUP BY", Description: "aggregate results"},
+		{Text: "LIKE", Description: "pattern match"},
+		{Text: "IN", Description: "set membership"},
+		{Text: "DESC", Description: "descending order"},
+		{Text: "ASC", Description: "ascending order"},
+		{Text: "COUNT", Description: "count aggregation"},
+	}
+	return prompt.FilterHasPrefix(keywords, word, true)
+}
+
+func fieldSuggestions() []prompt.Suggest {
+	return []prompt.Suggest{
+		// Top-level
+		{Text: "hostname", Description: "agent hostname"},
+
+		// os_info
+		{Text: "os_info.os", Description: "operating system"},
+		{Text: "os_info.os_version", Description: "OS version"},
+		{Text: "os_info.kernel_version", Description: "kernel version"},
+		{Text: "os_info.arch", Description: "architecture"},
+		{Text: "os_info.uptime_seconds", Description: "uptime"},
+
+		// cpu
+		{Text: "cpu.physical_cores", Description: "physical CPU cores"},
+		{Text: "cpu.logical_cores", Description: "logical CPU cores"},
+		{Text: "cpu.model_name", Description: "CPU model"},
+		{Text: "cpu.mhz", Description: "CPU frequency"},
+
+		// memory
+		{Text: "memory.total_bytes", Description: "total RAM"},
+		{Text: "memory.available_bytes", Description: "available RAM"},
+		{Text: "memory.used_bytes", Description: "used RAM"},
+		{Text: "memory.pct_used", Description: "RAM usage %"},
+
+		// disk
+		{Text: "disk.mount_point", Description: "mount point"},
+		{Text: "disk.device", Description: "block device"},
+		{Text: "disk.fs_type", Description: "filesystem type"},
+		{Text: "disk.total_bytes", Description: "disk size"},
+		{Text: "disk.free_bytes", Description: "free space"},
+		{Text: "disk.pct_used", Description: "disk usage %"},
+
+		// packages
+		{Text: "packages.name", Description: "package name"},
+		{Text: "packages.version", Description: "package version"},
+		{Text: "packages.arch", Description: "package arch"},
+
+		// network
+		{Text: "network.name", Description: "interface name"},
+		{Text: "network.ipv4", Description: "IPv4 address"},
+		{Text: "network.ipv6", Description: "IPv6 address"},
+		{Text: "network.mac", Description: "MAC address"},
+
+		// services
+		{Text: "services.name", Description: "service name"},
+		{Text: "services.display_name", Description: "service display name"},
+		{Text: "services.state", Description: "service state"},
+		{Text: "services.start_type", Description: "service start type"},
+
+		// tags
+		{Text: "tag.", Description: "tag filter (e.g., tag.env = 'prod')"},
+	}
+}
+
+func endsWithKeyword(text, kw string) bool {
+	return strings.HasSuffix(strings.TrimSpace(text), kw)
 }
 
 // ─────────────────────────────────────────────────────────
