@@ -97,6 +97,32 @@ func grpcDialOpts() []grpc.DialOption {
 	return opts
 }
 
+// peerDialOpts returns gRPC dial options for connecting to a peer agent's
+// relay server.  Peer certs contain "localhost" as a SAN but not the peer's
+// IP, so we override ServerName to "localhost" for TLS verification.
+func peerDialOpts() []grpc.DialOption {
+	opts := []grpc.DialOption{
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                60 * time.Second,
+			Timeout:             15 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	}
+
+	cfg := cachedTLSConfig
+	if cfg != nil && cfg.Enabled() {
+		peerCfg := *cfg
+		peerCfg.ServerName = "localhost"
+		creds, err := tlsutil.ClientCredentials(peerCfg)
+		if err == nil {
+			opts = append(opts, grpc.WithTransportCredentials(creds))
+			return opts
+		}
+	}
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return opts
+}
+
 // New creates a new agent.
 func New(cfg Config, log *slog.Logger) *Agent {
 	if cfg.ListenAddr == "" {
@@ -181,7 +207,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 		} else {
 			a.log.Warn("primary parent failed", "addr", a.parentAddr, "error", err)
 
-			// Try fallback parents before going to the server.
+			// Try fallback parents.
 			for i, addr := range a.fallbackAddrs {
 				a.log.Info("trying fallback parent", "fallback", i, "addr", addr)
 				if err := a.connectToAddr(ctx, addr); err == nil {
@@ -192,11 +218,18 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 				a.log.Warn("fallback parent failed", "fallback", i, "addr", addr, "error", err)
 			}
 
-			// Last resort: fall back to direct server connection.
+			// Ask the server for a new parent assignment.
 			if !connected {
-				a.log.Info("all parents failed, falling back to server")
-				if err := a.connectToServer(ctx); err == nil {
-					connected = true
+				a.log.Info("all parents failed, requesting new assignment")
+				if err := a.requestNewParent(ctx); err == nil {
+					// Got a new parent — try connecting to it.
+					if err := a.connectUpstream(ctx); err == nil {
+						connected = true
+					} else {
+						a.log.Warn("new parent also unreachable", "addr", a.parentAddr, "error", err)
+					}
+				} else {
+					a.log.Warn("request new parent failed", "error", err)
 				}
 			}
 		}
@@ -319,15 +352,15 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 
 	a.log.Info("connecting upstream", "target", target, "role", a.role)
 
-	conn, err := grpc.NewClient(target, grpcDialOpts()...)
-	if err != nil {
-		return fmt.Errorf("connect upstream: %w", err)
-	}
-	a.upstreamConn = conn
-
 	// Zone leaders connect to the server's AgentStream RPC.
 	// Relays and leafs connect to their parent's RelayStream RPC.
 	if a.role == pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
+		conn, err := grpc.NewClient(target, grpcDialOpts()...)
+		if err != nil {
+			return fmt.Errorf("connect upstream: %w", err)
+		}
+		a.upstreamConn = conn
+
 		client := pb.NewDirQServerClient(conn)
 		stream, err := client.AgentStream(ctx)
 		if err != nil {
@@ -335,14 +368,19 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 		}
 		a.upstreamStream = stream
 	} else {
+		// Use peer dial options (ServerName override) for relay connections.
+		conn, err := grpc.NewClient(target, peerDialOpts()...)
+		if err != nil {
+			return fmt.Errorf("connect upstream: %w", err)
+		}
+		a.upstreamConn = conn
+
 		client := pb.NewDirQRelayClient(conn)
 		stream, err := client.RelayStream(ctx)
 		if err != nil {
-			// Fall back to direct server connection if parent is unreachable.
-			a.log.Warn("parent unreachable, falling back to server",
-				"parent", target, "error", err)
 			conn.Close()
-			return a.connectToServer(ctx)
+			a.upstreamConn = nil
+			return fmt.Errorf("relay stream to %s: %w", target, err)
 		}
 		a.upstreamStream = stream
 	}
@@ -352,7 +390,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 
 // connectToAddr connects to a specific address as a relay peer (for fallbacks).
 func (a *Agent) connectToAddr(ctx context.Context, addr string) error {
-	conn, err := grpc.NewClient(addr, grpcDialOpts()...)
+	conn, err := grpc.NewClient(addr, peerDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -394,29 +432,31 @@ func (a *Agent) sendHello() error {
 	})
 }
 
-// connectToServer is the fallback when a parent peer is unreachable.
-// It connects directly to the DirQ server as if this were a zone leader.
-func (a *Agent) connectToServer(ctx context.Context) error {
-	a.log.Info("falling back to direct server connection", "server", a.cfg.ServerAddr)
-
+// requestNewParent calls the server's RequestPeers RPC to get a new parent
+// assignment.  Updates parentAddr and fallbackAddrs on success.
+func (a *Agent) requestNewParent(ctx context.Context) error {
 	conn, err := grpc.NewClient(a.cfg.ServerAddr, grpcDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
-	a.upstreamConn = conn
+	defer conn.Close()
 
 	client := pb.NewDirQServerClient(conn)
-	stream, err := client.AgentStream(ctx)
+	resp, err := client.RequestPeers(ctx, &pb.PeerRequest{AgentId: a.agentID})
 	if err != nil {
-		return fmt.Errorf("open server stream: %w", err)
-	}
-	a.upstreamStream = stream
-
-	// Send Hello — the server rejects streams that don't start with Hello.
-	if err := a.sendHello(); err != nil {
-		return fmt.Errorf("send hello on fallback: %w", err)
+		return fmt.Errorf("RequestPeers RPC: %w", err)
 	}
 
+	if resp.ZoneLeaderAddr == "" {
+		return fmt.Errorf("server returned no parent assignment")
+	}
+
+	a.parentAddr = resp.ZoneLeaderAddr
+	a.fallbackAddrs = resp.FallbackAddrs
+	a.log.Info("server assigned new parent",
+		"parent_addr", a.parentAddr,
+		"fallbacks", len(a.fallbackAddrs),
+	)
 	return nil
 }
 

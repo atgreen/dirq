@@ -408,6 +408,7 @@ type PeerResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Peers          []*PeerInfo            `protobuf:"bytes,2,rep,name=peers,proto3" json:"peers,omitempty"`
 	ZoneLeaderAddr string                 `protobuf:"bytes,3,opt,name=zone_leader_addr,json=zoneLeaderAddr,proto3" json:"zone_leader_addr,omitempty"`
+	FallbackAddrs  []string               `protobuf:"bytes,4,rep,name=fallback_addrs,json=fallbackAddrs,proto3" json:"fallback_addrs,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -454,6 +455,13 @@ func (x *PeerResponse) GetZoneLeaderAddr() string {
 		return x.ZoneLeaderAddr
 	}
 	return ""
+}
+
+func (x *PeerResponse) GetFallbackAddrs() []string {
+	if x != nil {
+		return x.FallbackAddrs
+	}
+	return nil
 }
 
 type AgentMessage struct {
@@ -2425,10 +2433,11 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\"(\n" +
 	"\vPeerRequest\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"a\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x88\x01\n" +
 	"\fPeerResponse\x12'\n" +
 	"\x05peers\x18\x02 \x03(\v2\x11.dirq.v1.PeerInfoR\x05peers\x12(\n" +
-	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\"\xca\x04\n" +
+	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\x12%\n" +
+	"\x0efallback_addrs\x18\x04 \x03(\tR\rfallbackAddrs\"\xca\x04\n" +
 	"\fAgentMessage\x122\n" +
 	"\theartbeat\x18\x01 \x01(\v2\x12.dirq.v1.HeartbeatH\x00R\theartbeat\x129\n" +
 	"\fquery_result\x18\x02 \x01(\v2\x14.dirq.v1.QueryResultH\x00R\vqueryResult\x12+\n" +

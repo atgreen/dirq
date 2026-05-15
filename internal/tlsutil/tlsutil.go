@@ -22,11 +22,12 @@ import (
 
 // Config holds TLS file paths loaded from environment variables.
 type Config struct {
-	CAFile   string // path to CA certificate
-	CertFile string // path to this process's certificate
-	KeyFile  string // path to this process's private key
-	Insecure bool   // skip cert verification (for self-signed)
-	Disabled bool   // explicitly disable TLS (DIRQ_TLS_DISABLED=true)
+	CAFile     string // path to CA certificate
+	CertFile   string // path to this process's certificate
+	KeyFile    string // path to this process's private key
+	Insecure   bool   // skip cert verification (for self-signed)
+	Disabled   bool   // explicitly disable TLS (DIRQ_TLS_DISABLED=true)
+	ServerName string // override TLS ServerName for verification (peer connections)
 }
 
 // Enabled returns true if TLS should be used. TLS is on by default —
@@ -172,6 +173,10 @@ func ClientCredentials(cfg Config) (credentials.TransportCredentials, error) {
 
 	if cfg.Insecure {
 		tlsCfg.InsecureSkipVerify = true
+	}
+
+	if cfg.ServerName != "" {
+		tlsCfg.ServerName = cfg.ServerName
 	}
 
 	return credentials.NewTLS(tlsCfg), nil

@@ -7,7 +7,20 @@ import (
 	"context"
 	"time"
 
+	"github.com/atgreen/dirq/internal/db"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
+)
+
+// demoteRecord tracks demotion history for an agent so the rebalancer
+// can back off when an agent keeps bouncing back to a direct connection.
+type demoteRecord struct {
+	lastDemote time.Time
+	failures   int // consecutive bounce-backs
+}
+
+const (
+	demoteBaseBackoff = 1 * time.Minute
+	demoteMaxBackoff  = 30 * time.Minute
 )
 
 // startRebalancer periodically checks the topology and makes minimal
@@ -63,6 +76,18 @@ func (s *Server) rebalanceOnce(ctx context.Context) {
 		return // one action per cycle
 	}
 
+	// Housekeeping: clear cooldown records for agents that are no longer
+	// connected directly (they successfully moved under a ZL).
+	s.demoteMu.Lock()
+	s.mu.RLock()
+	for id := range s.demoteCooldown {
+		if _, direct := s.streams[id]; !direct {
+			delete(s.demoteCooldown, id)
+		}
+	}
+	s.mu.RUnlock()
+	s.demoteMu.Unlock()
+
 	// Priority 3: Tree imbalance — redistribute ONE subtree.
 	s.redistributeOne(ctx)
 }
@@ -106,17 +131,30 @@ func (s *Server) promoteOneRelay(ctx context.Context) {
 // demoteOne moves one non-ZL agent from a direct server connection to a ZL.
 func (s *Server) demoteOne(ctx context.Context) {
 	cfg := s.topoCfg
+	now := time.Now()
 
-	// Find one non-ZL agent connected directly.
+	// Find one non-ZL agent connected directly, skipping any still in cooldown.
 	var agentID string
 	s.mu.RLock()
+	s.demoteMu.Lock()
 	for id := range s.streams {
 		agent, err := s.db.GetAgent(ctx, id)
-		if err == nil && agent.Role != "zone_leader" {
-			agentID = id
-			break
+		if err != nil || agent.Role == "zone_leader" {
+			continue
 		}
+		if rec, ok := s.demoteCooldown[id]; ok {
+			backoff := demoteBaseBackoff * (1 << rec.failures)
+			if backoff > demoteMaxBackoff {
+				backoff = demoteMaxBackoff
+			}
+			if now.Before(rec.lastDemote.Add(backoff)) {
+				continue // still cooling down
+			}
+		}
+		agentID = id
+		break
 	}
+	s.demoteMu.Unlock()
 	s.mu.RUnlock()
 
 	if agentID == "" {
@@ -164,8 +202,17 @@ func (s *Server) demoteOne(ctx context.Context) {
 	case as.send <- msg:
 		s.db.SetAgentRole(ctx, agentID, "relay")
 		s.db.SetAgentParent(ctx, agentID, parent.ID)
+
+		s.demoteMu.Lock()
+		rec := s.demoteCooldown[agentID]
+		rec.lastDemote = time.Now()
+		rec.failures++
+		s.demoteCooldown[agentID] = rec
+		s.demoteMu.Unlock()
+
 		s.log.Info("rebalancer: demoted to relay",
-			"agent_id", agentID, "new_parent", parent.Hostname)
+			"agent_id", agentID, "new_parent", parent.Hostname,
+			"demotion_attempt", rec.failures)
 	default:
 	}
 }
@@ -250,6 +297,62 @@ func (s *Server) sendToAgent(ctx context.Context, agentID string, msg *pb.Server
 		return true
 	default:
 		return false
+	}
+}
+
+// reassignOrphans moves all children of a dead parent to healthy nodes.
+// Called when a zone leader's stream closes.
+func (s *Server) reassignOrphans(ctx context.Context, deadParentID string) {
+	children, err := s.db.ListAgents(ctx, db.ListAgentsFilter{ParentID: deadParentID})
+	if err != nil || len(children) == 0 {
+		return
+	}
+
+	cfg := s.topoCfg
+	for _, child := range children {
+		parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
+		if err != nil || parent.ID == "" || parent.ID == child.ID {
+			s.log.Warn("reassignOrphans: no parent available", "child", child.Hostname)
+			s.db.SetAgentParent(ctx, child.ID, "")
+			continue
+		}
+
+		s.db.SetAgentParent(ctx, child.ID, parent.ID)
+		s.log.Info("reassignOrphans: moved child to new parent",
+			"child", child.Hostname, "new_parent", parent.Hostname)
+
+		// If the child is connected directly to the server, tell it
+		// to reconnect to its new parent.
+		var fallbacks []string
+		if fbAgents, err := s.db.FindFallbackParents(ctx, parent.ID, cfg.MaxChildrenPerNode, 2); err == nil {
+			for _, fb := range fbAgents {
+				fallbacks = append(fallbacks, fb.ListenAddr)
+			}
+		}
+
+		msg := &pb.ServerMessage{
+			Payload: &pb.ServerMessage_PeerUpdate{
+				PeerUpdate: &pb.PeerUpdate{
+					TargetAgentId:    child.ID,
+					NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
+					NewParentAddr:    parent.ListenAddr,
+					NewFallbackAddrs: fallbacks,
+				},
+			},
+		}
+		if s.signer != nil {
+			s.signServerMessage(msg)
+		}
+
+		s.mu.Lock()
+		if as, ok := s.streams[child.ID]; ok {
+			as.reassigned = true
+			select {
+			case as.send <- msg:
+			default:
+			}
+		}
+		s.mu.Unlock()
 	}
 }
 

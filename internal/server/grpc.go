@@ -7,9 +7,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/atgreen/dirq/internal/db"
@@ -34,6 +36,28 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		tags[k] = v
 	}
 
+	// Override the host portion of the agent's ListenAddr with the actual
+	// peer IP observed by the server.  The agent resolves its outbound IP
+	// via a UDP trick, but that can be wrong in Docker / NAT / multi-homed
+	// environments.  The server sees the real routable address on the gRPC
+	// connection, so we trust that and keep only the agent's listen port.
+	listenAddr := req.ListenAddr
+	if p, ok := peer.FromContext(ctx); ok {
+		if tcpAddr, ok := p.Addr.(*net.TCPAddr); ok {
+			_, port, err := net.SplitHostPort(listenAddr)
+			if err == nil {
+				listenAddr = net.JoinHostPort(tcpAddr.IP.String(), port)
+				if listenAddr != req.ListenAddr {
+					s.log.Info("overriding agent listen address with peer IP",
+						"hostname", req.Hostname,
+						"agent_reported", req.ListenAddr,
+						"server_observed", listenAddr,
+					)
+				}
+			}
+		}
+	}
+
 	agent, err := s.db.RegisterAgent(ctx, db.RegisterAgentParams{
 		Hostname:     req.Hostname,
 		OS:           req.Os,
@@ -41,7 +65,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		Arch:         req.Arch,
 		AgentVersion: req.AgentVersion,
 		Capabilities: req.Capabilities,
-		ListenAddr:   req.ListenAddr,
+		ListenAddr:   listenAddr,
 		Tags:         tags,
 		ExecEnabled:  req.ExecEnabled,
 	})
@@ -189,6 +213,10 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			s.log.Error("failed to mark agent offline", "agent_id", agentID, "error", err)
 		}
 		s.log.Info("agent stream closed, marked offline", "agent_id", agentID)
+
+		// If this was a zone leader, reassign its orphaned children to
+		// healthy parents so they don't stay stuck under a dead node.
+		go s.reassignOrphans(context.Background(), agentID)
 	}()
 
 	// Mark agent online
@@ -276,13 +304,45 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 	}
 }
 
-// RequestPeers handles an agent requesting new peers after losing connectivity.
+// RequestPeers handles an agent requesting a new parent after losing connectivity.
 func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.PeerResponse, error) {
 	s.log.Info("agent requesting peers", "agent_id", req.AgentId)
-	// For now, tell it to connect as a zone leader.
+
+	// The agent's current parent may be unreachable. Only mark it offline
+	// if the server doesn't have an active stream for it (i.e., it's
+	// genuinely dead, not just slow). This avoids accidentally killing
+	// healthy nodes that the agent was just reassigned to.
+	if agent, err := s.db.GetAgent(ctx, req.AgentId); err == nil && agent.ParentID != nil && *agent.ParentID != "" {
+		s.mu.RLock()
+		_, parentAlive := s.streams[*agent.ParentID]
+		s.mu.RUnlock()
+		if !parentAlive {
+			s.db.SetAgentOffline(ctx, *agent.ParentID)
+			s.log.Info("marked failed parent offline", "parent_id", *agent.ParentID)
+		}
+	}
+
+	cfg := s.topoCfg
+	parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
+	if err != nil || parent.ID == "" || parent.ID == req.AgentId {
+		s.log.Warn("no parent available for reassignment", "agent_id", req.AgentId)
+		return &pb.PeerResponse{}, nil
+	}
+
+	var fallbacks []string
+	if fbAgents, err := s.db.FindFallbackParents(ctx, parent.ID, cfg.MaxChildrenPerNode, 2); err == nil {
+		for _, fb := range fbAgents {
+			fallbacks = append(fallbacks, fb.ListenAddr)
+		}
+	}
+
+	s.db.SetAgentParent(ctx, req.AgentId, parent.ID)
+	s.log.Info("agent reassigned to new parent",
+		"agent_id", req.AgentId, "new_parent", parent.Hostname)
+
 	return &pb.PeerResponse{
-		Peers:          nil,
-		ZoneLeaderAddr: "",
+		ZoneLeaderAddr: parent.ListenAddr,
+		FallbackAddrs:  fallbacks,
 	}, nil
 }
 

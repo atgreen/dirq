@@ -90,6 +90,7 @@ message PeerRequest {
 message PeerResponse {
   repeated PeerInfo peers = 2;
   string zone_leader_addr = 3;
+  repeated string fallback_addrs = 4;
 }
 
 // ─────────────────────────────────────────────────────────

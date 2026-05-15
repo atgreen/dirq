@@ -24,6 +24,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "dev"
+
 var (
 	serverURL   string
 	apiToken    string
@@ -47,7 +49,8 @@ func main() {
 
 	root := &cobra.Command{
 		Use:          "dirq",
-		Short:        "DirQ — Real-Time Endpoint Query CLI",
+		Short:        fmt.Sprintf("DirQ — Real-Time Endpoint Query CLI (%s)", version),
+		Version:      version,
 		SilenceUsage: true,
 	}
 
@@ -81,6 +84,7 @@ func main() {
 	root.AddCommand(deployCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(cveCmd())
+	root.AddCommand(graphCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -354,6 +358,110 @@ Examples:
 
 	cmd.AddCommand(listCmd, showCmd, factsCmd, tagCmd, untagCmd)
 	return cmd
+}
+
+// ─────────────────────────────────────────────────────────
+// dirq graph
+// ─────────────────────────────────────────────────────────
+
+func graphCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "graph",
+		Short: "Show the agent topology tree",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := apiRequest("GET", "/api/v1/hosts", nil)
+			if err != nil {
+				return err
+			}
+
+			if jsonOut {
+				fmt.Println(string(resp))
+				return nil
+			}
+
+			var hosts []struct {
+				ID       string  `json:"id"`
+				Hostname string  `json:"hostname"`
+				Role     string  `json:"role"`
+				ParentID *string `json:"parent_id"`
+				Online   bool    `json:"online"`
+			}
+			if err := json.Unmarshal(resp, &hosts); err != nil {
+				return err
+			}
+
+			// Build lookup maps.
+			type node struct {
+				hostname string
+				role     string
+				online   bool
+				children []string // child IDs, sorted by hostname
+			}
+			nodes := make(map[string]*node, len(hosts))
+			var roots []string
+			for _, h := range hosts {
+				nodes[h.ID] = &node{hostname: h.Hostname, role: h.Role, online: h.Online}
+			}
+			for _, h := range hosts {
+				if h.ParentID != nil && *h.ParentID != "" {
+					if p, ok := nodes[*h.ParentID]; ok {
+						p.children = append(p.children, h.ID)
+					} else {
+						roots = append(roots, h.ID)
+					}
+				} else {
+					roots = append(roots, h.ID)
+				}
+			}
+
+			// Sort children and roots by hostname.
+			sortByHostname := func(ids []string) {
+				sort.Slice(ids, func(i, j int) bool {
+					return nodes[ids[i]].hostname < nodes[ids[j]].hostname
+				})
+			}
+			sortByHostname(roots)
+			for _, n := range nodes {
+				sortByHostname(n.children)
+			}
+
+			// Print tree.
+			fmt.Println("dirq-server")
+			var printTree func(ids []string, prefix string)
+			printTree = func(ids []string, prefix string) {
+				for i, id := range ids {
+					n := nodes[id]
+					last := i == len(ids)-1
+
+					connector := "├── "
+					if last {
+						connector = "└── "
+					}
+
+					status := "●"
+					if !n.online {
+						status = "○"
+					}
+
+					label := n.hostname
+					if n.role == "zone_leader" {
+						label += " [ZL]"
+					}
+
+					fmt.Printf("%s%s%s %s\n", prefix, connector, status, label)
+
+					childPrefix := prefix + "│   "
+					if last {
+						childPrefix = prefix + "    "
+					}
+					printTree(n.children, childPrefix)
+				}
+			}
+			printTree(roots, "")
+
+			return nil
+		},
+	}
 }
 
 // ─────────────────────────────────────────────────────────

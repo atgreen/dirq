@@ -65,6 +65,12 @@ type Server struct {
 	// disconnect from the old parent is expected — don't mark offline.
 	reassigningMu sync.Mutex
 	reassigning   map[string]time.Time
+
+	// Dampening: tracks agents that were demoted but bounced back to
+	// a direct server connection.  Prevents the rebalancer from
+	// re-demoting them every cycle.
+	demoteMu       sync.Mutex
+	demoteCooldown map[string]demoteRecord
 }
 
 type agentStream struct {
@@ -86,14 +92,15 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 	}
 
 	return &Server{
-		cfg:           cfg,
-		topoCfg:       topoCfg,
-		db:            database,
-		log:           log,
-		streams:       make(map[string]*agentStream),
-		execSessions:  make(map[string]*execSession),
-		sessionTokens: make(map[string]string),
-		reassigning:   make(map[string]time.Time),
+		cfg:            cfg,
+		topoCfg:        topoCfg,
+		db:             database,
+		log:            log,
+		streams:        make(map[string]*agentStream),
+		execSessions:   make(map[string]*execSession),
+		sessionTokens:  make(map[string]string),
+		reassigning:    make(map[string]time.Time),
+		demoteCooldown: make(map[string]demoteRecord),
 	}
 }
 
