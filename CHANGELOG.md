@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Concurrent deploys could overwrite each other** — temp filenames now include a unique deploy ID
 - **`hosts list WHERE` made N+1 API calls** — now uses query result data directly (single call)
 - **CLI created a new TLS transport per request** when `--tls-insecure` was set, preventing connection reuse
+- **Ansible connection plugin lost per-host inventory vars** in some AAP execution paths — restored proper variable manager access for multi-DC routing
+- **Ansible fact cache ignored `fact_caching_connection`** from ansible.cfg — now reads the configured URL before falling back to `DIRQ_SERVER_URL`
+- **Ansible collection Python client failed on self-signed TLS** — added `DIRQ_TLS_INSECURE` support to the shared API client
+- **Makefile default target** changed from `build` to `help` — running `make` now shows available targets
 
 ## [0.4.0] - 2026-05-14
 
