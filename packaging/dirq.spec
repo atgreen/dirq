@@ -11,8 +11,11 @@ DirQ command-line tool. Query agents, manage hosts, tokens, tags,
 and generate TLS certificates.
 
 %install
-mkdir -p %{buildroot}/usr/local/bin
-cp %{_sourcedir}/dirq %{buildroot}/usr/local/bin/dirq
+mkdir -p %{buildroot}/usr/bin
+mkdir -p %{buildroot}/usr/share/licenses/dirq
+install -m 0755 %{_sourcedir}/dirq %{buildroot}/usr/bin/dirq
+install -m 0644 %{_sourcedir}/LICENSE %{buildroot}/usr/share/licenses/dirq/LICENSE
 
 %files
-/usr/local/bin/dirq
+/usr/bin/dirq
+%license /usr/share/licenses/dirq/LICENSE

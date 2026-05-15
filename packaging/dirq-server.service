@@ -6,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/dirq-server
+ExecStart=/usr/bin/dirq-server
 EnvironmentFile=-/etc/sysconfig/dirq-server
 Restart=on-failure
 RestartSec=5
