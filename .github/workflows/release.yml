@@ -63,6 +63,19 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-darwin-amd64 ./cmd/dirq
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/dirq-darwin-arm64 ./cmd/dirq
 
+      - name: Package macOS tarballs
+        run: |
+          for GOARCH in amd64 arm64; do
+            TARDIR="dirq-${VERSION}-darwin-${GOARCH}"
+            mkdir -p "${TARDIR}/connection_plugins"
+            cp dist/dirq-darwin-${GOARCH} "${TARDIR}/dirq"
+            chmod +x "${TARDIR}/dirq"
+            cp ansible/connection_plugins/dirq.py "${TARDIR}/connection_plugins/"
+            cp LICENSE "${TARDIR}/"
+            tar czf "dist/dirq-${VERSION}-darwin-${GOARCH}.tar.gz" "${TARDIR}"
+            rm -rf "${TARDIR}"
+          done
+
       - name: Build Ansible collection
         working-directory: collection/atgreen/dirq
         run: ansible-galaxy collection build --force
@@ -214,13 +227,20 @@ jobs:
         shell: powershell
         run: choco install -y nsis
 
-      - name: Build NSIS installer
+      - name: Build agent NSIS installer
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path bin | Out-Null
           Copy-Item "artifacts\dist\dirq-agent-windows-amd64.exe" "bin\dirq-agent.exe"
           & "C:\Program Files (x86)\NSIS\makensis.exe" /DVERSION=$env:VERSION releng\installer\nsis\dirq-agent.nsi
           Move-Item "releng\installer\nsis\dirq-agent-$env:VERSION-setup.exe" "artifacts\dist\"
+
+      - name: Build CLI NSIS installer
+        shell: powershell
+        run: |
+          Copy-Item "artifacts\dist\dirq-windows-amd64.exe" "bin\dirq.exe"
+          & "C:\Program Files (x86)\NSIS\makensis.exe" /DVERSION=$env:VERSION releng\installer\nsis\dirq-cli.nsi
+          Move-Item "releng\installer\nsis\dirq-cli-$env:VERSION-setup.exe" "artifacts\dist\"
 
       - name: Install WiX Toolset
         shell: powershell

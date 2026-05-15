@@ -2361,8 +2361,13 @@ func connectionPluginDir() string {
 	}
 	exePath, _ := os.Executable()
 	if exePath != "" {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exePath), "..", "ansible", "connection_plugins"))
-		candidates = append(candidates, filepath.Join(filepath.Dir(exePath), "..", "share", "dirq", "connection_plugins"))
+		exeDir := filepath.Dir(exePath)
+		// Windows installer: connection_plugins/ next to dirq.exe
+		candidates = append(candidates, filepath.Join(exeDir, "connection_plugins"))
+		// Dev tree: ../ansible/connection_plugins/ relative to bin/
+		candidates = append(candidates, filepath.Join(exeDir, "..", "ansible", "connection_plugins"))
+		// PREFIX/share/dirq/connection_plugins/
+		candidates = append(candidates, filepath.Join(exeDir, "..", "share", "dirq", "connection_plugins"))
 	}
 	for _, dir := range candidates {
 		if absDir, err := filepath.Abs(dir); err == nil {
