@@ -17,8 +17,8 @@ RUN CGO_ENABLED=0 go build -o /dirq        ./cmd/dirq
 # ── Server image (minimal — no Python needed) ──────────
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS server
 
-COPY --from=builder /dirq-server /usr/local/bin/dirq-server
-COPY --from=builder /dirq        /usr/local/bin/dirq
+COPY --from=builder /dirq-server /usr/bin/dirq-server
+COPY --from=builder /dirq        /usr/bin/dirq
 
 EXPOSE 50051 8080
 
@@ -27,7 +27,7 @@ ENTRYPOINT ["dirq-server"]
 # ── Agent image (full UBI — Python required for Ansible modules) ──
 FROM registry.access.redhat.com/ubi9/ubi:latest AS agent
 
-COPY --from=builder /dirq-agent /usr/local/bin/dirq-agent
+COPY --from=builder /dirq-agent /usr/bin/dirq-agent
 
 EXPOSE 50052
 
