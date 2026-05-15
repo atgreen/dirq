@@ -44,8 +44,9 @@ func main() {
 	os.Args = append([]string{os.Args[0]}, flatArgs...)
 
 	root := &cobra.Command{
-		Use:   "dirq",
-		Short: "DirQ — Real-Time Endpoint Query CLI",
+		Use:          "dirq",
+		Short:        "DirQ — Real-Time Endpoint Query CLI",
+		SilenceUsage: true,
 	}
 
 	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("DIRQ_SERVER_URL"), "DirQ server URL (or set DIRQ_SERVER_URL)")
@@ -682,8 +683,7 @@ Examples:
   dirq exec --become "systemctl status nginx"
   dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
   dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'`,
-		Args:         cobra.ArbitraryArgs,
-		SilenceUsage: true,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if scriptFile == "" && len(args) == 0 {
 				return fmt.Errorf("provide a command string or use --script <file>")
