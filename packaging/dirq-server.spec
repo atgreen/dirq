@@ -5,23 +5,32 @@ Release:        1%{?dist}
 Summary:        DirQ server — Direct Query platform for fleet management
 License:        MIT
 URL:            https://github.com/atgreen/dirq
+Source0:        dirq-%{_version}.tar.gz
+
+BuildRequires:  golang >= 1.22
 
 %description
 DirQ server component. Provides gRPC service for agents, REST API for
 admins, query engine, and Ansible inventory endpoint.
 
+%prep
+%setup -q -n dirq-%{_version}
+
+%build
+CGO_ENABLED=0 go build -ldflags "-X main.version=%{_version}" -o dirq-server ./cmd/dirq-server
+
 %install
 mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/lib/systemd/system
 mkdir -p %{buildroot}/usr/share/licenses/dirq-server
-install -m 0755 %{_sourcedir}/dirq-server %{buildroot}/usr/bin/dirq-server
-install -m 0644 %{_sourcedir}/dirq-server.service %{buildroot}/usr/lib/systemd/system/
-install -m 0644 %{_sourcedir}/LICENSE %{buildroot}/usr/share/licenses/dirq-server/LICENSE
+install -m 0755 dirq-server %{buildroot}/usr/bin/dirq-server
+install -m 0644 packaging/dirq-server.service %{buildroot}/usr/lib/systemd/system/
+install -m 0644 LICENSE %{buildroot}/usr/share/licenses/dirq-server/LICENSE
 
 %files
 /usr/bin/dirq-server
-%license /usr/share/licenses/dirq-server/LICENSE
 /usr/lib/systemd/system/dirq-server.service
+%license /usr/share/licenses/dirq-server/LICENSE
 
 %post
 systemctl daemon-reload

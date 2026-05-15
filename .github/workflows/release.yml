@@ -81,7 +81,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   build-rpm:
     name: Build RPMs
-    needs: [build, extract-version]
+    needs: [extract-version]
     runs-on: ubuntu-latest
     container:
       image: almalinux:9
@@ -91,13 +91,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build tools
-        run: dnf install -y rpm-build rpmdevtools rpm-sign
-
-      - name: Download binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifacts
-          path: ./artifacts
+        run: dnf install -y rpm-build rpmdevtools rpm-sign golang
 
       - name: Setup rpmbuild
         run: |
@@ -105,27 +99,25 @@ jobs:
           mkdir -p "${RPMBUILD_DIR}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           echo "%_topdir ${RPMBUILD_DIR}" > ~/.rpmmacros
 
+      - name: Create source tarball
+        run: |
+          mkdir -p "dirq-${VERSION}"
+          git archive HEAD | tar -x -C "dirq-${VERSION}"
+          tar czf "rpmbuild/SOURCES/dirq-${VERSION}.tar.gz" "dirq-${VERSION}"
+          rm -rf "dirq-${VERSION}"
+
       - name: Build agent RPM
         run: |
-          cp artifacts/dist/dirq-agent-linux-amd64 rpmbuild/SOURCES/dirq-agent
-          cp packaging/dirq-agent.service rpmbuild/SOURCES/
-          cp packaging/agent.conf rpmbuild/SOURCES/
-          cp LICENSE rpmbuild/SOURCES/
           cp packaging/dirq-agent.spec rpmbuild/SPECS/
           rpmbuild -bb rpmbuild/SPECS/dirq-agent.spec --define "_version ${VERSION}"
 
       - name: Build server RPM
         run: |
-          cp artifacts/dist/dirq-server-linux-amd64 rpmbuild/SOURCES/dirq-server
-          cp packaging/dirq-server.service rpmbuild/SOURCES/
-          cp LICENSE rpmbuild/SOURCES/
           cp packaging/dirq-server.spec rpmbuild/SPECS/
           rpmbuild -bb rpmbuild/SPECS/dirq-server.spec --define "_version ${VERSION}"
 
       - name: Build CLI RPM
         run: |
-          cp artifacts/dist/dirq-linux-amd64 rpmbuild/SOURCES/dirq
-          cp LICENSE rpmbuild/SOURCES/
           cp packaging/dirq.spec rpmbuild/SPECS/
           rpmbuild -bb rpmbuild/SPECS/dirq.spec --define "_version ${VERSION}"
 
