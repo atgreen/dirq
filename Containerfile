@@ -10,7 +10,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 go build -o /dirq-server ./cmd/dirq-server
+RUN CGO_ENABLED=1 go build -o /dirq-server ./cmd/dirq-server
 RUN CGO_ENABLED=0 go build -o /dirq-agent  ./cmd/dirq-agent
 RUN CGO_ENABLED=0 go build -o /dirq        ./cmd/dirq
 

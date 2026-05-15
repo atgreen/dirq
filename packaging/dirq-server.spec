@@ -7,17 +7,18 @@ License:        MIT
 URL:            https://github.com/atgreen/dirq
 Source0:        dirq-%{_version}.tar.gz
 
-BuildRequires:  golang >= 1.22
+BuildRequires:  golang >= 1.22, gcc
 
 %description
 DirQ server component. Provides gRPC service for agents, REST API for
-admins, query engine, and Ansible inventory endpoint.
+admins, query engine, and Ansible inventory endpoint. Uses SQLite by
+default (embedded); set DIRQ_DB_URL=postgres://... for PostgreSQL.
 
 %prep
 %setup -q -n dirq-%{_version}
 
 %build
-CGO_ENABLED=0 go build -ldflags "-X main.version=%{_version}" -o dirq-server ./cmd/dirq-server
+CGO_ENABLED=1 go build -ldflags "-X main.version=%{_version}" -o dirq-server ./cmd/dirq-server
 
 %install
 mkdir -p %{buildroot}/usr/bin

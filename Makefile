@@ -50,9 +50,10 @@ collection:  ## Build Ansible collection tarball
 
 cross:  ## Cross-compile for all release platforms
 	@mkdir -p dist
+	@echo "Building dirq-server (linux/amd64 only, requires CGO)..."
+	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-server-linux-amd64 ./cmd/dirq-server
 	@for GOARCH in amd64 arm64; do \
-		echo "Building linux/$$GOARCH..."; \
-		CGO_ENABLED=0 GOOS=linux GOARCH=$$GOARCH go build -ldflags "$(LDFLAGS)" -o dist/dirq-server-linux-$$GOARCH ./cmd/dirq-server; \
+		echo "Building agent+cli linux/$$GOARCH..."; \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$GOARCH go build -ldflags "$(LDFLAGS)" -o dist/dirq-agent-linux-$$GOARCH  ./cmd/dirq-agent; \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$GOARCH go build -ldflags "$(LDFLAGS)" -o dist/dirq-linux-$$GOARCH        ./cmd/dirq; \
 	done

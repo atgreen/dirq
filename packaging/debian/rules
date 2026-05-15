@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: MIT
 
 export GOFLAGS=-mod=vendor
-export CGO_ENABLED=0
 
 VERSION := $(shell dpkg-parsechangelog -S Version | sed 's/-.*//')
 LDFLAGS := -X main.version=$(VERSION)
@@ -11,8 +10,8 @@ LDFLAGS := -X main.version=$(VERSION)
 	dh $@
 
 override_dh_auto_build:
-	go build -ldflags "$(LDFLAGS)" -o dirq-agent  ./cmd/dirq-agent
-	go build -ldflags "$(LDFLAGS)" -o dirq-server ./cmd/dirq-server
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o dirq-agent  ./cmd/dirq-agent
+	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o dirq-server ./cmd/dirq-server
 	go build -ldflags "$(LDFLAGS)" -o dirq        ./cmd/dirq
 
 override_dh_auto_install:
