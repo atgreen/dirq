@@ -1,36 +1,50 @@
 #!/usr/bin/make -f
 # SPDX-License-Identifier: MIT
 
+export GOFLAGS=-mod=vendor
+export CGO_ENABLED=0
+
+VERSION := $(shell dpkg-parsechangelog -S Version | sed 's/-.*//')
+LDFLAGS := -X main.version=$(VERSION)
+
 %:
 	dh $@
 
-override_dh_auto_clean:
-	# Skip — do not run 'make clean' which would delete pre-built binaries in dist/.
-
 override_dh_auto_build:
-	# Binaries are pre-built and provided via _sourcedir.
+	go build -ldflags "$(LDFLAGS)" -o dirq-agent  ./cmd/dirq-agent
+	go build -ldflags "$(LDFLAGS)" -o dirq-server ./cmd/dirq-server
+	go build -ldflags "$(LDFLAGS)" -o dirq        ./cmd/dirq
 
 override_dh_auto_install:
 	# dirq-agent
-	install -D -m 0755 $(CURDIR)/dist/dirq-agent \
+	install -D -m 0755 $(CURDIR)/dirq-agent \
 		$(CURDIR)/debian/dirq-agent/usr/bin/dirq-agent
 	install -D -m 0644 $(CURDIR)/packaging/dirq-agent.service \
 		$(CURDIR)/debian/dirq-agent/usr/lib/systemd/system/dirq-agent.service
 	install -D -m 0644 $(CURDIR)/packaging/agent.conf \
 		$(CURDIR)/debian/dirq-agent/etc/dirq/agent.conf
+	install -D -m 0644 $(CURDIR)/LICENSE \
+		$(CURDIR)/debian/dirq-agent/usr/share/doc/dirq-agent/copyright
 
 	# dirq-server
-	install -D -m 0755 $(CURDIR)/dist/dirq-server \
+	install -D -m 0755 $(CURDIR)/dirq-server \
 		$(CURDIR)/debian/dirq-server/usr/bin/dirq-server
 	install -D -m 0644 $(CURDIR)/packaging/dirq-server.service \
 		$(CURDIR)/debian/dirq-server/usr/lib/systemd/system/dirq-server.service
+	install -D -m 0644 $(CURDIR)/LICENSE \
+		$(CURDIR)/debian/dirq-server/usr/share/doc/dirq-server/copyright
 
 	# dirq (CLI)
-	install -D -m 0755 $(CURDIR)/dist/dirq \
+	install -D -m 0755 $(CURDIR)/dirq \
 		$(CURDIR)/debian/dirq/usr/bin/dirq
+	install -D -m 0644 $(CURDIR)/LICENSE \
+		$(CURDIR)/debian/dirq/usr/share/doc/dirq/copyright
 
 override_dh_auto_test:
-	# Skip — binaries are pre-built and tested in CI.
+	go test ./...
+
+override_dh_auto_clean:
+	rm -f dirq dirq-agent dirq-server
 
 override_dh_dwz:
 	# Skip — Go binaries use compressed debug sections that dwz cannot handle.
