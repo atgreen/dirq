@@ -9,6 +9,8 @@ Source0:        dirq-%{_version}.tar.gz
 
 # Go is installed from upstream tarball in CI; no distro golang package needed.
 
+%global debug_package %{nil}
+
 %description
 DirQ agent component. Lightweight agent that runs on managed Linux
 servers, collects system data, relays queries through the P2P mesh,

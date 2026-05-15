@@ -9,6 +9,8 @@ Source0:        dirq-%{_version}.tar.gz
 
 BuildRequires:  gcc
 
+%global debug_package %{nil}
+
 %description
 DirQ server component. Provides gRPC service for agents, REST API for
 admins, query engine, and Ansible inventory endpoint. Uses SQLite by

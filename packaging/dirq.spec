@@ -9,6 +9,8 @@ Source0:        dirq-%{_version}.tar.gz
 
 # Go is installed from upstream tarball in CI; no distro golang package needed.
 
+%global debug_package %{nil}
+
 %description
 DirQ command-line tool. Query agents, manage hosts, tokens, tags,
 run ad-hoc commands across the fleet, and generate TLS certificates.
