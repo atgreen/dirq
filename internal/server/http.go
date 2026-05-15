@@ -65,12 +65,13 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.AuthDisabled {
+			next(w, r)
+			return
+		}
+
 		token := r.Header.Get("Authorization")
 		if token == "" {
-			if s.cfg.AuthDisabled {
-				next(w, r)
-				return
-			}
 			httpError(w, http.StatusUnauthorized, "authentication required — provide an API token via Authorization: Bearer <token> header")
 			return
 		}
