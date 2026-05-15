@@ -2354,11 +2354,21 @@ func writeInventory(hosts []queryHost) (string, error) {
 
 // connectionPluginDir returns the path to the DirQ Ansible connection plugin.
 func connectionPluginDir() string {
+	// Check standard install paths first, then dev tree relative to binary.
+	candidates := []string{
+		"/usr/share/dirq/connection_plugins",
+		"/usr/local/share/dirq/connection_plugins",
+	}
 	exePath, _ := os.Executable()
-	pluginDir := filepath.Join(filepath.Dir(exePath), "..", "ansible", "connection_plugins")
-	if absDir, err := filepath.Abs(pluginDir); err == nil {
-		if _, err := os.Stat(absDir); err == nil {
-			return absDir
+	if exePath != "" {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exePath), "..", "ansible", "connection_plugins"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(exePath), "..", "share", "dirq", "connection_plugins"))
+	}
+	for _, dir := range candidates {
+		if absDir, err := filepath.Abs(dir); err == nil {
+			if _, err := os.Stat(absDir); err == nil {
+				return absDir
+			}
 		}
 	}
 	return ""

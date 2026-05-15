@@ -22,9 +22,12 @@ CGO_ENABLED=0 go build -ldflags "-X main.version=%{_version}" -o dirq ./cmd/dirq
 %install
 mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/share/licenses/dirq
+mkdir -p %{buildroot}/usr/share/dirq/connection_plugins
 install -m 0755 dirq %{buildroot}/usr/bin/dirq
 install -m 0644 LICENSE %{buildroot}/usr/share/licenses/dirq/LICENSE
+install -m 0644 ansible/connection_plugins/dirq.py %{buildroot}/usr/share/dirq/connection_plugins/dirq.py
 
 %files
 /usr/bin/dirq
+/usr/share/dirq/connection_plugins/dirq.py
 %license /usr/share/licenses/dirq/LICENSE

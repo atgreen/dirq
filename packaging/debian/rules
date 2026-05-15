@@ -37,6 +37,8 @@ override_dh_auto_install:
 	# dirq (CLI)
 	install -D -m 0755 $(CURDIR)/dirq \
 		$(CURDIR)/debian/dirq/usr/bin/dirq
+	install -D -m 0644 $(CURDIR)/ansible/connection_plugins/dirq.py \
+		$(CURDIR)/debian/dirq/usr/share/dirq/connection_plugins/dirq.py
 	install -D -m 0644 $(CURDIR)/LICENSE \
 		$(CURDIR)/debian/dirq/usr/share/doc/dirq/copyright
 

@@ -28,11 +28,13 @@ clean:  ## Remove build artifacts
 	rm -rf $(BINDIR) dist/
 	rm -f collection/atgreen/dirq/atgreen-dirq-*.tar.gz
 
-install: build  ## Install binaries to DESTDIR/PREFIX/bin
+install: build  ## Install binaries and plugins to DESTDIR/PREFIX
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 0755 $(BINDIR)/dirq-server $(DESTDIR)$(PREFIX)/bin/
 	install -m 0755 $(BINDIR)/dirq-agent  $(DESTDIR)$(PREFIX)/bin/
 	install -m 0755 $(BINDIR)/dirq        $(DESTDIR)$(PREFIX)/bin/
+	install -d $(DESTDIR)$(PREFIX)/share/dirq/connection_plugins
+	install -m 0644 ansible/connection_plugins/dirq.py $(DESTDIR)$(PREFIX)/share/dirq/connection_plugins/
 
 proto:  ## Regenerate protobuf Go code
 	protoc --go_out=. --go_opt=paths=source_relative \
