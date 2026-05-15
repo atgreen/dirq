@@ -4,8 +4,8 @@
 # Local demo fleet — run with: make demo
 # Stop with:                   make demo-down
 #
-# Creates a server pod (postgres + dirq-server) and 10 agent pods,
-# all on a shared podman network with TLS and authentication enabled.
+# Creates a server pod (dirq-server with SQLite) and 10 agent pods,
+# all on a shared podman network with TLS enabled.
 
 apiVersion: v1
 kind: Pod
@@ -19,16 +19,6 @@ spec:
       hostPath:
         path: DEMO_CERTS_DIR
   containers:
-    - name: postgres
-      image: docker.io/library/postgres:17
-      env:
-        - name: POSTGRES_USER
-          value: dirq
-        - name: POSTGRES_PASSWORD
-          value: dirq
-        - name: POSTGRES_DB
-          value: dirq
-
     - name: server
       image: localhost/dirq-server:dev
       volumeMounts:
@@ -41,7 +31,7 @@ spec:
         - name: DIRQ_HTTP_ADDR
           value: ":8080"
         - name: DIRQ_DB_URL
-          value: "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"
+          value: "sqlite:///tmp/dirq-demo.db"
         - name: DIRQ_POD_ID
           value: "demo-server"
         - name: DIRQ_TLS_CA
