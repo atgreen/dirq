@@ -8,7 +8,7 @@ PREFIX    ?= /usr/local
 
 CMDS := dirq-server dirq-agent dirq
 
-.PHONY: build test lint clean install proto collection cross help
+.PHONY: build test lint clean install proto collection cross demo demo-down demo-logs help
 
 .DEFAULT_GOAL := help
 
@@ -56,6 +56,36 @@ cross:  ## Cross-compile for all release platforms
 	@echo "Building darwin/amd64 darwin/arm64..."
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-amd64 ./cmd/dirq
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-arm64 ./cmd/dirq
+
+demo: build  ## Start local demo (server + postgres + agent)
+	podman-compose up -d --build
+	@echo
+	@echo "Waiting for server..."
+	@sleep 3
+	@echo
+	@echo "Starting local agent..."
+	DIRQ_TLS_DISABLED=true $(BINDIR)/dirq-agent &
+	@sleep 2
+	@echo
+	@echo "Demo running:"
+	@echo "  Server:  http://localhost:8090"
+	@echo "  gRPC:    localhost:50051"
+	@echo "  Agent:   connected"
+	@echo
+	@echo "Try:"
+	@echo "  export DIRQ_SERVER_URL=http://localhost:8090"
+	@echo "  ./bin/dirq hosts list"
+	@echo "  ./bin/dirq select hostname, os_info.os, cpu.logical_cores"
+	@echo "  ./bin/dirq exec \"uptime\""
+	@echo
+	@echo "Stop with: make demo-down"
+
+demo-down:  ## Stop the local demo
+	-pkill -f "$(BINDIR)/dirq-agent" 2>/dev/null || true
+	podman-compose down
+
+demo-logs:  ## Tail demo server logs
+	podman-compose logs -f dirq-server
 
 help:  ## Show this help
 	@grep -E '^[a-z][-a-z]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
