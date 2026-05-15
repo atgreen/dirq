@@ -7,7 +7,7 @@ License:        MIT
 URL:            https://github.com/atgreen/dirq
 Source0:        dirq-%{_version}.tar.gz
 
-BuildRequires:  golang >= 1.22
+# Go is installed from upstream tarball in CI; no distro golang package needed.
 
 %description
 DirQ command-line tool. Query agents, manage hosts, tokens, tags,

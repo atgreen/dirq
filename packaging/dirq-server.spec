@@ -7,7 +7,7 @@ License:        MIT
 URL:            https://github.com/atgreen/dirq
 Source0:        dirq-%{_version}.tar.gz
 
-BuildRequires:  golang >= 1.22, gcc
+BuildRequires:  gcc
 
 %description
 DirQ server component. Provides gRPC service for agents, REST API for
