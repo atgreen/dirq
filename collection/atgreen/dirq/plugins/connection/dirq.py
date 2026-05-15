@@ -78,10 +78,7 @@ class Connection(ConnectionBase):
             return self
 
         host = self._play_context.remote_addr
-
-        # Host variables set by the inventory plugin (dirq_agent_id,
-        # dirq_server_url) are available through the play context.
-        hostvars = getattr(self._play_context, "vars", None) or {}
+        hostvars = self._get_hostvars(host)
 
         server_url = (
             hostvars.get("dirq_server_url")
@@ -270,3 +267,30 @@ class Connection(ConnectionBase):
 
     def close(self):
         self._connected = False
+
+    def _get_hostvars(self, hostname):
+        """Retrieve per-host inventory variables.
+
+        Tries multiple sources in order of reliability:
+        1. Variable manager with Host object (works in AAP/EE and ansible-playbook)
+        2. play_context.vars (fallback for simpler execution paths)
+        3. Empty dict (hostname fallback will be used for agent_id)
+        """
+        # Source 1: variable manager — the authoritative source for inventory hostvars.
+        try:
+            if hasattr(self, "_variable_manager") and self._variable_manager:
+                # Get the Host object from the inventory.
+                host_obj = self._variable_manager._inventory.get_host(hostname)
+                if host_obj:
+                    return self._variable_manager.get_vars(host=host_obj)
+        except Exception:
+            pass
+
+        # Source 2: play_context.vars — available in some execution paths.
+        try:
+            if hasattr(self._play_context, "vars") and self._play_context.vars:
+                return self._play_context.vars
+        except Exception:
+            pass
+
+        return {}

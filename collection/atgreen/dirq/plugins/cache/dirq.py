@@ -43,7 +43,17 @@ class CacheModule(BaseCacheModule):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._server_url = os.environ.get("DIRQ_SERVER_URL", "http://localhost:8080")
+        # fact_caching_connection from ansible.cfg is passed as the first
+        # positional arg to BaseCacheModule. Use it as the server URL,
+        # falling back to DIRQ_SERVER_URL env var.
+        configured_url = ""
+        if args:
+            configured_url = args[0] if isinstance(args[0], str) else ""
+        self._server_url = (
+            configured_url
+            or os.environ.get("DIRQ_SERVER_URL", "")
+            or "http://localhost:8080"
+        )
         self._token = os.environ.get("DIRQ_TOKEN", "")
         self._cache = {}
         self._loaded = False
