@@ -67,11 +67,11 @@ demo: demo-down build  ## Start local demo (server + 10 agents)
 	@sleep 6
 	@echo
 	@echo "Demo fleet running (10 agents):"
-	@echo "  Server:  http://localhost:8090"
-	@echo "  gRPC:    localhost:50051"
+	@echo "  Server:  http://localhost:19080"
+	@echo "  gRPC:    localhost:19051"
 	@echo
 	@echo "Try:"
-	@echo "  export DIRQ_SERVER_URL=http://localhost:8090"
+	@echo "  export DIRQ_SERVER_URL=http://localhost:19080"
 	@echo "  ./bin/dirq hosts list"
 	@echo "  ./bin/dirq select hostname, os_info.os, cpu.logical_cores"
 	@echo "  ./bin/dirq exec \"uptime\""
@@ -83,6 +83,7 @@ demo: demo-down build  ## Start local demo (server + 10 agents)
 
 demo-down:  ## Stop the demo fleet
 	-podman kube down demo.yml 2>/dev/null || true
+	-podman pod ls --format '{{.Name}}' | grep -E '^dirq-|^demo-' | xargs -r podman pod rm -f 2>/dev/null || true
 	-podman network rm dirq-demo 2>/dev/null || true
 
 demo-logs:  ## Tail demo server logs
