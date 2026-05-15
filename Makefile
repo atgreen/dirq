@@ -78,10 +78,11 @@ demo: demo-down build  ## Start local demo (server + 10 agents)
 	@echo
 	@echo "Try:"
 	@echo "  export DIRQ_SERVER_URL=https://localhost:19080"
-	@echo "  ./bin/dirq --tls-insecure hosts list"
-	@echo "  ./bin/dirq --tls-insecure select hostname, os_info.os, cpu.logical_cores"
-	@echo "  ./bin/dirq --tls-insecure exec \"uptime\""
-	@echo "  ./bin/dirq --tls-insecure doctor"
+	@echo "  export DIRQ_TLS_INSECURE=true"
+	@echo "  ./bin/dirq hosts list"
+	@echo "  ./bin/dirq select hostname, os_info.os, cpu.logical_cores"
+	@echo "  ./bin/dirq exec \"uptime\""
+	@echo "  ./bin/dirq doctor"
 	@echo
 	@echo "Stop with: make demo-down"
 
