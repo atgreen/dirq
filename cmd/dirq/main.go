@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -1345,12 +1346,64 @@ Examples:
 				return nil
 			}
 
-			for _, r := range result.Results {
-				if r.Success {
-					data, _ := json.MarshalIndent(r.Data, "  ", "  ")
-					fmt.Printf("  %s:\n  %s\n\n", r.Hostname, string(data))
-				} else {
-					fmt.Printf("  %s: ERROR: %s\n\n", r.Hostname, r.Error)
+			// Detect flat projected results (all values are scalars, no nested maps).
+			// If flat, render as a table. Otherwise render as indented JSON.
+			isFlat := false
+			if len(result.Results) > 0 && result.Results[0].Data != nil {
+				isFlat = true
+				for _, v := range result.Results[0].Data {
+					if _, nested := v.(map[string]any); nested {
+						isFlat = false
+						break
+					}
+					if _, arr := v.([]any); arr {
+						isFlat = false
+						break
+					}
+				}
+			}
+
+			if isFlat {
+				// Collect column names from first result.
+				var columns []string
+				for k := range result.Results[0].Data {
+					columns = append(columns, k)
+				}
+				// Stable order: sort, but put hostname first if present.
+				sort.Strings(columns)
+				for i, c := range columns {
+					if c == "hostname" {
+						columns = append(columns[:i], columns[i+1:]...)
+						columns = append([]string{"hostname"}, columns...)
+						break
+					}
+				}
+
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				// Header.
+				fmt.Fprintln(w, strings.Join(columns, "\t"))
+				// Rows.
+				for _, r := range result.Results {
+					if !r.Success {
+						continue
+					}
+					vals := make([]string, len(columns))
+					for i, col := range columns {
+						if v, ok := r.Data[col]; ok {
+							vals[i] = fmt.Sprintf("%v", v)
+						}
+					}
+					fmt.Fprintln(w, strings.Join(vals, "\t"))
+				}
+				w.Flush()
+			} else {
+				for _, r := range result.Results {
+					if r.Success {
+						data, _ := json.MarshalIndent(r.Data, "  ", "  ")
+						fmt.Printf("  %s:\n  %s\n\n", r.Hostname, string(data))
+					} else {
+						fmt.Printf("  %s: ERROR: %s\n\n", r.Hostname, r.Error)
+					}
 				}
 			}
 

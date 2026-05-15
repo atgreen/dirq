@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/atgreen/dirq/internal/db"
@@ -241,6 +242,21 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			successCount++
 		} else {
 			errorCount++
+		}
+	}
+
+	// Project fields: flatten module data and expand array modules into rows.
+	// SELECT * skips projection (returns raw module data as before).
+	isSelectStar := len(parsed.Select) == 1 && parsed.Select[0].Star
+	if !isSelectStar && parsed.GroupBy == nil {
+		fields := make([]string, 0, len(parsed.Select))
+		for _, s := range parsed.Select {
+			if s.Field != "" {
+				fields = append(fields, s.Field)
+			}
+		}
+		if len(fields) > 0 {
+			out = projectResults(out, fields)
 		}
 	}
 
@@ -697,6 +713,122 @@ func sanitizeGroupName(s string) string {
 // ─────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────
+
+// projectResults takes raw agent results and projects them into flat rows
+// with only the requested fields. Array modules (packages, services, disk,
+// network) are expanded — one output row per array entry, carrying scalar
+// fields along.
+func projectResults(results []queryResult, fields []string) []queryResult {
+	// Identify which array modules are referenced in the field list.
+	arrayKeys := map[string]string{
+		"packages": "packages",
+		"services": "services",
+		"disk":     "partitions",
+		"network":  "interfaces",
+	}
+
+	arrayModulesUsed := map[string]string{} // module -> array key
+	for _, f := range fields {
+		parts := strings.SplitN(f, ".", 2)
+		if len(parts) == 2 {
+			if ak, ok := arrayKeys[parts[0]]; ok {
+				arrayModulesUsed[parts[0]] = ak
+			}
+		}
+	}
+
+	var projected []queryResult
+	for _, r := range results {
+		if !r.Success || r.Data == nil {
+			projected = append(projected, r)
+			continue
+		}
+
+		// Flatten scalar modules into dotted keys.
+		scalars := map[string]any{}
+		scalars["hostname"] = r.Hostname
+		for module, moduleData := range r.Data {
+			if _, isArray := arrayKeys[module]; isArray {
+				continue // handle separately
+			}
+			if nested, ok := moduleData.(map[string]any); ok {
+				for k, v := range nested {
+					scalars[module+"."+k] = v
+				}
+			}
+		}
+
+		// If no array modules are referenced, emit one row with scalar fields.
+		if len(arrayModulesUsed) == 0 {
+			row := projectRow(scalars, fields)
+			projected = append(projected, queryResult{
+				AgentID:     r.AgentID,
+				Hostname:    r.Hostname,
+				Success:     true,
+				Data:        row,
+				CollectedAt: r.CollectedAt,
+			})
+			continue
+		}
+
+		// Expand array modules into rows.
+		// For simplicity, expand one array module at a time (the common case
+		// is one array module per query, e.g. packages.name).
+		for module, arrayKey := range arrayModulesUsed {
+			moduleData, ok := r.Data[module]
+			if !ok {
+				continue
+			}
+			md, ok := moduleData.(map[string]any)
+			if !ok {
+				continue
+			}
+			arr, ok := md[arrayKey]
+			if !ok {
+				continue
+			}
+			items, ok := arr.([]any)
+			if !ok {
+				continue
+			}
+
+			for _, item := range items {
+				entry, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				// Merge scalar fields with this array entry's fields.
+				combined := map[string]any{}
+				for k, v := range scalars {
+					combined[k] = v
+				}
+				for k, v := range entry {
+					combined[module+"."+k] = v
+				}
+				row := projectRow(combined, fields)
+				projected = append(projected, queryResult{
+					AgentID:     r.AgentID,
+					Hostname:    r.Hostname,
+					Success:     true,
+					Data:        row,
+					CollectedAt: r.CollectedAt,
+				})
+			}
+		}
+	}
+	return projected
+}
+
+// projectRow picks only the requested fields from a flat key-value map.
+func projectRow(src map[string]any, fields []string) map[string]any {
+	row := make(map[string]any, len(fields))
+	for _, f := range fields {
+		if v, ok := src[f]; ok {
+			row[f] = v
+		}
+	}
+	return row
+}
 
 // flattenInto recursively flattens nested maps into dotted keys.
 // e.g. {"os_info": {"os": "linux"}} becomes {"os_info.os": "linux"}.
