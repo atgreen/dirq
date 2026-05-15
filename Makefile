@@ -58,13 +58,14 @@ cross:  ## Cross-compile for all release platforms
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-arm64 ./cmd/dirq
 
 demo: build  ## Start local demo (server + postgres + agent)
-	podman-compose up -d --build
+	podman build --target server -t localhost/dirq-server:dev .
+	podman kube play demo.yml
 	@echo
 	@echo "Waiting for server..."
-	@sleep 3
+	@sleep 4
 	@echo
 	@echo "Starting local agent..."
-	DIRQ_TLS_DISABLED=true $(BINDIR)/dirq-agent &
+	@DIRQ_TLS_DISABLED=true $(BINDIR)/dirq-agent &
 	@sleep 2
 	@echo
 	@echo "Demo running:"
@@ -82,10 +83,10 @@ demo: build  ## Start local demo (server + postgres + agent)
 
 demo-down:  ## Stop the local demo
 	-pkill -f "$(BINDIR)/dirq-agent" 2>/dev/null || true
-	podman-compose down
+	podman kube down demo.yml
 
 demo-logs:  ## Tail demo server logs
-	podman-compose logs -f dirq-server
+	podman logs -f dirq-demo-dirq-server
 
 help:  ## Show this help
 	@grep -E '^[a-z][-a-z]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
