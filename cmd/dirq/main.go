@@ -663,8 +663,11 @@ func execCmd() *cobra.Command {
 		Short: "Execute a command or script across the fleet in parallel",
 		Long: `Run a command or script on multiple agents simultaneously and stream results.
 
-The first argument is a command string to execute on each target agent.
+The first argument is the command to execute on each target agent.
 Use --script to upload and execute a local script file instead.
+
+Commands with dashes must be quoted so the shell doesn't interpret
+them as flags. Simple commands work unquoted.
 
 Script handling by platform:
   Linux:   Shebang (#!) is honored. Scripts are chmod +x and run directly.
@@ -673,28 +676,35 @@ Script handling by platform:
 An optional WHERE clause filters which agents are targeted.
 
 Examples:
-  dirq exec "uptime"
-  dirq exec "uptime" WHERE tag.env = 'prod'
+  dirq exec uptime
+  dirq exec "du -h" WHERE tag.env = 'prod'
+  dirq exec "df -h /"
+  dirq exec --become "systemctl status nginx"
   dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
-  dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'
-  dirq exec --become --script ./patch.sh WHERE tag.role = 'webserver'
-  dirq exec --become "/opt/scripts/check.sh" WHERE tag.env = 'prod'
-  dirq exec "df -h /" --json`,
-		Args: cobra.MinimumNArgs(0),
+  dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if scriptFile == "" && len(args) == 0 {
 				return fmt.Errorf("provide a command string or use --script <file>")
 			}
 
-			// Separate the WHERE clause from the command/args.
-			var commandStr string
+			// Split args at WHERE — everything before is the command,
+			// everything from WHERE onward is the query filter.
+			// This allows unquoted commands: dirq exec du -h WHERE ...
+			var commandParts []string
 			var whereArgs []string
 			if scriptFile == "" {
-				commandStr = args[0]
-				whereArgs = args[1:]
+				for i, a := range args {
+					if strings.EqualFold(a, "WHERE") {
+						whereArgs = args[i:]
+						break
+					}
+					commandParts = append(commandParts, a)
+				}
 			} else {
 				whereArgs = args
 			}
+			commandStr := strings.Join(commandParts, " ")
 			queryStr := buildWhereQuery(whereArgs)
 
 			payload := map[string]any{
@@ -820,6 +830,7 @@ Examples:
 	cmd.Flags().StringVar(&becomeUser, "become-user", "", "user to become (default: root)")
 	cmd.Flags().StringVar(&becomeMethod, "become-method", "", "privilege escalation method (default: sudo)")
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "timeout in seconds")
+
 
 	return cmd
 }
