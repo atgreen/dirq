@@ -14,6 +14,10 @@ CMDS := dirq-server dirq-agent dirq
 
 build: $(addprefix $(BINDIR)/,$(CMDS))  ## Build all binaries to bin/
 
+$(BINDIR)/dirq-server: cmd/dirq-server/*.go internal/**/*.go
+	@mkdir -p $(BINDIR)
+	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/dirq-server
+
 $(BINDIR)/%: cmd/%/*.go internal/**/*.go
 	@mkdir -p $(BINDIR)
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/$*

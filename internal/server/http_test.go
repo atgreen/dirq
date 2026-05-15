@@ -17,6 +17,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Ensure mockDB implements db.DB at compile time.
+var _ db.DB = (*mockDB)(nil)
+
 // mockDB implements the DB interface for testing.
 type mockDB struct {
 	tokens     []mockToken
@@ -150,6 +153,24 @@ func (m *mockDB) FindChildOfParent(context.Context, string) (db.Agent, error) {
 	return db.Agent{}, nil
 }
 func (m *mockDB) RegisterServerPeer(context.Context, string, string) error { return nil }
+func (m *mockDB) Close()                                                   {}
+func (m *mockDB) RunMigrations(context.Context) error                      { return nil }
+func (m *mockDB) DeleteAgent(context.Context, string) error                { return nil }
+func (m *mockDB) GetAgentByHostname(_ context.Context, hostname string) (db.Agent, error) {
+	for _, a := range m.agents {
+		if a.Hostname == hostname {
+			return a, nil
+		}
+	}
+	return db.Agent{}, pgx.ErrNoRows
+}
+func (m *mockDB) GetFactsByModule(context.Context, string) ([]db.Fact, error) { return nil, nil }
+func (m *mockDB) GetFactTTL(context.Context, string) (int, error)            { return 900, nil }
+func (m *mockDB) FindParentWithRoom(context.Context, string, int) (db.Agent, error) {
+	return db.Agent{}, nil
+}
+func (m *mockDB) ListServerPeers(context.Context) ([]db.ServerPeer, error) { return nil, nil }
+func (m *mockDB) RemoveServerPeer(context.Context, string) error           { return nil }
 
 // ─────────────────────────────────────────────────────────
 // Test helpers

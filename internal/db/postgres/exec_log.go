@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
-package db
+package postgres
 
 import (
 	"context"
 	"time"
+
+	"github.com/atgreen/dirq/internal/db"
 )
 
 // CreateExecLog inserts a new execution log entry and returns it with the generated ID.
-func (db *DB) CreateExecLog(ctx context.Context, log ExecLog) (ExecLog, error) {
-	row := db.pool.QueryRow(ctx, `
+func (d *DB) CreateExecLog(ctx context.Context, log db.ExecLog) (db.ExecLog, error) {
+	row := d.pool.QueryRow(ctx, `
 		INSERT INTO exec_log (request_id, agent_id, hostname, operation, command, dest_path, src_path,
 		                      become, become_user, rc, success, error, aap_job_id, aap_job_template,
 		                      aap_user, started_at, finished_at)
@@ -29,12 +31,12 @@ func (db *DB) CreateExecLog(ctx context.Context, log ExecLog) (ExecLog, error) {
 }
 
 // UpdateExecLog updates the result fields of an execution log entry.
-func (db *DB) UpdateExecLog(ctx context.Context, id string, rc *int, success bool, errMsg string, finishedAt time.Time) error {
+func (d *DB) UpdateExecLog(ctx context.Context, id string, rc *int, success bool, errMsg string, finishedAt time.Time) error {
 	var errPtr *string
 	if errMsg != "" {
 		errPtr = &errMsg
 	}
-	_, err := db.pool.Exec(ctx, `
+	_, err := d.pool.Exec(ctx, `
 		UPDATE exec_log SET rc = $2, success = $3, error = $4, finished_at = $5
 		WHERE request_id = $1`,
 		id, rc, success, errPtr, finishedAt,
@@ -43,8 +45,8 @@ func (db *DB) UpdateExecLog(ctx context.Context, id string, rc *int, success boo
 }
 
 // ListExecLogs returns the most recent execution log entries.
-func (db *DB) ListExecLogs(ctx context.Context, limit int) ([]ExecLog, error) {
-	rows, err := db.pool.Query(ctx, `
+func (d *DB) ListExecLogs(ctx context.Context, limit int) ([]db.ExecLog, error) {
+	rows, err := d.pool.Query(ctx, `
 		SELECT id, request_id, agent_id, hostname, operation, command, dest_path, src_path,
 		       become, become_user, rc, success, error, aap_job_id, aap_job_template,
 		       aap_user, started_at, finished_at, created_at
@@ -57,8 +59,8 @@ func (db *DB) ListExecLogs(ctx context.Context, limit int) ([]ExecLog, error) {
 }
 
 // ListExecLogsByAgent returns execution log entries for a specific agent.
-func (db *DB) ListExecLogsByAgent(ctx context.Context, agentID string, limit int) ([]ExecLog, error) {
-	rows, err := db.pool.Query(ctx, `
+func (d *DB) ListExecLogsByAgent(ctx context.Context, agentID string, limit int) ([]db.ExecLog, error) {
+	rows, err := d.pool.Query(ctx, `
 		SELECT id, request_id, agent_id, hostname, operation, command, dest_path, src_path,
 		       become, become_user, rc, success, error, aap_job_id, aap_job_template,
 		       aap_user, started_at, finished_at, created_at
@@ -71,8 +73,8 @@ func (db *DB) ListExecLogsByAgent(ctx context.Context, agentID string, limit int
 }
 
 // ListExecLogsByJob returns execution log entries for a specific AAP job.
-func (db *DB) ListExecLogsByJob(ctx context.Context, aapJobID string) ([]ExecLog, error) {
-	rows, err := db.pool.Query(ctx, `
+func (d *DB) ListExecLogsByJob(ctx context.Context, aapJobID string) ([]db.ExecLog, error) {
+	rows, err := d.pool.Query(ctx, `
 		SELECT id, request_id, agent_id, hostname, operation, command, dest_path, src_path,
 		       become, become_user, rc, success, error, aap_job_id, aap_job_template,
 		       aap_user, started_at, finished_at, created_at
@@ -85,8 +87,8 @@ func (db *DB) ListExecLogsByJob(ctx context.Context, aapJobID string) ([]ExecLog
 }
 
 // scanExecLog scans a single exec_log row.
-func scanExecLog(row interface{ Scan(dest ...any) error }) (ExecLog, error) {
-	var l ExecLog
+func scanExecLog(row interface{ Scan(dest ...any) error }) (db.ExecLog, error) {
+	var l db.ExecLog
 	err := row.Scan(
 		&l.ID, &l.RequestID, &l.AgentID, &l.Hostname, &l.Operation,
 		&l.Command, &l.DestPath, &l.SrcPath,
@@ -96,7 +98,7 @@ func scanExecLog(row interface{ Scan(dest ...any) error }) (ExecLog, error) {
 		&l.StartedAt, &l.FinishedAt, &l.CreatedAt,
 	)
 	if err != nil {
-		return ExecLog{}, err
+		return db.ExecLog{}, err
 	}
 	return l, nil
 }
@@ -106,10 +108,10 @@ func collectExecLogs(rows interface {
 	Next() bool
 	Scan(dest ...any) error
 	Err() error
-}) ([]ExecLog, error) {
-	var logs []ExecLog
+}) ([]db.ExecLog, error) {
+	var logs []db.ExecLog
 	for rows.Next() {
-		var l ExecLog
+		var l db.ExecLog
 		err := rows.Scan(
 			&l.ID, &l.RequestID, &l.AgentID, &l.Hostname, &l.Operation,
 			&l.Command, &l.DestPath, &l.SrcPath,

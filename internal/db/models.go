@@ -111,3 +111,10 @@ type ServerPeer struct {
 	RegisteredAt time.Time `json:"registered_at"`
 	LastSeenAt   time.Time `json:"last_seen_at"`
 }
+
+// NodeLoad represents an agent and its child count.
+type NodeLoad struct {
+	Agent      Agent
+	ChildCount int
+	Depth      int
+}

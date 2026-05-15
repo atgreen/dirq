@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
-package db
+package postgres
 
 import (
 	"context"
@@ -10,14 +10,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atgreen/dirq/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
 // RegisterAgent inserts a new agent and returns the created record.
-func (db *DB) RegisterAgent(ctx context.Context, p RegisterAgentParams) (Agent, error) {
+func (d *DB) RegisterAgent(ctx context.Context, p db.RegisterAgentParams) (db.Agent, error) {
 	tagsJSON, err := json.Marshal(p.Tags)
 	if err != nil {
-		return Agent{}, fmt.Errorf("marshal tags: %w", err)
+		return db.Agent{}, fmt.Errorf("marshal tags: %w", err)
 	}
 
 	caps := p.Capabilities
@@ -25,7 +26,7 @@ func (db *DB) RegisterAgent(ctx context.Context, p RegisterAgentParams) (Agent, 
 		caps = []string{}
 	}
 
-	row := db.pool.QueryRow(ctx, `
+	row := d.pool.QueryRow(ctx, `
 		INSERT INTO agents (hostname, os, os_version, arch, agent_version, listen_addr, capabilities, tags, exec_enabled)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (hostname) DO UPDATE SET
@@ -48,8 +49,8 @@ func (db *DB) RegisterAgent(ctx context.Context, p RegisterAgentParams) (Agent, 
 }
 
 // GetAgent retrieves an agent by ID.
-func (db *DB) GetAgent(ctx context.Context, id string) (Agent, error) {
-	row := db.pool.QueryRow(ctx, `
+func (d *DB) GetAgent(ctx context.Context, id string) (db.Agent, error) {
+	row := d.pool.QueryRow(ctx, `
 		SELECT id, hostname, os, os_version, arch, agent_version, listen_addr, role,
 		       capabilities, tags, parent_id, server_pod, online, exec_enabled, registered_at, last_seen_at
 		FROM agents WHERE id = $1`, id)
@@ -57,8 +58,8 @@ func (db *DB) GetAgent(ctx context.Context, id string) (Agent, error) {
 }
 
 // GetAgentByHostname retrieves an agent by hostname.
-func (db *DB) GetAgentByHostname(ctx context.Context, hostname string) (Agent, error) {
-	row := db.pool.QueryRow(ctx, `
+func (d *DB) GetAgentByHostname(ctx context.Context, hostname string) (db.Agent, error) {
+	row := d.pool.QueryRow(ctx, `
 		SELECT id, hostname, os, os_version, arch, agent_version, listen_addr, role,
 		       capabilities, tags, parent_id, server_pod, online, exec_enabled, registered_at, last_seen_at
 		FROM agents WHERE hostname = $1`, hostname)
@@ -66,7 +67,7 @@ func (db *DB) GetAgentByHostname(ctx context.Context, hostname string) (Agent, e
 }
 
 // ListAgents returns agents matching the given filter.
-func (db *DB) ListAgents(ctx context.Context, f ListAgentsFilter) ([]Agent, error) {
+func (d *DB) ListAgents(ctx context.Context, f db.ListAgentsFilter) ([]db.Agent, error) {
 	var conditions []string
 	var args []any
 	argIdx := 1
@@ -108,13 +109,13 @@ func (db *DB) ListAgents(ctx context.Context, f ListAgentsFilter) ([]Agent, erro
 	}
 	query += " ORDER BY hostname"
 
-	rows, err := db.pool.Query(ctx, query, args...)
+	rows, err := d.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var agents []Agent
+	var agents []db.Agent
 	for rows.Next() {
 		a, err := scanAgentRows(rows)
 		if err != nil {
@@ -126,8 +127,8 @@ func (db *DB) ListAgents(ctx context.Context, f ListAgentsFilter) ([]Agent, erro
 }
 
 // UpdateAgentHeartbeat sets the agent's last_seen_at to now and marks it online.
-func (db *DB) UpdateAgentHeartbeat(ctx context.Context, id string) error {
-	tag, err := db.pool.Exec(ctx, `
+func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id string) error {
+	tag, err := d.pool.Exec(ctx, `
 		UPDATE agents SET last_seen_at = now(), online = true WHERE id = $1`, id)
 	if err != nil {
 		return err
@@ -140,8 +141,8 @@ func (db *DB) UpdateAgentHeartbeat(ctx context.Context, id string) error {
 
 // MarkStaleAgentsOffline marks agents as offline if their last heartbeat was
 // longer ago than the given threshold. Returns the number of agents affected.
-func (db *DB) MarkStaleAgentsOffline(ctx context.Context, threshold time.Duration) (int64, error) {
-	tag, err := db.pool.Exec(ctx,
+func (d *DB) MarkStaleAgentsOffline(ctx context.Context, threshold time.Duration) (int64, error) {
+	tag, err := d.pool.Exec(ctx,
 		`UPDATE agents SET online = false WHERE online = true AND last_seen_at < now() - $1::interval`,
 		threshold.String(),
 	)
@@ -152,10 +153,8 @@ func (db *DB) MarkStaleAgentsOffline(ctx context.Context, threshold time.Duratio
 }
 
 // TouchAgentTree refreshes last_seen_at for an agent and all its descendants.
-// Called by the reaper for agents with active server streams — their open
-// connection proves the whole subtree is reachable.
-func (db *DB) TouchAgentTree(ctx context.Context, rootID string) error {
-	_, err := db.pool.Exec(ctx, `
+func (d *DB) TouchAgentTree(ctx context.Context, rootID string) error {
+	_, err := d.pool.Exec(ctx, `
 		WITH RECURSIVE subtree AS (
 			SELECT id FROM agents WHERE id = $1
 			UNION ALL
@@ -166,12 +165,9 @@ func (db *DB) TouchAgentTree(ctx context.Context, rootID string) error {
 	return err
 }
 
-// MarkAgentTreeOffline marks an agent and all its descendants offline using a
-// recursive CTE. Returns the number of agents affected. This replaces
-// heartbeat-based reaping — when a parent detects a child disconnect, it
-// propagates up to the server which marks the whole subtree in one query.
-func (db *DB) MarkAgentTreeOffline(ctx context.Context, rootID string) (int64, error) {
-	tag, err := db.pool.Exec(ctx, `
+// MarkAgentTreeOffline marks an agent and all its descendants offline.
+func (d *DB) MarkAgentTreeOffline(ctx context.Context, rootID string) (int64, error) {
+	tag, err := d.pool.Exec(ctx, `
 		WITH RECURSIVE subtree AS (
 			SELECT id FROM agents WHERE id = $1
 			UNION ALL
@@ -186,8 +182,8 @@ func (db *DB) MarkAgentTreeOffline(ctx context.Context, rootID string) (int64, e
 }
 
 // SetAgentOffline marks an agent as offline.
-func (db *DB) SetAgentOffline(ctx context.Context, id string) error {
-	tag, err := db.pool.Exec(ctx, `UPDATE agents SET online = false WHERE id = $1`, id)
+func (d *DB) SetAgentOffline(ctx context.Context, id string) error {
+	tag, err := d.pool.Exec(ctx, `UPDATE agents SET online = false WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -198,8 +194,8 @@ func (db *DB) SetAgentOffline(ctx context.Context, id string) error {
 }
 
 // SetAgentRole updates the role of an agent.
-func (db *DB) SetAgentRole(ctx context.Context, id string, role string) error {
-	tag, err := db.pool.Exec(ctx, `UPDATE agents SET role = $1 WHERE id = $2`, role, id)
+func (d *DB) SetAgentRole(ctx context.Context, id string, role string) error {
+	tag, err := d.pool.Exec(ctx, `UPDATE agents SET role = $1 WHERE id = $2`, role, id)
 	if err != nil {
 		return err
 	}
@@ -210,12 +206,12 @@ func (db *DB) SetAgentRole(ctx context.Context, id string, role string) error {
 }
 
 // SetAgentParent sets the parent_id for an agent. Empty string clears it (sets NULL).
-func (db *DB) SetAgentParent(ctx context.Context, id string, parentID string) error {
+func (d *DB) SetAgentParent(ctx context.Context, id string, parentID string) error {
 	var pid any = parentID
 	if parentID == "" {
 		pid = nil
 	}
-	tag, err := db.pool.Exec(ctx, `UPDATE agents SET parent_id = $1 WHERE id = $2`, pid, id)
+	tag, err := d.pool.Exec(ctx, `UPDATE agents SET parent_id = $1 WHERE id = $2`, pid, id)
 	if err != nil {
 		return err
 	}
@@ -226,12 +222,12 @@ func (db *DB) SetAgentParent(ctx context.Context, id string, parentID string) er
 }
 
 // UpdateAgentTags replaces the tags JSONB for an agent.
-func (db *DB) UpdateAgentTags(ctx context.Context, id string, tags map[string]string) error {
+func (d *DB) UpdateAgentTags(ctx context.Context, id string, tags map[string]string) error {
 	tagsJSON, err := json.Marshal(tags)
 	if err != nil {
 		return fmt.Errorf("marshal tags: %w", err)
 	}
-	cmdTag, err := db.pool.Exec(ctx, `UPDATE agents SET tags = $1 WHERE id = $2`, tagsJSON, id)
+	cmdTag, err := d.pool.Exec(ctx, `UPDATE agents SET tags = $1 WHERE id = $2`, tagsJSON, id)
 	if err != nil {
 		return err
 	}
@@ -242,8 +238,8 @@ func (db *DB) UpdateAgentTags(ctx context.Context, id string, tags map[string]st
 }
 
 // DeleteAgent removes an agent by ID.
-func (db *DB) DeleteAgent(ctx context.Context, id string) error {
-	tag, err := db.pool.Exec(ctx, `DELETE FROM agents WHERE id = $1`, id)
+func (d *DB) DeleteAgent(ctx context.Context, id string) error {
+	tag, err := d.pool.Exec(ctx, `DELETE FROM agents WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -254,8 +250,8 @@ func (db *DB) DeleteAgent(ctx context.Context, id string) error {
 }
 
 // scanAgent scans a single agent row from a pgx.Row.
-func scanAgent(row pgx.Row) (Agent, error) {
-	var a Agent
+func scanAgent(row pgx.Row) (db.Agent, error) {
+	var a db.Agent
 	var tagsJSON []byte
 	err := row.Scan(
 		&a.ID, &a.Hostname, &a.OS, &a.OSVersion, &a.Arch, &a.AgentVersion,
@@ -263,11 +259,11 @@ func scanAgent(row pgx.Row) (Agent, error) {
 		&a.ParentID, &a.ServerPod, &a.Online, &a.ExecEnabled, &a.RegisteredAt, &a.LastSeenAt,
 	)
 	if err != nil {
-		return Agent{}, err
+		return db.Agent{}, err
 	}
 	if tagsJSON != nil {
 		if err := json.Unmarshal(tagsJSON, &a.Tags); err != nil {
-			return Agent{}, fmt.Errorf("unmarshal tags: %w", err)
+			return db.Agent{}, fmt.Errorf("unmarshal tags: %w", err)
 		}
 	}
 	if a.Tags == nil {
@@ -277,8 +273,8 @@ func scanAgent(row pgx.Row) (Agent, error) {
 }
 
 // scanAgentRows scans a single agent from pgx.Rows (used inside iteration).
-func scanAgentRows(rows pgx.Rows) (Agent, error) {
-	var a Agent
+func scanAgentRows(rows pgx.Rows) (db.Agent, error) {
+	var a db.Agent
 	var tagsJSON []byte
 	err := rows.Scan(
 		&a.ID, &a.Hostname, &a.OS, &a.OSVersion, &a.Arch, &a.AgentVersion,
@@ -286,11 +282,11 @@ func scanAgentRows(rows pgx.Rows) (Agent, error) {
 		&a.ParentID, &a.ServerPod, &a.Online, &a.ExecEnabled, &a.RegisteredAt, &a.LastSeenAt,
 	)
 	if err != nil {
-		return Agent{}, err
+		return db.Agent{}, err
 	}
 	if tagsJSON != nil {
 		if err := json.Unmarshal(tagsJSON, &a.Tags); err != nil {
-			return Agent{}, fmt.Errorf("unmarshal tags: %w", err)
+			return db.Agent{}, fmt.Errorf("unmarshal tags: %w", err)
 		}
 	}
 	if a.Tags == nil {

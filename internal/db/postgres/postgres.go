@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
-package db
+package postgres
 
 import (
 	"context"

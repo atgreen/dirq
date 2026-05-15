@@ -10,11 +10,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/atgreen/dirq/internal/config"
 	"github.com/atgreen/dirq/internal/db"
+	"github.com/atgreen/dirq/internal/db/postgres"
+	"github.com/atgreen/dirq/internal/db/sqlite"
 	"github.com/atgreen/dirq/internal/server"
 )
 
@@ -35,7 +38,7 @@ func main() {
 	cfg := server.Config{
 		GRPCAddr:           config.EnvOr("DIRQ_GRPC_ADDR", fileCfg, "grpc_addr", ":50051"),
 		HTTPAddr:           config.EnvOr("DIRQ_HTTP_ADDR", fileCfg, "http_addr", ":8080"),
-		DBURL:              config.EnvOr("DIRQ_DB_URL", fileCfg, "db_url", "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"),
+		DBURL:              config.EnvOr("DIRQ_DB_URL", fileCfg, "db_url", "sqlite:///var/lib/dirq/dirq.db"),
 		PodID:              config.EnvOr("DIRQ_POD_ID", fileCfg, "pod_id", mustHostname()),
 		MaxZoneLeaders:     cfgInt("DIRQ_MAX_ZONE_LEADERS", fileCfg, "max_zone_leaders", 0),
 		MaxChildrenPerNode: cfgInt("DIRQ_MAX_CHILDREN", fileCfg, "max_children", 0),
@@ -47,11 +50,30 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Connect to database with retry (postgres may still be starting).
-	var database *db.DB
+	// Determine backend from URL and connect with retry.
+	var database db.DB
+	isPostgres := strings.HasPrefix(cfg.DBURL, "postgres://") || strings.HasPrefix(cfg.DBURL, "postgresql://")
+
+	if isPostgres {
+		log.Info("using PostgreSQL backend", "url", cfg.DBURL)
+	} else {
+		log.Info("using SQLite backend", "url", cfg.DBURL)
+		// Ensure the directory for the SQLite file exists.
+		dsn := strings.TrimPrefix(cfg.DBURL, "sqlite://")
+		dir := filepath.Dir(dsn)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Error("failed to create database directory", "dir", dir, "error", err)
+			os.Exit(1)
+		}
+	}
+
 	for attempt := 1; ; attempt++ {
 		var err error
-		database, err = db.New(ctx, cfg.DBURL)
+		if isPostgres {
+			database, err = postgres.New(ctx, cfg.DBURL)
+		} else {
+			database, err = sqlite.New(ctx, cfg.DBURL)
+		}
 		if err == nil {
 			break
 		}

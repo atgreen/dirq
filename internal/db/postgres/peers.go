@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
-package db
+package postgres
 
 import (
 	"context"
 
+	"github.com/atgreen/dirq/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
 // RegisterServerPeer upserts a server peer, updating its address and last_seen_at.
-func (db *DB) RegisterServerPeer(ctx context.Context, podID, addr string) error {
-	_, err := db.pool.Exec(ctx, `
+func (d *DB) RegisterServerPeer(ctx context.Context, podID, addr string) error {
+	_, err := d.pool.Exec(ctx, `
 		INSERT INTO server_peers (pod_id, addr, registered_at, last_seen_at)
 		VALUES ($1, $2, now(), now())
 		ON CONFLICT (pod_id) DO UPDATE
@@ -22,8 +23,8 @@ func (db *DB) RegisterServerPeer(ctx context.Context, podID, addr string) error 
 }
 
 // ListServerPeers returns all registered server peers.
-func (db *DB) ListServerPeers(ctx context.Context) ([]ServerPeer, error) {
-	rows, err := db.pool.Query(ctx, `
+func (d *DB) ListServerPeers(ctx context.Context) ([]db.ServerPeer, error) {
+	rows, err := d.pool.Query(ctx, `
 		SELECT pod_id, addr, registered_at, last_seen_at
 		FROM server_peers
 		ORDER BY pod_id`)
@@ -32,9 +33,9 @@ func (db *DB) ListServerPeers(ctx context.Context) ([]ServerPeer, error) {
 	}
 	defer rows.Close()
 
-	var peers []ServerPeer
+	var peers []db.ServerPeer
 	for rows.Next() {
-		var p ServerPeer
+		var p db.ServerPeer
 		if err := rows.Scan(&p.PodID, &p.Addr, &p.RegisteredAt, &p.LastSeenAt); err != nil {
 			return nil, err
 		}
@@ -44,8 +45,8 @@ func (db *DB) ListServerPeers(ctx context.Context) ([]ServerPeer, error) {
 }
 
 // RemoveServerPeer deletes a server peer by pod ID.
-func (db *DB) RemoveServerPeer(ctx context.Context, podID string) error {
-	tag, err := db.pool.Exec(ctx, `DELETE FROM server_peers WHERE pod_id = $1`, podID)
+func (d *DB) RemoveServerPeer(ctx context.Context, podID string) error {
+	tag, err := d.pool.Exec(ctx, `DELETE FROM server_peers WHERE pod_id = $1`, podID)
 	if err != nil {
 		return err
 	}

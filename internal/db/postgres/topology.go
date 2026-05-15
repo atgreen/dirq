@@ -1,34 +1,30 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
-package db
+package postgres
 
 import (
 	"context"
+
+	"github.com/atgreen/dirq/internal/db"
 )
 
 // topologyLockID is a fixed advisory lock ID for serializing topology assignments.
 const topologyLockID int64 = 0x4469725174706F // "DirQtpo"
 
 // WithTopologyLock runs fn while holding an exclusive advisory lock.
-// This serializes all topology assignments so concurrent registrations can't
-// race on zone leader counts or parent child counts. The lock is released
-// when the transaction commits.
-func (db *DB) WithTopologyLock(ctx context.Context, fn func() error) error {
-	tx, err := db.pool.Begin(ctx)
+func (d *DB) WithTopologyLock(ctx context.Context, fn func() error) error {
+	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	// Acquire advisory lock — blocks until available.
 	_, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", topologyLockID)
 	if err != nil {
 		return err
 	}
 
-	// fn runs its own queries against the pool. The advisory lock ensures
-	// only one fn runs at a time across all connections.
 	if err := fn(); err != nil {
 		return err
 	}
@@ -37,12 +33,9 @@ func (db *DB) WithTopologyLock(ctx context.Context, fn func() error) error {
 }
 
 // FindRelaysWithChildren returns online relay agents that have at least one
-// online child. These are candidates for promotion to zone leader — promoting
-// them splits a branch mid-tree and the children stay connected.
-// Ordered by child count descending (prefer relays with more children to
-// maximize the subtree size brought to the new zone leader).
-func (db *DB) FindRelaysWithChildren(ctx context.Context) ([]Agent, error) {
-	rows, err := db.pool.Query(ctx, `
+// online child.
+func (d *DB) FindRelaysWithChildren(ctx context.Context) ([]db.Agent, error) {
+	rows, err := d.pool.Query(ctx, `
 		SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
 		       a.listen_addr, a.role, a.capabilities, a.tags,
 		       a.parent_id, a.server_pod, a.online, a.exec_enabled,
@@ -57,7 +50,7 @@ func (db *DB) FindRelaysWithChildren(ctx context.Context) ([]Agent, error) {
 	}
 	defer rows.Close()
 
-	var agents []Agent
+	var agents []db.Agent
 	for rows.Next() {
 		a, err := scanAgentRows(rows)
 		if err != nil {
@@ -68,22 +61,10 @@ func (db *DB) FindRelaysWithChildren(ctx context.Context) ([]Agent, error) {
 	return agents, rows.Err()
 }
 
-// SetAgentParent sets the parent_id for an agent. Empty string clears it.
-// (Note: this overload handles empty string → NULL for zone leader promotion.)
-
-// NodeLoad represents an agent and its child count.
-type NodeLoad struct {
-	Agent      Agent
-	ChildCount int
-	Depth      int
-}
-
 // FindImbalancedNodes returns the most overloaded node and the most underloaded
-// node with room. Used by the rebalancer to redistribute subtrees.
-// Returns (heavy, light, found). If the imbalance ratio is < 2x, found is false.
-func (db *DB) FindImbalancedNodes(ctx context.Context, maxChildren int) (heavy NodeLoad, light NodeLoad, found bool, err error) {
-	// Find the node with the most children.
-	row := db.pool.QueryRow(ctx, `
+// node with room.
+func (d *DB) FindImbalancedNodes(ctx context.Context, maxChildren int) (heavy db.NodeLoad, light db.NodeLoad, found bool, err error) {
+	row := d.pool.QueryRow(ctx, `
 		SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
 		       a.listen_addr, a.role, a.capabilities, a.tags,
 		       a.parent_id, a.server_pod, a.online, a.exec_enabled,
@@ -95,7 +76,7 @@ func (db *DB) FindImbalancedNodes(ctx context.Context, maxChildren int) (heavy N
 		ORDER BY child_count DESC
 		LIMIT 1`)
 
-	var heavyAgent Agent
+	var heavyAgent db.Agent
 	var heavyCount int
 	var tagsJSON []byte
 	scanErr := row.Scan(
@@ -107,32 +88,28 @@ func (db *DB) FindImbalancedNodes(ctx context.Context, maxChildren int) (heavy N
 		&heavyCount,
 	)
 	if scanErr != nil {
-		return heavy, light, false, nil // no nodes with children
+		return heavy, light, false, nil
 	}
 
-	// Find the shallowest node with the fewest children that has room.
-	lightAgent, lightErr := db.FindShallowestParentWithRoom(ctx, maxChildren)
+	lightAgent, lightErr := d.FindShallowestParentWithRoom(ctx, maxChildren)
 	if lightErr != nil || lightAgent.ID == "" || lightAgent.ID == heavyAgent.ID {
 		return heavy, light, false, nil
 	}
 
-	lightCount, _ := db.CountChildren(ctx, lightAgent.ID)
+	lightCount, _ := d.CountChildren(ctx, lightAgent.ID)
 
-	// Only rebalance if the heavy node has at least 2x the children of the light node.
 	if heavyCount < (lightCount+1)*2 {
 		return heavy, light, false, nil
 	}
 
-	heavy = NodeLoad{Agent: heavyAgent, ChildCount: heavyCount}
-	light = NodeLoad{Agent: lightAgent, ChildCount: lightCount}
+	heavy = db.NodeLoad{Agent: heavyAgent, ChildCount: heavyCount}
+	light = db.NodeLoad{Agent: lightAgent, ChildCount: lightCount}
 	return heavy, light, true, nil
 }
 
-// FindChildOfParent returns one online child of the given parent, preferring
-// children that themselves have children (moving a subtree is more efficient
-// than moving a leaf).
-func (db *DB) FindChildOfParent(ctx context.Context, parentID string) (Agent, error) {
-	row := db.pool.QueryRow(ctx, `
+// FindChildOfParent returns one online child of the given parent.
+func (d *DB) FindChildOfParent(ctx context.Context, parentID string) (db.Agent, error) {
+	row := d.pool.QueryRow(ctx, `
 		SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
 		       a.listen_addr, a.role, a.capabilities, a.tags,
 		       a.parent_id, a.server_pod, a.online, a.exec_enabled,
@@ -148,38 +125,35 @@ func (db *DB) FindChildOfParent(ctx context.Context, parentID string) (Agent, er
 
 // CountOnlineZoneLeaders returns the number of agents that are both
 // role=zone_leader AND online=true.
-func (db *DB) CountOnlineZoneLeaders(ctx context.Context) (int, error) {
+func (d *DB) CountOnlineZoneLeaders(ctx context.Context) (int, error) {
 	var count int
-	err := db.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM agents WHERE role = 'zone_leader' AND online = true`,
 	).Scan(&count)
 	return count, err
 }
 
 // CountAgentsByRole returns the number of online agents with the given role.
-func (db *DB) CountAgentsByRole(ctx context.Context, role string) (int, error) {
+func (d *DB) CountAgentsByRole(ctx context.Context, role string) (int, error) {
 	var count int
-	err := db.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM agents WHERE role = $1 AND online = true`, role,
 	).Scan(&count)
 	return count, err
 }
 
 // CountChildren returns the number of online agents whose parent_id is the given agent.
-func (db *DB) CountChildren(ctx context.Context, parentID string) (int, error) {
+func (d *DB) CountChildren(ctx context.Context, parentID string) (int, error) {
 	var count int
-	err := db.pool.QueryRow(ctx,
+	err := d.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM agents WHERE parent_id = $1 AND online = true`, parentID,
 	).Scan(&count)
 	return count, err
 }
 
 // FindZoneLeader returns the zone leader ancestor for a given agent.
-// If the agent IS a zone leader, returns itself.
-// Follows the parent_id chain up until it finds a zone_leader.
-func (db *DB) FindZoneLeader(ctx context.Context, agentID string) (Agent, error) {
-	// Use a recursive CTE to walk up the parent chain.
-	row := db.pool.QueryRow(ctx, `
+func (d *DB) FindZoneLeader(ctx context.Context, agentID string) (db.Agent, error) {
+	row := d.pool.QueryRow(ctx, `
 		WITH RECURSIVE ancestors AS (
 			SELECT id, hostname, os, os_version, arch, agent_version,
 			       listen_addr, role, capabilities, tags,
@@ -208,12 +182,9 @@ func (db *DB) FindZoneLeader(ctx context.Context, agentID string) (Agent, error)
 }
 
 // FindFallbackParents returns up to `count` online agents with room for children,
-// excluding the primary parent and preferring agents on different branches
-// (different zone leader subtrees) for fault isolation.
-func (db *DB) FindFallbackParents(ctx context.Context, primaryParentID string, maxChildren int, count int) ([]Agent, error) {
-	// Find the zone leader ancestor of the primary parent so we can
-	// prefer fallbacks under a DIFFERENT zone leader.
-	rows, err := db.pool.Query(ctx, `
+// excluding the primary parent.
+func (d *DB) FindFallbackParents(ctx context.Context, primaryParentID string, maxChildren int, count int) ([]db.Agent, error) {
+	rows, err := d.pool.Query(ctx, `
 		WITH RECURSIVE tree AS (
 			SELECT id, hostname, os, os_version, arch, agent_version,
 			       listen_addr, role, capabilities, tags,
@@ -240,7 +211,6 @@ func (db *DB) FindFallbackParents(ctx context.Context, primaryParentID string, m
 		WHERE t.id != $1
 		  AND (SELECT COUNT(*) FROM agents c WHERE c.parent_id = t.id AND c.online = true) < $2
 		ORDER BY
-		  -- Prefer nodes under a different zone leader than the primary parent
 		  CASE WHEN t.root_zl = (
 		    SELECT root_zl FROM tree WHERE id = $1 LIMIT 1
 		  ) THEN 1 ELSE 0 END ASC,
@@ -254,7 +224,7 @@ func (db *DB) FindFallbackParents(ctx context.Context, primaryParentID string, m
 	}
 	defer rows.Close()
 
-	var agents []Agent
+	var agents []db.Agent
 	for rows.Next() {
 		a, err := scanAgentRows(rows)
 		if err != nil {
@@ -266,10 +236,9 @@ func (db *DB) FindFallbackParents(ctx context.Context, primaryParentID string, m
 }
 
 // FindParentWithRoom finds an online agent with the given role that has fewer
-// than maxChildren children. Returns the agent, or an empty Agent if none found.
-// Prefers agents with the fewest children (balances the tree).
-func (db *DB) FindParentWithRoom(ctx context.Context, role string, maxChildren int) (Agent, error) {
-	row := db.pool.QueryRow(ctx, `
+// than maxChildren children.
+func (d *DB) FindParentWithRoom(ctx context.Context, role string, maxChildren int) (db.Agent, error) {
+	row := d.pool.QueryRow(ctx, `
 		SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
 		       a.listen_addr, a.role, a.capabilities, a.tags,
 		       a.parent_id, a.server_pod, a.online, a.exec_enabled,
@@ -283,21 +252,16 @@ func (db *DB) FindParentWithRoom(ctx context.Context, role string, maxChildren i
 	)
 	agent, err := scanAgent(row)
 	if err != nil {
-		return Agent{}, err
+		return db.Agent{}, err
 	}
 	return agent, nil
 }
 
 // FindShallowestParentWithRoom finds the shallowest node in the tree that has
-// room for another child. "Shallowest" means fewest hops from a zone leader
-// (BFS fill order). This keeps the tree balanced and minimizes depth.
-//
-// Uses a recursive CTE to compute depth from zone leaders, then picks the
-// shallowest node with child_count < maxChildren.
-func (db *DB) FindShallowestParentWithRoom(ctx context.Context, maxChildren int) (Agent, error) {
-	row := db.pool.QueryRow(ctx, `
+// room for another child.
+func (d *DB) FindShallowestParentWithRoom(ctx context.Context, maxChildren int) (db.Agent, error) {
+	row := d.pool.QueryRow(ctx, `
 		WITH RECURSIVE tree AS (
-			-- Zone leaders are depth 0
 			SELECT id, hostname, os, os_version, arch, agent_version,
 			       listen_addr, role, capabilities, tags,
 			       parent_id, server_pod, online, exec_enabled,
@@ -305,7 +269,6 @@ func (db *DB) FindShallowestParentWithRoom(ctx context.Context, maxChildren int)
 			FROM agents
 			WHERE role = 'zone_leader' AND online = true AND listen_addr != ''
 			UNION ALL
-			-- Children are depth + 1
 			SELECT a.id, a.hostname, a.os, a.os_version, a.arch, a.agent_version,
 			       a.listen_addr, a.role, a.capabilities, a.tags,
 			       a.parent_id, a.server_pod, a.online, a.exec_enabled,
@@ -327,7 +290,7 @@ func (db *DB) FindShallowestParentWithRoom(ctx context.Context, maxChildren int)
 	)
 	agent, err := scanAgent(row)
 	if err != nil {
-		return Agent{}, err
+		return db.Agent{}, err
 	}
 	return agent, nil
 }

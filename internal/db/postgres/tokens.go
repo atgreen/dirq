@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
-package db
+package postgres
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/atgreen/dirq/internal/db"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -20,7 +21,7 @@ const (
 
 // CreateToken generates a random API token, stores its bcrypt hash and a
 // non-secret prefix for fast lookup, and returns the plaintext token.
-func (db *DB) CreateToken(ctx context.Context, name, scope string) (string, error) {
+func (d *DB) CreateToken(ctx context.Context, name, scope string) (string, error) {
 	raw := make([]byte, tokenByteLength)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("generate token: %w", err)
@@ -34,7 +35,7 @@ func (db *DB) CreateToken(ctx context.Context, name, scope string) (string, erro
 
 	prefix := plaintext[:tokenPrefixChars]
 
-	_, err = db.pool.Exec(ctx, `
+	_, err = d.pool.Exec(ctx, `
 		INSERT INTO api_tokens (name, token_prefix, token_hash, scope)
 		VALUES ($1, $2, $3, $4)`,
 		name, prefix, string(hash), scope,
@@ -47,45 +48,43 @@ func (db *DB) CreateToken(ctx context.Context, name, scope string) (string, erro
 }
 
 // ValidateToken checks a plaintext token against stored hashes.
-// Uses the token prefix for an indexed lookup, then verifies with bcrypt.
-// On success it updates last_used and returns the matching Token.
-func (db *DB) ValidateToken(ctx context.Context, plaintext string) (Token, error) {
+func (d *DB) ValidateToken(ctx context.Context, plaintext string) (db.Token, error) {
 	if len(plaintext) < tokenPrefixChars {
-		return Token{}, pgx.ErrNoRows
+		return db.Token{}, pgx.ErrNoRows
 	}
 	prefix := plaintext[:tokenPrefixChars]
 
-	rows, err := db.pool.Query(ctx, `
+	rows, err := d.pool.Query(ctx, `
 		SELECT id, name, token_hash, scope, created_at, last_used
 		FROM api_tokens
 		WHERE token_prefix = $1`, prefix)
 	if err != nil {
-		return Token{}, err
+		return db.Token{}, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var t Token
+		var t db.Token
 		var hash string
 		if err := rows.Scan(&t.ID, &t.Name, &hash, &t.Scope, &t.CreatedAt, &t.LastUsed); err != nil {
-			return Token{}, err
+			return db.Token{}, err
 		}
 		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(plaintext)) == nil {
-			_, _ = db.pool.Exec(ctx, `
+			_, _ = d.pool.Exec(ctx, `
 				UPDATE api_tokens SET last_used = now() WHERE id = $1`, t.ID)
 			return t, nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return Token{}, err
+		return db.Token{}, err
 	}
 
-	return Token{}, pgx.ErrNoRows
+	return db.Token{}, pgx.ErrNoRows
 }
 
 // ListTokens returns all API tokens (without hashes).
-func (db *DB) ListTokens(ctx context.Context) ([]Token, error) {
-	rows, err := db.pool.Query(ctx, `
+func (d *DB) ListTokens(ctx context.Context) ([]db.Token, error) {
+	rows, err := d.pool.Query(ctx, `
 		SELECT id, name, scope, created_at, last_used
 		FROM api_tokens
 		ORDER BY created_at`)
@@ -94,9 +93,9 @@ func (db *DB) ListTokens(ctx context.Context) ([]Token, error) {
 	}
 	defer rows.Close()
 
-	var tokens []Token
+	var tokens []db.Token
 	for rows.Next() {
-		var t Token
+		var t db.Token
 		if err := rows.Scan(&t.ID, &t.Name, &t.Scope, &t.CreatedAt, &t.LastUsed); err != nil {
 			return nil, err
 		}
@@ -106,8 +105,8 @@ func (db *DB) ListTokens(ctx context.Context) ([]Token, error) {
 }
 
 // DeleteToken removes an API token by name.
-func (db *DB) DeleteToken(ctx context.Context, name string) error {
-	tag, err := db.pool.Exec(ctx, `DELETE FROM api_tokens WHERE name = $1`, name)
+func (d *DB) DeleteToken(ctx context.Context, name string) error {
+	tag, err := d.pool.Exec(ctx, `DELETE FROM api_tokens WHERE name = $1`, name)
 	if err != nil {
 		return err
 	}
