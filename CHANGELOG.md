@@ -5,6 +5,22 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-05-14
+
+### Fixed
+
+- **RPM/DEB packages now build from source** — spec files and debian/rules compile with `go build` inside the build environment instead of copying pre-built binaries; packages are reproducible from source
+- **RPM binaries were not executable** — `cp` replaced with `install -m 0755`
+- **Packages installed to `/usr/local/bin`** — moved to `/usr/bin` (standard for distribution packages); systemd service files updated to match
+- **LICENSE missing from packages** — included via `%license` (RPM) and as `/usr/share/doc/*/copyright` (DEB) in all three packages
+- **Ansible connection plugin lost per-host inventory vars** in some AAP execution paths — restored variable manager access for multi-DC routing
+- **Ansible fact cache ignored `fact_caching_connection`** from ansible.cfg — now reads the configured URL before falling back to `DIRQ_SERVER_URL`
+- **Ansible collection Python client failed on self-signed TLS** — added `DIRQ_TLS_INSECURE` support
+
+### Changed
+
+- **`make` default target** is now `help` — shows all available targets instead of building
+
 ## [0.5.0] - 2026-05-14
 
 ### Added
@@ -143,6 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.5.1]: https://github.com/atgreen/dirq/releases/tag/v0.5.1
 [0.5.0]: https://github.com/atgreen/dirq/releases/tag/v0.5.0
 [0.4.0]: https://github.com/atgreen/dirq/releases/tag/v0.4.0
 [0.3.0]: https://github.com/atgreen/dirq/releases/tag/v0.3.0
