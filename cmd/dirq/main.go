@@ -365,7 +365,9 @@ Examples:
 // ─────────────────────────────────────────────────────────
 
 func graphCmd() *cobra.Command {
-	return &cobra.Command{
+	var dotOut bool
+
+	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "Show the agent topology tree",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -425,6 +427,34 @@ func graphCmd() *cobra.Command {
 				sortByHostname(n.children)
 			}
 
+			if dotOut {
+				fmt.Println("digraph dirq {")
+				fmt.Println("  rankdir=TB;")
+				fmt.Println("  node [shape=box, style=filled, fontname=\"Helvetica\"];")
+				fmt.Println("  \"dirq-server\" [shape=diamond, fillcolor=\"#4a90d9\", fontcolor=white];")
+				for id, n := range nodes {
+					color := "#90ee90" // green for online
+					if !n.online {
+						color = "#d3d3d3" // grey for offline
+					}
+					label := n.hostname
+					if n.role == "zone_leader" {
+						label += "\\n[ZL]"
+					}
+					fmt.Printf("  %q [label=%q, fillcolor=%q];\n", id, label, color)
+				}
+				for _, id := range roots {
+					fmt.Printf("  \"dirq-server\" -> %q;\n", id)
+				}
+				for id, n := range nodes {
+					for _, childID := range n.children {
+						fmt.Printf("  %q -> %q;\n", id, childID)
+					}
+				}
+				fmt.Println("}")
+				return nil
+			}
+
 			// Print tree.
 			fmt.Println("dirq-server")
 			var printTree func(ids []string, prefix string)
@@ -462,6 +492,9 @@ func graphCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&dotOut, "dot", false, "output in Graphviz DOT format")
+	return cmd
 }
 
 // ─────────────────────────────────────────────────────────
