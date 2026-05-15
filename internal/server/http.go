@@ -24,8 +24,11 @@ const tokenScopeKey contextKey = "tokenScope"
 func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 
+	// Rate limiter for broadcast endpoints: 10 requests/sec, burst of 20.
+	broadcastRL := newRateLimiter(10, 20)
+
 	// Read-only API routes (readonly or admin scope)
-	mux.HandleFunc("POST /api/v1/query", s.authMiddleware(requireScope("readonly", s.handleQuery)))
+	mux.HandleFunc("POST /api/v1/query", s.authMiddleware(requireScope("readonly", s.rateLimitMiddleware(broadcastRL, s.handleQuery))))
 	mux.HandleFunc("GET /api/v1/hosts", s.authMiddleware(requireScope("readonly", s.handleListHosts)))
 	mux.HandleFunc("GET /api/v1/hosts/{id}", s.authMiddleware(requireScope("readonly", s.handleGetHost)))
 	mux.HandleFunc("GET /api/v1/hosts/{id}/facts", s.authMiddleware(requireScope("readonly", s.handleGetHostFacts)))
@@ -42,8 +45,8 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/v1/tokens/{name}", s.authMiddleware(requireScope("admin", s.handleDeleteToken)))
 
 	// Exec endpoints (admin scope only)
-	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(requireScope("admin", s.handleExecCommand)))
-	mux.HandleFunc("POST /api/v1/exec_multi", s.authMiddleware(requireScope("admin", s.handleExecMulti)))
+	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(broadcastRL, s.handleExecCommand))))
+	mux.HandleFunc("POST /api/v1/exec_multi", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(broadcastRL, s.handleExecMulti))))
 	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.handlePutFile)))
 	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
 	mux.HandleFunc("POST /api/v1/deploy", s.authMiddleware(requireScope("admin", s.handleBroadcastDeploy)))

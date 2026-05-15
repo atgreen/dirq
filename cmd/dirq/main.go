@@ -916,16 +916,30 @@ Examples:
 
 			for dec.More() {
 				var r struct {
-					Type     string `json:"type"`
-					Hostname string `json:"hostname"`
-					RC       int    `json:"rc"`
-					Stdout   string `json:"stdout"`
-					Stderr   string `json:"stderr"`
-					Success  bool   `json:"success"`
-					Error    string `json:"error"`
+					Type         string `json:"type"`
+					Hostname     string `json:"hostname"`
+					RC           int    `json:"rc"`
+					Stdout       string `json:"stdout"`
+					Stderr       string `json:"stderr"`
+					Success      bool   `json:"success"`
+					Error        string `json:"error"`
+					Received     int    `json:"received"`
+					TotalTargets int    `json:"total_targets"`
 				}
 				if err := dec.Decode(&r); err != nil {
 					return fmt.Errorf("failed to read result: %w", err)
+				}
+
+				if r.Type == "progress" {
+					if !jsonOut {
+						fmt.Fprintf(os.Stderr, "\r\033[K%d/%d hosts responded...", r.Received, r.TotalTargets)
+					}
+					continue
+				}
+
+				// Clear progress line before printing result.
+				if !jsonOut {
+					fmt.Fprintf(os.Stderr, "\r\033[K")
 				}
 
 				received++

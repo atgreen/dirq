@@ -101,9 +101,8 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		return nil
 	})
 	if err != nil {
-		s.log.Error("topology assignment failed, defaulting to zone_leader", "error", err)
-		a = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
-		s.db.SetAgentRole(ctx, agent.ID, "zone_leader")
+		s.log.Error("topology assignment failed, rejecting registration", "error", err)
+		return nil, fmt.Errorf("topology assignment failed (retry later): %w", err)
 	}
 
 	roleName := "relay"

@@ -560,18 +560,19 @@ type execMultiRequest struct {
 
 // execMultiResult is each NDJSON line streamed as agents respond.
 type execMultiResult struct {
-	Type       string `json:"type"`
-	RequestID  string `json:"request_id,omitempty"`
-	AgentID    string `json:"agent_id,omitempty"`
-	Hostname   string `json:"hostname,omitempty"`
-	RC         int    `json:"rc,omitempty"`
-	Stdout     string `json:"stdout,omitempty"`          // base64-encoded
-	Stderr     string `json:"stderr,omitempty"`          // base64-encoded
-	Success    bool   `json:"success"`
-	Error      string `json:"error,omitempty"`
-	StartedAt  string `json:"started_at,omitempty"`
-	FinishedAt string `json:"finished_at,omitempty"`
-	TotalTargets int  `json:"total_targets,omitempty"`
+	Type         string `json:"type"`
+	RequestID    string `json:"request_id,omitempty"`
+	AgentID      string `json:"agent_id,omitempty"`
+	Hostname     string `json:"hostname,omitempty"`
+	RC           int    `json:"rc,omitempty"`
+	Stdout       string `json:"stdout,omitempty"`          // base64-encoded
+	Stderr       string `json:"stderr,omitempty"`          // base64-encoded
+	Success      bool   `json:"success"`
+	Error        string `json:"error,omitempty"`
+	StartedAt    string `json:"started_at,omitempty"`
+	FinishedAt   string `json:"finished_at,omitempty"`
+	TotalTargets int    `json:"total_targets,omitempty"`
+	Received     int    `json:"received,omitempty"`
 }
 
 // execBroadcastSession tracks an in-flight broadcast exec.
@@ -785,6 +786,8 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 	defer hardTimeout.Stop()
 	idleTimeout := time.NewTimer(30 * time.Second)
 	defer idleTimeout.Stop()
+	progressTicker := time.NewTicker(5 * time.Second)
+	defer progressTicker.Stop()
 
 	received := 0
 	for received < len(targets) {
@@ -818,6 +821,13 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			idleTimeout.Reset(30 * time.Second)
+		case <-progressTicker.C:
+			enc.Encode(execMultiResult{
+				Type:         "progress",
+				Received:     received,
+				TotalTargets: len(targets),
+			})
+			flusher.Flush()
 		case <-idleTimeout.C:
 			return
 		case <-hardTimeout.C:
