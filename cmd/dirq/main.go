@@ -682,7 +682,8 @@ Examples:
   dirq exec --become "systemctl status nginx"
   dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
   dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'`,
-		Args: cobra.ArbitraryArgs,
+		Args:         cobra.ArbitraryArgs,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if scriptFile == "" && len(args) == 0 {
 				return fmt.Errorf("provide a command string or use --script <file>")
