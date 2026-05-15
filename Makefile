@@ -57,36 +57,36 @@ cross:  ## Cross-compile for all release platforms
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-amd64 ./cmd/dirq
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-arm64 ./cmd/dirq
 
-demo: build  ## Start local demo (server + postgres + agent)
+demo: build  ## Start local demo (server + 10 agents)
 	podman build --target server -t localhost/dirq-server:dev .
-	podman kube play demo.yml
+	podman build --target agent  -t localhost/dirq-agent:dev .
+	-podman network create dirq-demo 2>/dev/null || true
+	podman kube play --network dirq-demo demo.yml
 	@echo
-	@echo "Waiting for server..."
-	@sleep 4
+	@echo "Waiting for fleet to register..."
+	@sleep 6
 	@echo
-	@echo "Starting local agent..."
-	@DIRQ_TLS_DISABLED=true $(BINDIR)/dirq-agent &
-	@sleep 2
-	@echo
-	@echo "Demo running:"
+	@echo "Demo fleet running (10 agents):"
 	@echo "  Server:  http://localhost:8090"
 	@echo "  gRPC:    localhost:50051"
-	@echo "  Agent:   connected"
 	@echo
 	@echo "Try:"
 	@echo "  export DIRQ_SERVER_URL=http://localhost:8090"
 	@echo "  ./bin/dirq hosts list"
 	@echo "  ./bin/dirq select hostname, os_info.os, cpu.logical_cores"
 	@echo "  ./bin/dirq exec \"uptime\""
+	@echo "  ./bin/dirq exec \"hostname\" WHERE tag.env = 'prod'"
+	@echo "  ./bin/dirq select hostname WHERE tag.role = 'database'"
+	@echo "  ./bin/dirq doctor"
 	@echo
 	@echo "Stop with: make demo-down"
 
-demo-down:  ## Stop the local demo
-	-pkill -f "$(BINDIR)/dirq-agent" 2>/dev/null || true
-	podman kube down demo.yml
+demo-down:  ## Stop the demo fleet
+	-podman kube down demo.yml 2>/dev/null || true
+	-podman network rm dirq-demo 2>/dev/null || true
 
 demo-logs:  ## Tail demo server logs
-	podman logs -f dirq-demo-dirq-server
+	podman logs -f dirq-server-server
 
 help:  ## Show this help
 	@grep -E '^[a-z][-a-z]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'

@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 #
-# Local demo pod — run with: podman kube play demo.yml
-# Stop with:                 podman kube down demo.yml
+# Local demo fleet — run with: make demo
+# Stop with:                   make demo-down
 #
-# This creates a single pod with postgres and dirq-server.
-# Run a local dirq-agent separately to connect.
+# Creates a server pod (postgres + dirq-server) and 10 agent pods,
+# all on a shared podman network.
 
 apiVersion: v1
 kind: Pod
 metadata:
-  name: dirq-demo
+  name: dirq-server
   labels:
-    app: dirq
+    app: dirq-server
 spec:
   containers:
     - name: postgres
@@ -24,10 +24,8 @@ spec:
           value: dirq
         - name: POSTGRES_DB
           value: dirq
-      ports:
-        - containerPort: 5432
 
-    - name: dirq-server
+    - name: server
       image: localhost/dirq-server:dev
       env:
         - name: DIRQ_GRPC_ADDR
@@ -47,3 +45,203 @@ spec:
           hostPort: 50051
         - containerPort: 8080
           hostPort: 8090
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-01
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=prod,role=webserver"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-02
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=prod,role=webserver"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-03
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=prod,role=database"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-04
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=prod,role=database"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-05
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=staging,role=webserver"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-06
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=staging,role=webserver"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-07
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=staging,role=database"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-08
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=dev,role=workstation"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-09
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=dev,role=workstation"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dirq-agent-10
+  labels:
+    app: dirq-agent
+spec:
+  containers:
+    - name: agent
+      image: localhost/dirq-agent:dev
+      env:
+        - name: DIRQ_SERVER
+          value: "dirq-server:50051"
+        - name: DIRQ_TLS_DISABLED
+          value: "true"
+        - name: DIRQ_EXEC_ENABLED
+          value: "true"
+        - name: DIRQ_TAGS
+          value: "env=dev,role=monitoring"
