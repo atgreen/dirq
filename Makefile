@@ -57,27 +57,31 @@ cross:  ## Cross-compile for all release platforms
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-amd64 ./cmd/dirq
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-arm64 ./cmd/dirq
 
+DEMO_CERTS := $(CURDIR)/.demo-certs
+
 demo: demo-down build  ## Start local demo (server + 10 agents)
+	@# Generate TLS certs for the demo.
+	$(BINDIR)/dirq tls generate --dir $(DEMO_CERTS)
+	@# Build container images.
 	podman build --target server -t localhost/dirq-server:dev .
 	podman build --target agent  -t localhost/dirq-agent:dev .
+	@# Substitute the cert path into the manifest and start.
 	-podman network create dirq-demo 2>/dev/null || true
-	podman kube play --network dirq-demo demo.yml
+	sed 's|DEMO_CERTS_DIR|$(DEMO_CERTS)|g' demo.yml | podman kube play --network dirq-demo -
 	@echo
 	@echo "Waiting for fleet to register..."
 	@sleep 6
 	@echo
-	@echo "Demo fleet running (10 agents):"
-	@echo "  Server:  http://localhost:19080"
-	@echo "  gRPC:    localhost:19051"
+	@echo "Demo fleet running (10 agents, TLS enabled):"
+	@echo "  Server:  https://localhost:19080"
+	@echo "  gRPC:    localhost:19051 (TLS)"
 	@echo
 	@echo "Try:"
-	@echo "  export DIRQ_SERVER_URL=http://localhost:19080"
-	@echo "  ./bin/dirq hosts list"
-	@echo "  ./bin/dirq select hostname, os_info.os, cpu.logical_cores"
-	@echo "  ./bin/dirq exec \"uptime\""
-	@echo "  ./bin/dirq exec \"hostname\" WHERE tag.env = 'prod'"
-	@echo "  ./bin/dirq select hostname WHERE tag.role = 'database'"
-	@echo "  ./bin/dirq doctor"
+	@echo "  export DIRQ_SERVER_URL=https://localhost:19080"
+	@echo "  ./bin/dirq --tls-insecure hosts list"
+	@echo "  ./bin/dirq --tls-insecure select hostname, os_info.os, cpu.logical_cores"
+	@echo "  ./bin/dirq --tls-insecure exec \"uptime\""
+	@echo "  ./bin/dirq --tls-insecure doctor"
 	@echo
 	@echo "Stop with: make demo-down"
 
@@ -85,6 +89,7 @@ demo-down:  ## Stop the demo fleet
 	-podman kube down demo.yml 2>/dev/null || true
 	-podman pod ls --format '{{.Name}}' | grep -E '^dirq-|^demo-' | xargs -r podman pod rm -f 2>/dev/null || true
 	-podman network rm dirq-demo 2>/dev/null || true
+	rm -rf $(DEMO_CERTS)
 
 demo-logs:  ## Tail demo server logs
 	podman logs -f dirq-server-server

@@ -5,7 +5,7 @@
 # Stop with:                   make demo-down
 #
 # Creates a server pod (postgres + dirq-server) and 10 agent pods,
-# all on a shared podman network.
+# all on a shared podman network with TLS and authentication enabled.
 
 apiVersion: v1
 kind: Pod
@@ -14,6 +14,10 @@ metadata:
   labels:
     app: dirq-server
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: postgres
       image: docker.io/library/postgres:17
@@ -27,6 +31,10 @@ spec:
 
     - name: server
       image: localhost/dirq-server:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_GRPC_ADDR
           value: ":50051"
@@ -36,10 +44,12 @@ spec:
           value: "postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable"
         - name: DIRQ_POD_ID
           value: "demo-server"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
-        - name: DIRQ_AUTH_DISABLED
-          value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/server.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/server.key"
       ports:
         - containerPort: 50051
           hostPort: 19051
@@ -53,16 +63,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=prod,role=webserver"
 ---
@@ -73,16 +95,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=prod,role=webserver"
 ---
@@ -93,16 +127,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=prod,role=database"
 ---
@@ -113,16 +159,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=prod,role=database"
 ---
@@ -133,16 +191,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=staging,role=webserver"
 ---
@@ -153,16 +223,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=staging,role=webserver"
 ---
@@ -173,16 +255,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=staging,role=database"
 ---
@@ -193,16 +287,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=dev,role=workstation"
 ---
@@ -213,16 +319,28 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=dev,role=workstation"
 ---
@@ -233,15 +351,27 @@ metadata:
   labels:
     app: dirq-agent
 spec:
+  volumes:
+    - name: certs
+      hostPath:
+        path: DEMO_CERTS_DIR
   containers:
     - name: agent
       image: localhost/dirq-agent:dev
+      volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
       env:
         - name: DIRQ_SERVER
           value: "dirq-server:50051"
-        - name: DIRQ_TLS_DISABLED
-          value: "true"
         - name: DIRQ_EXEC_ENABLED
           value: "true"
+        - name: DIRQ_TLS_CA
+          value: "/certs/ca.crt"
+        - name: DIRQ_TLS_CERT
+          value: "/certs/agent.crt"
+        - name: DIRQ_TLS_KEY
+          value: "/certs/agent.key"
         - name: DIRQ_TAGS
           value: "env=dev,role=monitoring"

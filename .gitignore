@@ -19,3 +19,4 @@ certs/
 
 # OS
 .DS_Store
+.demo-certs/
