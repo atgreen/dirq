@@ -43,6 +43,20 @@ func (d *DB) GetFacts(ctx context.Context, agentID string) ([]db.Fact, error) {
 	return collectFacts(rows)
 }
 
+// GetAllFacts retrieves all facts for all agents in a single query.
+func (d *DB) GetAllFacts(ctx context.Context) ([]db.Fact, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT agent_id, module, data, collected_at
+		FROM facts
+		ORDER BY agent_id, module`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return collectFacts(rows)
+}
+
 // GetFactsByModule retrieves all facts for a given module across all agents.
 func (d *DB) GetFactsByModule(ctx context.Context, module string) ([]db.Fact, error) {
 	rows, err := d.pool.Query(ctx, `

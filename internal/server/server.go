@@ -71,6 +71,15 @@ type Server struct {
 	// re-demoting them every cycle.
 	demoteMu       sync.Mutex
 	demoteCooldown map[string]demoteRecord
+
+	// Bounded worker pool for fact upserts (#7). Prevents unbounded
+	// goroutine creation when thousands of query results arrive at once.
+	factCh chan factUpsert
+}
+
+type factUpsert struct {
+	agentID string
+	data    map[string]any
 }
 
 type agentStream struct {
@@ -101,6 +110,7 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 		sessionTokens:  make(map[string]string),
 		reassigning:    make(map[string]time.Time),
 		demoteCooldown: make(map[string]demoteRecord),
+		factCh:         make(chan factUpsert, 4096),
 	}
 }
 
@@ -180,9 +190,10 @@ func (s *Server) Start(ctx context.Context) error {
 		s.log.Warn("failed to register server peer", "error", err)
 	}
 
-	// Start the stale-agent reaper and topology rebalancer.
+	// Start the stale-agent reaper, topology rebalancer, and fact workers.
 	go s.startReaper(ctx)
 	go s.startRebalancer(ctx)
+	s.startFactWorkers(ctx, 8)
 
 	capacity := s.topoCfg.MaxZoneLeaders * s.topoCfg.MaxChildrenPerNode * s.topoCfg.MaxChildrenPerNode
 	s.log.Info("DirQ server starting",

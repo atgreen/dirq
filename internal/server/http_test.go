@@ -90,6 +90,14 @@ func (m *mockDB) GetFacts(_ context.Context, agentID string) ([]db.Fact, error) 
 	return m.facts[agentID], nil
 }
 
+func (m *mockDB) GetAllFacts(_ context.Context) ([]db.Fact, error) {
+	var all []db.Fact
+	for _, facts := range m.facts {
+		all = append(all, facts...)
+	}
+	return all, nil
+}
+
 func (m *mockDB) ListQueries(_ context.Context, _ int) ([]db.Query, error) {
 	return m.queries, nil
 }

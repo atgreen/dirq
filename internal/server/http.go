@@ -506,6 +506,13 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 
 	hostvars := map[string]any{}
 
+	// Bulk-load all facts in a single query instead of N+1 (#6).
+	allFacts, _ := s.db.GetAllFacts(ctx)
+	factsByAgent := map[string][]db.Fact{}
+	for _, f := range allFacts {
+		factsByAgent[f.AgentID] = append(factsByAgent[f.AgentID], f)
+	}
+
 	// groups maps group name -> list of hostnames.
 	groups := map[string][]string{}
 	// parentGroups maps parent group name -> list of child group names.
@@ -519,7 +526,7 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		hostname := agent.Hostname
 
 		// Collect host vars.
-		facts, _ := s.db.GetFacts(ctx, agent.ID)
+		facts := factsByAgent[agent.ID]
 		hostFacts := map[string]any{
 			"dirq_agent_id":      agent.ID,
 			"dirq_os":            agent.OS,

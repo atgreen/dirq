@@ -6,6 +6,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"os"
@@ -186,22 +188,30 @@ func buildCommandWindows(ctx context.Context, cmdStr string, become bool, become
 	// Run as a different user using a one-shot scheduled task.
 	// This avoids the interactive password prompt of runas.exe.
 	// The SYSTEM account can create and run tasks as any local user.
+	// Use a unique task name and output file per request to avoid
+	// collisions and symlink attacks (#5, #10).
+	taskID := fmt.Sprintf("DirQExec-%d", time.Now().UnixNano())
+	outFile := filepath.Join(os.TempDir(), taskID+".txt")
 	psScript := fmt.Sprintf(
-		`$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c %s > %%TEMP%%\dirq_out.txt 2>&1'`+"\n"+
+		`$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c %s > %s 2>&1'`+"\n"+
 			`$principal = New-ScheduledTaskPrincipal -UserId '%s' -LogonType S4U -RunLevel Highest`+"\n"+
 			`$task = New-ScheduledTask -Action $action -Principal $principal`+"\n"+
-			`Register-ScheduledTask -TaskName 'DirQExec' -InputObject $task -Force | Out-Null`+"\n"+
-			`Start-ScheduledTask -TaskName 'DirQExec'`+"\n"+
+			`Register-ScheduledTask -TaskName '%s' -InputObject $task -Force | Out-Null`+"\n"+
+			`Start-ScheduledTask -TaskName '%s'`+"\n"+
 			// Wait for completion (up to timeout is handled by context).
-			`do { Start-Sleep -Milliseconds 250; $info = Get-ScheduledTaskInfo -TaskName 'DirQExec' } while ($info.LastTaskResult -eq 267009)`+"\n"+
-			`Unregister-ScheduledTask -TaskName 'DirQExec' -Confirm:$false`+"\n"+
-			`Get-Content %%TEMP%%\dirq_out.txt`+"\n"+
-			`Remove-Item %%TEMP%%\dirq_out.txt -Force -ErrorAction SilentlyContinue`,
+			`do { Start-Sleep -Milliseconds 250; $info = Get-ScheduledTaskInfo -TaskName '%s' } while ($info.LastTaskResult -eq 267009)`+"\n"+
+			`Unregister-ScheduledTask -TaskName '%s' -Confirm:$false`+"\n"+
+			`Get-Content '%s'`+"\n"+
+			`Remove-Item '%s' -Force -ErrorAction SilentlyContinue`,
 		escapePowerShellArg(cmdStr),
+		outFile,
 		escapePowerShellArg(becomeUser),
+		taskID, taskID, taskID, taskID,
+		outFile, outFile,
 	)
 
-	return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
+		"-EncodedCommand", encodeUTF16Base64(psScript))
 }
 
 // handlePutFile writes content to a file on the agent.
@@ -226,7 +236,8 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		return
 	}
 
-	if !filepath.IsAbs(req.GetDestPath()) {
+	destPath := filepath.Clean(req.GetDestPath())
+	if !filepath.IsAbs(destPath) {
 		a.sendFileChunk(&pb.FileChunk{
 			RequestId: req.GetRequestId(),
 			AgentId:   a.agentID,
@@ -256,7 +267,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		if becomeUser == "" {
 			becomeUser = "root"
 		}
-		cmdStr := fmt.Sprintf("sudo -n -u %s tee %s > /dev/null", shellQuote(becomeUser), shellQuote(req.GetDestPath()))
+		cmdStr := fmt.Sprintf("sudo -n -u %s tee %s > /dev/null", shellQuote(becomeUser), shellQuote(destPath))
 		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 		cmd.Stdin = bytes.NewReader(req.GetContent())
 		var stderrBuf bytes.Buffer
@@ -264,7 +275,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		if err := cmd.Run(); err != nil {
 			writeErr = fmt.Errorf("sudo tee failed: %s: %w", stderrBuf.String(), err)
 		} else if req.GetMode() != 0 {
-			chmodCmd := fmt.Sprintf("sudo -n chmod %04o %s", req.GetMode(), shellQuote(req.GetDestPath()))
+			chmodCmd := fmt.Sprintf("sudo -n chmod %04o %s", req.GetMode(), shellQuote(destPath))
 			chCmd := exec.CommandContext(ctx, "sh", "-c", chmodCmd)
 			if err := chCmd.Run(); err != nil {
 				writeErr = fmt.Errorf("chmod failed: %w", err)
@@ -277,11 +288,11 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 			mode = os.FileMode(req.GetMode())
 		}
 		// Ensure parent directory exists.
-		dir := filepath.Dir(req.GetDestPath())
+		dir := filepath.Dir(destPath)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			writeErr = fmt.Errorf("mkdir failed: %w", err)
 		} else {
-			writeErr = os.WriteFile(req.GetDestPath(), req.GetContent(), mode)
+			writeErr = os.WriteFile(destPath, req.GetContent(), mode)
 		}
 	}
 
@@ -297,7 +308,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		a.log.Error("put_file failed", slog.String("request_id", req.GetRequestId()), slog.String("error", writeErr.Error()))
 	} else {
 		ack.Success = true
-		a.log.Info("put_file completed", slog.String("request_id", req.GetRequestId()), slog.String("dest_path", req.GetDestPath()))
+		a.log.Info("put_file completed", slog.String("request_id", req.GetRequestId()), slog.String("dest_path", destPath))
 	}
 
 	a.sendFileChunk(ack)
@@ -324,7 +335,8 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 		return
 	}
 
-	if !filepath.IsAbs(req.GetSrcPath()) {
+	srcPath := filepath.Clean(req.GetSrcPath())
+	if !filepath.IsAbs(srcPath) {
 		a.sendFetchFileResponse(&pb.FetchFileResponse{
 			RequestId: req.GetRequestId(),
 			AgentId:   a.agentID,
@@ -346,7 +358,7 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 		if becomeUser == "" {
 			becomeUser = "root"
 		}
-		cmdStr := fmt.Sprintf("sudo -n -u %s cat %s", shellQuote(becomeUser), shellQuote(req.GetSrcPath()))
+		cmdStr := fmt.Sprintf("sudo -n -u %s cat %s", shellQuote(becomeUser), shellQuote(srcPath))
 		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 		var stdoutBuf, stderrBuf bytes.Buffer
 		cmd.Stdout = &stdoutBuf
@@ -359,7 +371,7 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 		}
 	} else {
 		// Direct read. On Windows the agent runs as SYSTEM so it can read anything.
-		info, err := os.Stat(req.GetSrcPath())
+		info, err := os.Stat(srcPath)
 		if err != nil {
 			readErr = err
 		} else {
@@ -370,7 +382,7 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 				if runtime.GOOS != "windows" {
 					fileMode = int32(info.Mode().Perm())
 				}
-				content, readErr = os.ReadFile(req.GetSrcPath())
+				content, readErr = os.ReadFile(srcPath)
 			}
 		}
 	}
@@ -390,7 +402,7 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 		resp.Content = content
 		resp.Mode = fileMode
 		resp.Size = fileSize
-		a.log.Info("fetch_file completed", slog.String("request_id", req.GetRequestId()), slog.String("src_path", req.GetSrcPath()), slog.Int64("size", fileSize))
+		a.log.Info("fetch_file completed", slog.String("request_id", req.GetRequestId()), slog.String("src_path", srcPath), slog.Int64("size", fileSize))
 	}
 
 	a.sendFetchFileResponse(resp)
@@ -434,7 +446,7 @@ func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
 	defer cancel()
 
 	// Phase 1: Write the package to disk.
-	destPath := req.GetDestPath()
+	destPath := filepath.Clean(req.GetDestPath())
 	if !filepath.IsAbs(destPath) {
 		a.sendDeployResponse(&pb.DeployResponse{
 			RequestId: req.GetRequestId(),
@@ -688,4 +700,14 @@ func escapePowerShellArg(s string) string {
 		}
 	}
 	return result
+}
+
+// encodeUTF16Base64 encodes a string as UTF-16LE base64 for PowerShell's
+// -EncodedCommand flag. This avoids all shell metacharacter injection risks.
+func encodeUTF16Base64(s string) string {
+	var buf bytes.Buffer
+	for _, r := range s {
+		binary.Write(&buf, binary.LittleEndian, uint16(r))
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }

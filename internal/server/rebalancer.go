@@ -103,9 +103,6 @@ func (s *Server) promoteOneRelay(ctx context.Context) {
 	candidate := candidates[0]
 	childCount, _ := s.db.CountChildren(ctx, candidate.ID)
 
-	s.db.SetAgentRole(ctx, candidate.ID, "zone_leader")
-	s.db.SetAgentParent(ctx, candidate.ID, "")
-
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_PeerUpdate{
 			PeerUpdate: &pb.PeerUpdate{
@@ -119,13 +116,15 @@ func (s *Server) promoteOneRelay(ctx context.Context) {
 		s.signServerMessage(msg)
 	}
 
-	// Try direct stream, then route through mesh.
-	s.sendToAgent(ctx, candidate.ID, msg)
-
-	s.log.Info("rebalancer: promoted relay to zone leader",
-		"agent", candidate.Hostname,
-		"children", childCount,
-	)
+	// Only update DB after successfully sending the message.
+	if s.sendToAgent(ctx, candidate.ID, msg) {
+		s.db.SetAgentRole(ctx, candidate.ID, "zone_leader")
+		s.db.SetAgentParent(ctx, candidate.ID, "")
+		s.log.Info("rebalancer: promoted relay to zone leader",
+			"agent", candidate.Hostname,
+			"children", childCount,
+		)
+	}
 }
 
 // demoteOne moves one non-ZL agent from a direct server connection to a ZL.

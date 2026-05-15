@@ -473,17 +473,34 @@ func (s *Server) handleQueryResult(result *pb.QueryResult) {
 		}
 	}
 
-	// Also cache the facts in the database.
+	// Queue fact upsert for the bounded worker pool (#7).
 	if result.Success && result.Data != nil {
+		select {
+		case s.factCh <- factUpsert{agentID: result.AgentId, data: result.Data.AsMap()}:
+		default:
+			s.log.Warn("fact upsert queue full, dropping", "agent_id", result.AgentId)
+		}
+	}
+}
+
+// startFactWorkers launches n goroutines that drain the fact upsert channel.
+func (s *Server) startFactWorkers(ctx context.Context, n int) {
+	for i := 0; i < n; i++ {
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			data := result.Data.AsMap()
-			for module, moduleData := range data {
-				if md, ok := moduleData.(map[string]any); ok {
-					if err := s.db.UpsertFact(ctx, result.AgentId, module, md); err != nil {
-						s.log.Error("failed to cache fact", "agent_id", result.AgentId, "module", module, "error", err)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case fu := <-s.factCh:
+					upsertCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+					for module, moduleData := range fu.data {
+						if md, ok := moduleData.(map[string]any); ok {
+							if err := s.db.UpsertFact(upsertCtx, fu.agentID, module, md); err != nil {
+								s.log.Error("failed to cache fact", "agent_id", fu.agentID, "module", module, "error", err)
+							}
+						}
 					}
+					cancel()
 				}
 			}
 		}()
