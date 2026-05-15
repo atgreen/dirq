@@ -103,7 +103,7 @@ jobs:
     needs: [extract-version]
     runs-on: ubuntu-latest
     container:
-      image: almalinux:9
+      image: almalinux:8
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
