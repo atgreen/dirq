@@ -57,7 +57,7 @@ cross:  ## Cross-compile for all release platforms
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-amd64 ./cmd/dirq
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/dirq-darwin-arm64 ./cmd/dirq
 
-demo: build  ## Start local demo (server + 10 agents)
+demo: demo-down build  ## Start local demo (server + 10 agents)
 	podman build --target server -t localhost/dirq-server:dev .
 	podman build --target agent  -t localhost/dirq-agent:dev .
 	-podman network create dirq-demo 2>/dev/null || true

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/atgreen/dirq/internal/config"
 	"github.com/atgreen/dirq/internal/db"
@@ -46,11 +47,24 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Connect to database.
-	database, err := db.New(ctx, cfg.DBURL)
-	if err != nil {
-		log.Error("failed to connect to database", "error", err)
-		os.Exit(1)
+	// Connect to database with retry (postgres may still be starting).
+	var database *db.DB
+	for attempt := 1; ; attempt++ {
+		var err error
+		database, err = db.New(ctx, cfg.DBURL)
+		if err == nil {
+			break
+		}
+		if attempt >= 30 {
+			log.Error("failed to connect to database after retries", "error", err)
+			os.Exit(1)
+		}
+		log.Warn("database not ready, retrying...", "attempt", attempt, "error", err)
+		select {
+		case <-time.After(2 * time.Second):
+		case <-ctx.Done():
+			os.Exit(1)
+		}
 	}
 	defer database.Close()
 
