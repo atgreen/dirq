@@ -5,6 +5,31 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-05-15
+
+### Added
+
+- **SQLite backend** — embedded SQLite database as the default, eliminating the PostgreSQL dependency for single-server deployments; set `DIRQ_DB_URL=postgres://...` to use PostgreSQL instead
+- **Field projection and tabular output** — `SELECT os_info.os, packages.name` now returns flat rows with only the requested fields; array modules (packages, services, disk, network) are expanded into individual rows; CLI renders results as aligned tables instead of JSON
+- **Windows CLI installer** — NSIS installer (`dirq-cli-VERSION-setup.exe`) installs the CLI binary and connection plugin, adds to PATH
+- **macOS client packages** — tarballs for amd64 and arm64 with CLI binary, connection plugin, and LICENSE
+- **Ansible connection plugin in all packages** — RPM, DEB, and `make install` now include the standalone connection plugin at `/usr/share/dirq/connection_plugins/`; CLI searches standard install paths automatically
+- **`make demo`** — local 10-agent demo fleet using `podman kube play` with TLS, auth, and SQLite; prints bootstrap token for copy/paste setup
+- **`dirq doctor`** — checks Ansible version (minimum 2.15), `ansible` CLI availability, and verifies the connection plugin file exists
+
+### Changed
+
+- **Default database is SQLite** — `sqlite:///var/lib/dirq/dirq.db` unless `DIRQ_DB_URL` specifies PostgreSQL; server binary now requires CGO
+- **Auth disabled skips all validation** — previously validated stale tokens even when `DIRQ_AUTH_DISABLED=true`
+- **Demo uses distinctive ports** — 19080 (REST) and 19051 (gRPC) to avoid conflicts
+
+### Fixed
+
+- **`dirq run` failed with self-signed TLS** — CLI now forwards `--tls-insecure` as `DIRQ_TLS_INSECURE=true` to the Ansible subprocess
+- **Containerfile installed binaries to `/usr/local/bin`** — moved to `/usr/bin` for consistency with RPM/DEB packages
+- **CLI printed usage text on runtime errors** — `SilenceUsage` set globally so command failures don't dump help
+- **Server exited immediately if database wasn't ready** — now retries connection for up to 60 seconds
+
 ## [0.5.1] - 2026-05-14
 
 ### Fixed
@@ -159,6 +184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.6.0]: https://github.com/atgreen/dirq/releases/tag/v0.6.0
 [0.5.1]: https://github.com/atgreen/dirq/releases/tag/v0.5.1
 [0.5.0]: https://github.com/atgreen/dirq/releases/tag/v0.5.0
 [0.4.0]: https://github.com/atgreen/dirq/releases/tag/v0.4.0
