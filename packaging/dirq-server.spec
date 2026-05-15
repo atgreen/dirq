@@ -25,14 +25,17 @@ CGO_ENABLED=1 go build -ldflags "-X main.version=%{_version}" -o dirq-server ./c
 %install
 mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/lib/systemd/system
+mkdir -p %{buildroot}/etc/dirq
 mkdir -p %{buildroot}/usr/share/licenses/dirq-server
 install -m 0755 dirq-server %{buildroot}/usr/bin/dirq-server
 install -m 0644 packaging/dirq-server.service %{buildroot}/usr/lib/systemd/system/
+install -m 0640 packaging/server.conf %{buildroot}/etc/dirq/server.conf
 install -m 0644 LICENSE %{buildroot}/usr/share/licenses/dirq-server/LICENSE
 
 %files
 /usr/bin/dirq-server
 /usr/lib/systemd/system/dirq-server.service
+%config(noreplace) /etc/dirq/server.conf
 %license /usr/share/licenses/dirq-server/LICENSE
 
 %post
