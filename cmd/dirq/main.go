@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -1685,12 +1686,26 @@ func doctorCmd() *cobra.Command {
 
 			// ── Local tools ──
 
-			check("Ansible installed", func() (string, string) {
+			check("ansible-playbook", func() (string, string) {
 				out, err := exec.Command("ansible-playbook", "--version").Output()
 				if err != nil {
-					return "warn", "not found (dirq run/deploy won't work)"
+					return "warn", "not found (dirq run won't work)"
 				}
-				// First line is "ansible-playbook [core X.Y.Z]"
+				lines := strings.SplitN(string(out), "\n", 2)
+				version := strings.TrimSpace(lines[0])
+				if v := parseAnsibleCoreVersion(version); v != "" {
+					if !ansibleVersionAtLeast(v, "2.15") {
+						return "warn", fmt.Sprintf("%s (minimum 2.15 required)", version)
+					}
+				}
+				return "ok", version
+			})
+
+			check("ansible", func() (string, string) {
+				out, err := exec.Command("ansible", "--version").Output()
+				if err != nil {
+					return "warn", "not found (dirq run --module won't work)"
+				}
 				lines := strings.SplitN(string(out), "\n", 2)
 				return "ok", strings.TrimSpace(lines[0])
 			})
@@ -1698,9 +1713,13 @@ func doctorCmd() *cobra.Command {
 			check("Connection plugin", func() (string, string) {
 				dir := connectionPluginDir()
 				if dir == "" {
-					return "warn", "not found relative to binary"
+					return "warn", "not found (dirq run won't work without it)"
 				}
-				return "ok", dir
+				pluginFile := filepath.Join(dir, "dirq.py")
+				if _, err := os.Stat(pluginFile); err != nil {
+					return "warn", fmt.Sprintf("directory found but dirq.py missing: %s", dir)
+				}
+				return "ok", pluginFile
 			})
 
 			// ── Summary ──
@@ -2271,6 +2290,38 @@ func dataField(data map[string]any, module, field string) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return ""
+}
+
+// parseAnsibleCoreVersion extracts the version from ansible-playbook output.
+// Input: "ansible-playbook [core 2.20.5]" → "2.20.5"
+func parseAnsibleCoreVersion(line string) string {
+	start := strings.Index(line, "[core ")
+	if start < 0 {
+		return ""
+	}
+	start += len("[core ")
+	end := strings.Index(line[start:], "]")
+	if end < 0 {
+		return ""
+	}
+	return line[start : start+end]
+}
+
+// ansibleVersionAtLeast checks if version >= minimum using simple major.minor comparison.
+func ansibleVersionAtLeast(version, minimum string) bool {
+	vParts := strings.SplitN(version, ".", 3)
+	mParts := strings.SplitN(minimum, ".", 3)
+	for i := 0; i < len(mParts) && i < len(vParts); i++ {
+		v, _ := strconv.Atoi(vParts[i])
+		m, _ := strconv.Atoi(mParts[i])
+		if v > m {
+			return true
+		}
+		if v < m {
+			return false
+		}
+	}
+	return true
 }
 
 func hostIDOrName(names []string, idx int, fallback string) string {
