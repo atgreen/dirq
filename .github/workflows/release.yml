@@ -126,7 +126,7 @@ jobs:
       - name: Create source tarball
         run: |
           mkdir -p "dirq-${VERSION}"
-          git archive HEAD | tar -x -C "dirq-${VERSION}"
+          tar --exclude=.git --exclude="dirq-${VERSION}" -cf - . | tar -xf - -C "dirq-${VERSION}"
           tar czf "rpmbuild/SOURCES/dirq-${VERSION}.tar.gz" "dirq-${VERSION}"
           rm -rf "dirq-${VERSION}"
 
