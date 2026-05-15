@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import os
+import ssl
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -13,10 +15,22 @@ from urllib.request import Request, urlopen
 class DirQClient:
     """Simple HTTP client for the DirQ server REST API."""
 
-    def __init__(self, server_url: str, token: str = "", timeout: int = 600):
+    def __init__(self, server_url: str, token: str = "", timeout: int = 600,
+                 tls_insecure: bool | None = None):
         self.server_url = server_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+
+        # Build SSL context for HTTPS requests.
+        self._ssl_context = None
+        if self.server_url.startswith("https://"):
+            insecure = tls_insecure
+            if insecure is None:
+                insecure = os.environ.get("DIRQ_TLS_INSECURE", "").lower() == "true"
+            if insecure:
+                self._ssl_context = ssl.create_default_context()
+                self._ssl_context.check_hostname = False
+                self._ssl_context.verify_mode = ssl.CERT_NONE
 
     def request(self, method: str, path: str, data: dict | None = None) -> dict | list:
         url = self.server_url + path
@@ -30,7 +44,7 @@ class DirQClient:
             req.add_header("Authorization", f"Bearer {self.token}")
 
         try:
-            resp = urlopen(req, timeout=self.timeout)
+            resp = urlopen(req, timeout=self.timeout, context=self._ssl_context)
             resp_data = resp.read().decode("utf-8")
             return json.loads(resp_data) if resp_data else {}
         except URLError as e:

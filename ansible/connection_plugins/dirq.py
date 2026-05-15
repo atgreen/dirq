@@ -2,10 +2,16 @@
 # Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 
 """
-DirQ connection plugin for Ansible / AAP.
+Standalone DirQ connection plugin (legacy).
 
-Routes exec_command(), put_file(), and fetch_file() through the DirQ
-server REST API and relay mesh to reach managed hosts without SSH/WinRM.
+This is a minimal shim for use with `dirq run` when the atgreen.dirq
+Ansible collection is not installed. It routes exec_command(),
+put_file(), and fetch_file() through the DirQ server REST API.
+
+For full functionality (inventory plugin, fact cache, configurable
+timeouts, AAP integration), install the collection:
+
+    ansible-galaxy collection install atgreen.dirq
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import ssl
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -25,12 +32,12 @@ DOCUMENTATION = """
     description:
         - Executes commands and transfers files through the DirQ server
           and P2P relay mesh. No SSH or WinRM required.
-        - The target host must have a DirQ agent with exec_enabled=true.
-    author: DirQ Project
+        - For full functionality, install the atgreen.dirq collection.
+    author: Anthony Green
     options:
         dirq_server_url:
             description: URL of the DirQ server REST API.
-            default: http://localhost:8080
+            type: str
             vars:
                 - name: dirq_server_url
             env:
@@ -38,11 +45,34 @@ DOCUMENTATION = """
         dirq_token:
             description: DirQ API token for authentication.
             default: ""
+            type: str
             vars:
                 - name: dirq_token
             env:
                 - name: DIRQ_TOKEN
+        dirq_exec_timeout:
+            description: Timeout in seconds for exec operations.
+            default: 300
+            type: int
+            vars:
+                - name: dirq_exec_timeout
+        dirq_file_timeout:
+            description: Timeout in seconds for file transfer operations.
+            default: 300
+            type: int
+            vars:
+                - name: dirq_file_timeout
 """
+
+
+def _make_ssl_context():
+    """Create SSL context that skips verification when DIRQ_TLS_INSECURE is set."""
+    if os.environ.get("DIRQ_TLS_INSECURE", "").lower() == "true":
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
 
 
 class Connection(ConnectionBase):
@@ -57,21 +87,16 @@ class Connection(ConnectionBase):
         self._agent_id = None
         self._server_url = None
         self._token = None
+        self._ssl_context = None
 
     def _connect(self):
         if self._connected:
             return self
 
-        # Per-host vars (set by inventory) take priority for multi-DC routing.
-        host_vars = {}
-        try:
-            if hasattr(self._play_context, "vars") and self._play_context.vars:
-                host_vars = self._play_context.vars
-        except Exception:
-            pass
+        hostvars = getattr(self._play_context, "vars", None) or {}
 
         self._server_url = (
-            host_vars.get("dirq_server_url")
+            hostvars.get("dirq_server_url")
             or os.environ.get("DIRQ_SERVER_URL")
             or self.get_option("dirq_server_url")
             or ""
@@ -88,9 +113,10 @@ class Connection(ConnectionBase):
                 "or use the DirQ inventory plugin which sets dirq_server_url per host."
             )
 
-        # Route by stable dirq_agent_id (set by inventory), fallback to hostname.
+        self._ssl_context = _make_ssl_context()
+
         hostname = self._play_context.remote_addr
-        self._agent_id = host_vars.get("dirq_agent_id")
+        self._agent_id = hostvars.get("dirq_agent_id")
         if not self._agent_id:
             self._agent_id = self._resolve_agent_id(hostname)
 
@@ -122,19 +148,20 @@ class Connection(ConnectionBase):
         become_user = self._play_context.become_user or "root"
         become_method = self._play_context.become_method or "sudo"
 
+        timeout = self.get_option("dirq_exec_timeout") or 300
+
         payload = {
             "agent_id": self._agent_id,
             "command": cmd,
             "become": become and sudoable,
             "become_user": become_user,
             "become_method": become_method,
-            "timeout": 300,
+            "timeout": timeout,
         }
 
         if in_data:
             payload["stdin"] = base64.b64encode(in_data).decode("ascii")
 
-        # AAP attribution.
         job_id = os.environ.get("AWX_JOB_ID", os.environ.get("AAP_JOB_ID", ""))
         if job_id:
             payload["aap_job_id"] = job_id
@@ -171,6 +198,8 @@ class Connection(ConnectionBase):
         except OSError:
             mode = 0o644
 
+        timeout = self.get_option("dirq_file_timeout") or 300
+
         payload = {
             "agent_id": self._agent_id,
             "dest_path": out_path,
@@ -178,8 +207,14 @@ class Connection(ConnectionBase):
             "mode": mode,
             "become": self._play_context.become,
             "become_user": self._play_context.become_user or "root",
-            "timeout": 300,
+            "timeout": timeout,
         }
+
+        job_id = os.environ.get("AWX_JOB_ID", os.environ.get("AAP_JOB_ID", ""))
+        if job_id:
+            payload["aap_job_id"] = job_id
+            payload["aap_job_template"] = os.environ.get("AWX_JOB_TEMPLATE_NAME", "")
+            payload["aap_user"] = os.environ.get("AWX_USER_NAME", "")
 
         self._display.vvv(f"DIRQ put_file: {in_path} -> {out_path}", host=self._play_context.remote_addr)
 
@@ -194,13 +229,21 @@ class Connection(ConnectionBase):
     def fetch_file(self, in_path, out_path):
         self._connect()
 
+        timeout = self.get_option("dirq_file_timeout") or 300
+
         payload = {
             "agent_id": self._agent_id,
             "src_path": in_path,
             "become": self._play_context.become,
             "become_user": self._play_context.become_user or "root",
-            "timeout": 300,
+            "timeout": timeout,
         }
+
+        job_id = os.environ.get("AWX_JOB_ID", os.environ.get("AAP_JOB_ID", ""))
+        if job_id:
+            payload["aap_job_id"] = job_id
+            payload["aap_job_template"] = os.environ.get("AWX_JOB_TEMPLATE_NAME", "")
+            payload["aap_user"] = os.environ.get("AWX_USER_NAME", "")
 
         self._display.vvv(f"DIRQ fetch_file: {in_path} -> {out_path}", host=self._play_context.remote_addr)
 
@@ -232,7 +275,7 @@ class Connection(ConnectionBase):
             req.add_header("Authorization", f"Bearer {self._token}")
 
         try:
-            resp = urlopen(req, timeout=600)
+            resp = urlopen(req, timeout=600, context=self._ssl_context)
             resp_data = resp.read().decode("utf-8")
             return json.loads(resp_data) if resp_data else {}
         except URLError as e:

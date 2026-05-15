@@ -77,9 +77,11 @@ class Connection(ConnectionBase):
         if self._connected:
             return self
 
-        # Per-host vars set by the inventory plugin take priority.
         host = self._play_context.remote_addr
-        hostvars = self._get_hostvars(host)
+
+        # Host variables set by the inventory plugin (dirq_agent_id,
+        # dirq_server_url) are available through the play context.
+        hostvars = getattr(self._play_context, "vars", None) or {}
 
         server_url = (
             hostvars.get("dirq_server_url")
@@ -103,7 +105,6 @@ class Connection(ConnectionBase):
         self._client = DirQClient(server_url, token)
 
         # Route by stable dirq_agent_id (set by inventory plugin), not hostname.
-        # This supports aliases, FQDN/shortname differences, and renamed hosts.
         self._agent_id = hostvars.get("dirq_agent_id")
 
         if not self._agent_id:
@@ -269,20 +270,3 @@ class Connection(ConnectionBase):
 
     def close(self):
         self._connected = False
-
-    def _get_hostvars(self, host):
-        """Retrieve hostvars for the given host, if available."""
-        try:
-            # In Ansible, hostvars are accessible through the variable manager.
-            if hasattr(self, "_variable_manager") and self._variable_manager:
-                all_vars = self._variable_manager.get_vars(host=host)
-                return all_vars
-        except Exception:
-            pass
-        # Fallback: check play_context vars.
-        try:
-            if hasattr(self._play_context, "vars") and self._play_context.vars:
-                return self._play_context.vars
-        except Exception:
-            pass
-        return {}
