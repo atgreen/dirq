@@ -5,6 +5,25 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-05-15
+
+### Added
+
+- **`dirq graph`** — display the agent topology tree in the terminal; zone leaders marked `[ZL]`, online/offline status shown with filled/hollow dots
+- **`dirq graph --dot`** — emit topology in Graphviz DOT format for rendering with `dot -Tpng`
+- **`dirq --version`** — CLI now reports its version (injected at build time via `-ldflags`)
+- **`RequestPeers` RPC** — agents that lose their parent ask the server for a new assignment instead of falling back to a direct server connection
+- **Orphan reassignment** — when a zone leader goes offline, the server immediately reassigns its children to healthy parents
+
+### Fixed
+
+- **Agents couldn't connect to peer relay servers** — TLS verification failed because agent certs only have `localhost` as a SAN; peer connections now override `ServerName` to match
+- **`connectUpstream` silently fell back to server** — relay agents that couldn't reach their parent opened a direct `AgentStream`, hiding the failure; now returns an error so fallback and `RequestPeers` paths are tried first
+- **Rebalancer thrashing** — agents demoted to relay that bounced back to a direct connection were re-demoted every 30 seconds; added exponential backoff dampening (1m to 30m)
+- **Server used agent-reported IP for `ListenAddr`** — incorrect in Docker/NAT environments; server now overrides with the peer IP observed on the gRPC connection
+- **`RequestPeers` marked healthy parents offline** — if an agent was freshly reassigned to a new parent but hadn't connected yet, a second `RequestPeers` call would mark the new (healthy) parent offline; now checks for an active server stream first
+- **Graph showed stale parent relationships** — agents connected directly to the server still appeared under their old (dead) parent in the topology
+
 ## [0.6.0] - 2026-05-15
 
 ### Added
@@ -184,6 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.7.0]: https://github.com/atgreen/dirq/releases/tag/v0.7.0
 [0.6.0]: https://github.com/atgreen/dirq/releases/tag/v0.6.0
 [0.5.1]: https://github.com/atgreen/dirq/releases/tag/v0.5.1
 [0.5.0]: https://github.com/atgreen/dirq/releases/tag/v0.5.0
