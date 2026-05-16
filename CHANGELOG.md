@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] - 2026-05-16
+
+### Fixed
+
+- **Auto-generated server cert only had localhost SANs** — agents connecting by the server's real IP (e.g., 192.168.1.10) got TLS verification failures; cert now includes all non-loopback interface IPs and the hostname
+
 ## [0.9.0] - 2026-05-15
 
 ### Added
@@ -245,6 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.9.1]: https://github.com/atgreen/dirq/releases/tag/v0.9.1
 [0.9.0]: https://github.com/atgreen/dirq/releases/tag/v0.9.0
 [0.8.0]: https://github.com/atgreen/dirq/releases/tag/v0.8.0
 [0.7.1]: https://github.com/atgreen/dirq/releases/tag/v0.7.1
