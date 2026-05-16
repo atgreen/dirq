@@ -5,6 +5,23 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-05-16
+
+### Added
+
+- **`os_info.distro`, `distro_version`, `distro_family`** — new fields from `/etc/os-release` (e.g., `distro=rhel`, `distro_family=rhel`, `distro_version=8.10`); enables clean filtering by distribution
+- **Filtered package collection** — when a WHERE clause specifies package names (e.g., `packages.name = 'kernel'`), agents run `rpm -q kernel` instead of `rpm -qa`, dramatically reducing collection time and mesh traffic
+- **No-match responses** — agents that don't match a WHERE clause now send a lightweight "no match" response instead of staying silent; the server counts completions and finishes as soon as all targets have answered, eliminating idle timeout waits
+- **`dirq cve --verbose`** — timestamped step-by-step output showing CVE fetch time, query string, and fleet query duration for diagnosing slow scans
+- **CVE scan summary includes not-assessed count** — shows how many hosts were skipped (non-RHEL)
+
+### Fixed
+
+- **CVE scanner scanned non-RHEL hosts** — Fedora, Ubuntu, and Windows hosts were compared against RHEL fix versions, producing nonsensical results; now filters to `distro_family = 'rhel'` only
+- **CVE scanner compared wrong RHEL versions** — RHEL 8 hosts were compared against RHEL 10 fixes; now matches fix versions to the host's specific RHEL major version
+- **CVE scanner reported every installed kernel** — hosts with multiple kernels installed showed one line per kernel; now compares only the running kernel (`os_info.kernel_version`) and shows one line per host
+- **CVE scanner included kpatch as a fix** — kpatch-patch is a live-patching workaround, not the actual fix; now filtered out entirely
+
 ## [0.9.2] - 2026-05-16
 
 ### Added
@@ -263,6 +280,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.10.0]: https://github.com/atgreen/dirq/releases/tag/v0.10.0
 [0.9.2]: https://github.com/atgreen/dirq/releases/tag/v0.9.2
 [0.9.1]: https://github.com/atgreen/dirq/releases/tag/v0.9.1
 [0.9.0]: https://github.com/atgreen/dirq/releases/tag/v0.9.0
