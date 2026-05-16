@@ -2082,6 +2082,11 @@ Examples:
 				if name == "" {
 					continue
 				}
+				// Skip kpatch — it's a live-patching workaround, not
+				// the actual package fix.
+				if strings.HasPrefix(name, "kpatch") {
+					continue
+				}
 				dedup := name + ":" + rhelVer
 				if seenPkgs[dedup] {
 					continue
@@ -2106,6 +2111,9 @@ Examples:
 				}
 				rhelVer := extractRHELVersion(ps.CPE)
 				if rhelVer == "" {
+					continue
+				}
+				if strings.HasPrefix(ps.PackageName, "kpatch") {
 					continue
 				}
 				dedup := ps.PackageName + ":" + rhelVer
@@ -2238,7 +2246,7 @@ Examples:
 				kernelHandled := map[string]bool{}
 
 				for _, pkg := range pkgs {
-					isKernelPkg := pkg.name == "kernel" || pkg.name == "kernel-rt" || pkg.name == "kpatch"
+					isKernelPkg := pkg.name == "kernel" || pkg.name == "kernel-rt"
 					if isKernelPkg {
 						if kernelHandled[pkg.name] {
 							continue // already reported for this host
