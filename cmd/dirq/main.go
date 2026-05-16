@@ -2212,6 +2212,11 @@ Examples:
 			patched := 0
 			noFix := 0
 
+			// Track kernel packages already reported per host (results
+			// contain one row per installed kernel, but we only want one
+			// comparison using the running kernel).
+			kernelHandled := map[string]bool{} // "hostname:pkgname" → reported
+
 			for _, r := range result.Results {
 				if !r.Success {
 					continue
@@ -2240,18 +2245,14 @@ Examples:
 				// Extract packages from results.
 				pkgs := extractPackageList(r.Data)
 
-				// For kernel packages, compare the running kernel version
-				// instead of every installed kernel (hosts can have multiple
-				// kernels installed but only one is running).
-				kernelHandled := map[string]bool{}
-
 				for _, pkg := range pkgs {
 					isKernelPkg := pkg.name == "kernel" || pkg.name == "kernel-rt"
 					if isKernelPkg {
-						if kernelHandled[pkg.name] {
+						dedupKey := r.Hostname + ":" + pkg.name
+						if kernelHandled[dedupKey] {
 							continue // already reported for this host
 						}
-						kernelHandled[pkg.name] = true
+						kernelHandled[dedupKey] = true
 						if runningKernel == "" {
 							continue
 						}
