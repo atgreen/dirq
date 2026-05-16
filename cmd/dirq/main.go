@@ -1986,7 +1986,10 @@ func doctorCmd() *cobra.Command {
 // ─────────────────────────────────────────────────────────
 
 func cveCmd() *cobra.Command {
-	var timeout int
+	var (
+		timeout int
+		verbose bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "cve [CVE-ID] [WHERE ...]",
@@ -2006,8 +2009,15 @@ Examples:
 				return fmt.Errorf("expected a CVE ID like CVE-2024-1234, got %q", cveID)
 			}
 
+			logStep := func(format string, a ...any) {
+				if verbose {
+					fmt.Fprintf(os.Stderr, "[%s] %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, a...))
+				}
+			}
+
 			// Fetch CVE data from Red Hat.
 			fmt.Fprintf(os.Stderr, "Fetching %s from Red Hat Security Data API...\n", cveID)
+			stepStart := time.Now()
 
 			cveURL := "https://access.redhat.com/hydra/rest/securitydata/cve/" + cveID + ".json"
 			resp, err := http.Get(cveURL)
@@ -2050,6 +2060,8 @@ Examples:
 			if err := json.Unmarshal(cveBody, &cveData); err != nil {
 				return fmt.Errorf("parse CVE data: %w", err)
 			}
+
+			logStep("CVE data fetched in %s", time.Since(stepStart))
 
 			fmt.Fprintf(os.Stderr, "%s: %s\n", cveID, cveData.Bugzilla.Description)
 			fmt.Fprintf(os.Stderr, "Severity: %s\n", cveData.ThreatSeverity)
@@ -2170,7 +2182,9 @@ Examples:
 			queryStr := fmt.Sprintf("SELECT hostname, os_info.os, os_info.os_version, os_info.kernel_version, packages.name, packages.version WHERE %s AND %s%s",
 				pkgFilter, osFilter, whereExtra)
 
+			logStep("Query: %s", queryStr)
 			fmt.Fprintf(os.Stderr, "Scanning fleet...\n\n")
+			stepStart = time.Now()
 
 			// Run query.
 			body, _ := json.Marshal(map[string]any{
@@ -2196,6 +2210,9 @@ Examples:
 				return fmt.Errorf("parse query result: %w", err)
 			}
 
+			logStep("Fleet query returned %d results from %d targets in %s",
+				result.Received, result.TotalTargets, time.Since(stepStart))
+
 			if jsonOut {
 				fmt.Println(string(queryResp))
 				return nil
@@ -2211,6 +2228,7 @@ Examples:
 			vulnerable := 0
 			patched := 0
 			noFix := 0
+			assessedHosts := map[string]bool{}
 
 			// Track kernel packages already reported per host (results
 			// contain one row per installed kernel, but we only want one
@@ -2233,6 +2251,7 @@ Examples:
 				if hostRHEL == "" {
 					continue // not RHEL-family, skip
 				}
+				assessedHosts[r.Hostname] = true
 
 				// Get running kernel version for kernel package comparisons.
 				runningKernel, _ := r.Data["os_info.kernel_version"].(string)
@@ -2307,9 +2326,21 @@ Examples:
 				}
 			}
 
+			// Count hosts not assessed (non-RHEL or no matching packages).
+			allHosts := map[string]bool{}
+			for _, r := range result.Results {
+				if r.Success {
+					allHosts[r.Hostname] = true
+				}
+			}
+			skipped := len(allHosts) - len(assessedHosts)
+
 			fmt.Printf("\n%d vulnerable, %d patched", vulnerable, patched)
 			if noFix > 0 {
 				fmt.Printf(", %d no fix available", noFix)
+			}
+			if skipped > 0 {
+				fmt.Printf(", %d not assessed (non-RHEL)", skipped)
 			}
 			fmt.Println()
 
@@ -2321,6 +2352,7 @@ Examples:
 	}
 
 	cmd.Flags().IntVar(&timeout, "timeout", 60, "query timeout in seconds")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "show timing and query details")
 	return cmd
 }
 
