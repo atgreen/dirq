@@ -331,7 +331,8 @@ AGENT_SETUP
         local userdata
         userdata=$(cat <<WINEOF
 <powershell>
-\$ErrorActionPreference = 'Stop'
+# Log everything for debugging.
+Start-Transcript -Path C:\dirq-setup.log -Force
 
 # Set admin password for RDP access.
 net user Administrator '${WIN_ADMIN_PASS}' /active:yes
@@ -339,14 +340,42 @@ net user Administrator '${WIN_ADMIN_PASS}' /active:yes
 # Open firewall for DirQ relay.
 netsh advfirewall firewall add rule name="DirQ Agent" dir=in action=allow protocol=tcp localport=50052
 
-Start-Sleep -Seconds 10
+# Wait for network to stabilize.
+Start-Sleep -Seconds 15
 
-# Download and install agent MSI from GitHub release.
-\$msiUrl = "https://github.com/atgreen/dirq/releases/download/v${DIRQ_VERSION}/dirq-agent-${DIRQ_VERSION}.msi"
-\$msiPath = "\$env:TEMP\dirq-agent.msi"
+# Force TLS 1.2 for all downloads.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-Invoke-WebRequest -Uri \$msiUrl -OutFile \$msiPath -UseBasicParsing
-Start-Process msiexec -ArgumentList "/i \$msiPath /qn" -Wait
+
+# Download MSI with retries. GitHub redirects can be flaky on fresh Windows.
+\$msiUrl = "https://github.com/atgreen/dirq/releases/download/v${DIRQ_VERSION}/dirq-agent-${DIRQ_VERSION}.msi"
+\$msiPath = "C:\Windows\Temp\dirq-agent.msi"
+\$downloaded = \$false
+for (\$i = 1; \$i -le 5; \$i++) {
+    try {
+        Write-Host "Download attempt \$i..."
+        # Use System.Net.WebClient — more reliable than Invoke-WebRequest for redirects.
+        (New-Object System.Net.WebClient).DownloadFile(\$msiUrl, \$msiPath)
+        if (Test-Path \$msiPath) {
+            \$size = (Get-Item \$msiPath).Length
+            Write-Host "Downloaded \$size bytes"
+            if (\$size -gt 100000) { \$downloaded = \$true; break }
+        }
+    } catch {
+        Write-Host "Download failed: \$_"
+    }
+    Start-Sleep -Seconds 10
+}
+
+if (-not \$downloaded) {
+    Write-Host "ERROR: Failed to download MSI after 5 attempts"
+    Stop-Transcript
+    exit 1
+}
+
+# Install MSI.
+Write-Host "Installing MSI..."
+\$proc = Start-Process msiexec -ArgumentList "/i \$msiPath /qn /l*v C:\dirq-msi.log" -Wait -PassThru
+Write-Host "MSI exit code: \$(\$proc.ExitCode)"
 
 # Write the server-generated agent config (has inline TLS certs).
 New-Item -ItemType Directory -Force -Path 'C:\ProgramData\dirq' | Out-Null
@@ -359,8 +388,16 @@ Add-Content 'C:\ProgramData\dirq\agent.conf' "  env: ${tag_env}"
 Add-Content 'C:\ProgramData\dirq\agent.conf' "  role: iis"
 Add-Content 'C:\ProgramData\dirq\agent.conf' "  fleet: aws-test"
 
-# Start the agent service.
-Restart-Service DirQAgent
+# Install and start the agent service.
+if (Test-Path "C:\Program Files\DirQ\dirq-agent.exe") {
+    & "C:\Program Files\DirQ\dirq-agent.exe" install
+    Start-Service DirQAgent
+    Write-Host "DirQ agent service started"
+} else {
+    Write-Host "ERROR: dirq-agent.exe not found after MSI install"
+}
+
+Stop-Transcript
 </powershell>
 WINEOF
 )
