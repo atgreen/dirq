@@ -28,6 +28,7 @@ func Registry() map[string]Module {
 		&PackagesModule{},
 		&NetworkModule{},
 		&ServicesModule{},
+		&HotfixesModule{},
 	}
 	reg := make(map[string]Module, len(mods))
 	for _, m := range mods {

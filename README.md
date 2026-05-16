@@ -151,6 +151,7 @@ immediately reassigns its orphaned children to other healthy nodes.
 | `packages` | Installed packages: name, version, arch, source (rpm/dpkg/registry) |
 | `network` | Interfaces: name, MAC, MTU, flags, IP addresses (loopback filtered) |
 | `services` | Services: name, display name, state, start type (systemd/Windows Services) |
+| `hotfixes` | Windows hotfixes: kb_id, description, installed_on (Get-HotFix) |
 
 ---
 
