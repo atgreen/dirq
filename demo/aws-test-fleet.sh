@@ -247,73 +247,69 @@ SERVER_SETUP
     log "  Server running at https://$srv_ip:8080"
 
     # ── Linux agent instances ─────────────────────────────
+    # Base64-encode the agent.conf for embedding in UserData.
+    local agent_conf_b64
+    agent_conf_b64=$(base64 -w0 "$STATE_DIR/agent.conf")
+
     local linux_ids=()
     for i in $(seq 1 "$LINUX_COUNT"); do
         local name="$TAG_PREFIX-linux-$i"
         local tag_env=$( (( i % 2 == 0 )) && echo "staging" || echo "prod" )
 
         log "Launching Linux agent: $name (env=$tag_env)"
-        local inst_id
-        inst_id=$(aws_ ec2 run-instances \
-            --image-id "$linux_ami" \
-            --instance-type "$INSTANCE_TYPE" \
-            --key-name "$KEY_NAME" \
-            --security-group-ids "$sg_id" \
-            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$name},{Key=dirq-fleet,Value=$TAG_PREFIX},{Key=dirq-env,Value=$tag_env}]" \
-            --query 'Instances[0].InstanceId' --output text)
-        linux_ids+=("$inst_id:$tag_env")
-        save_state "linux_${i}_id" "$inst_id"
-    done
 
-    # Wait for all Linux instances.
-    for entry in "${linux_ids[@]}"; do
-        local inst_id="${entry%%:*}"
-        wait_instance_running "$inst_id"
-    done
+        # UserData script runs as root on first boot via cloud-init.
+        local userdata
+        userdata=$(cat <<USERDATA
+#!/bin/bash
+exec > /var/log/dirq-setup.log 2>&1
+set -ex
 
-    # Deploy agent to each Linux instance using the server-generated config.
-    for idx in "${!linux_ids[@]}"; do
-        local entry="${linux_ids[$idx]}"
-        local inst_id="${entry%%:*}"
-        local tag_env="${entry##*:}"
-        local i=$((idx + 1))
-        local vm_ip
-        vm_ip=$(get_public_ip "$inst_id")
-
-        log "  Deploying agent to linux-$i ($vm_ip)"
-        wait_ssh "ec2-user" "$vm_ip"
-
-        # Copy the server-generated agent.conf (retry — cloud-init may restart sshd).
-        for attempt in 1 2 3; do
-            scp_cmd "$STATE_DIR/agent.conf" "ec2-user@$vm_ip:/tmp/agent.conf" && break
-            sleep 5
-        done
-
-        ssh_cmd "ec2-user@$vm_ip" bash <<AGENT_SETUP
-            set -e
-            # Add DirQ RPM repo and install agent.
-            sudo tee /etc/yum.repos.d/dirq.repo > /dev/null <<'REPO'
+# Add DirQ RPM repo.
+cat > /etc/yum.repos.d/dirq.repo <<'REPO'
 [dirq]
 name=DirQ
 baseurl=https://atgreen.github.io/dirq/rpm-repo/
 enabled=1
 gpgcheck=0
 REPO
-            sudo dnf install -y dirq-agent
 
-            # Use the server-generated config (has TLS certs inline).
-            sudo cp /tmp/agent.conf /etc/dirq/agent.conf
-            echo "exec_enabled: true" | sudo tee -a /etc/dirq/agent.conf > /dev/null
-            echo "tags:" | sudo tee -a /etc/dirq/agent.conf > /dev/null
-            echo "  env: ${tag_env}" | sudo tee -a /etc/dirq/agent.conf > /dev/null
-            echo "  role: webserver" | sudo tee -a /etc/dirq/agent.conf > /dev/null
-            echo "  fleet: aws-test" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+# Install agent.
+dnf install -y dirq-agent
 
-            sudo systemctl enable --now dirq-agent
-            sleep 1
-            sudo systemctl is-active dirq-agent
-AGENT_SETUP
-        log "    linux-$i — agent running"
+# Write the server-generated config (has inline TLS certs).
+echo '${agent_conf_b64}' | base64 -d > /etc/dirq/agent.conf
+
+# Append instance-specific settings.
+cat >> /etc/dirq/agent.conf <<CONF
+exec_enabled: true
+tags:
+  env: ${tag_env}
+  role: webserver
+  fleet: aws-test
+CONF
+
+# Start the agent.
+systemctl enable --now dirq-agent
+USERDATA
+)
+        local inst_id
+        inst_id=$(aws_ ec2 run-instances \
+            --image-id "$linux_ami" \
+            --instance-type "$INSTANCE_TYPE" \
+            --key-name "$KEY_NAME" \
+            --security-group-ids "$sg_id" \
+            --user-data "$userdata" \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$name},{Key=dirq-fleet,Value=$TAG_PREFIX},{Key=dirq-env,Value=$tag_env}]" \
+            --query 'Instances[0].InstanceId' --output text)
+        linux_ids+=("$inst_id")
+        save_state "linux_${i}_id" "$inst_id"
+        log "  $name: $inst_id (installs automatically via UserData)"
+    done
+
+    # Wait for all Linux instances to be running (no SSH needed).
+    for inst_id in "${linux_ids[@]}"; do
+        wait_instance_running "$inst_id"
     done
 
     # ── Windows agent instances ────────────────────────────
@@ -442,7 +438,9 @@ WINEOF
     echo "    dirq exec uptime WHERE os_info.os = linux"
     echo "    dirq cve CVE-2026-31431"
     echo
-    echo "  Windows VMs take 3-5 minutes for UserData to complete."
+    echo "  Agents install automatically via UserData (2-5 minutes)."
+    echo "  Linux setup log: /var/log/dirq-setup.log"
+    echo "  Windows setup log: C:\\dirq-setup.log"
     echo "  RDP credentials: Administrator / $WIN_ADMIN_PASS"
     echo
     echo "  Tear down:"
