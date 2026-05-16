@@ -106,7 +106,6 @@
         <ServiceControl
           Id="DirQAgentControl"
           Name="DirQAgent"
-          Start="install"
           Stop="both"
           Remove="uninstall"
           Wait="yes" />
