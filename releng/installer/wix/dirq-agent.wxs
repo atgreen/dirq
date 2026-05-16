@@ -33,7 +33,6 @@
     <Feature Id="ProductFeature" Title="DirQ Agent" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentGroupRef Id="ConfigComponents" />
-      <ComponentGroupRef Id="ServiceComponents" />
       <ComponentGroupRef Id="FirewallComponents" />
     </Feature>
 
@@ -58,6 +57,32 @@
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
       <Component Id="MainExecutable" Guid="1A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D">
         <File Id="dirq_agent.exe" Source="dirq-agent.exe" KeyPath="yes" />
+        <ServiceInstall
+          Id="DirQAgentService"
+          Name="DirQAgent"
+          DisplayName="DirQ Agent"
+          Description="DirQ real-time endpoint query and execution agent"
+          Start="auto"
+          Type="ownProcess"
+          ErrorControl="normal"
+          Account="LocalSystem">
+          <ServiceConfig
+            DelayedAutoStart="yes"
+            OnInstall="yes"
+            OnReinstall="yes" />
+          <util:ServiceConfig xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+            FirstFailureActionType="restart"
+            SecondFailureActionType="restart"
+            ThirdFailureActionType="restart"
+            RestartServiceDelayInSeconds="5"
+            ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl
+          Id="DirQAgentControl"
+          Name="DirQAgent"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
       </Component>
       <Component Id="LicenseFile" Guid="2B3C4D5E-6F7A-8B9C-0D1E-2F3A4B5C6D7E">
         <File Id="LICENSE" Source="LICENSE" />
@@ -74,41 +99,6 @@
       <Component Id="ConfigFile" Guid="4D5E6F7A-8B9C-0D1E-2F3A-4B5C6D7E8F9A"
                  NeverOverwrite="yes" Permanent="yes">
         <File Id="agent.conf" Source="agent.conf" KeyPath="yes" />
-      </Component>
-    </ComponentGroup>
-  </Fragment>
-
-  <!-- Windows service -->
-  <Fragment>
-    <ComponentGroup Id="ServiceComponents" Directory="INSTALLFOLDER">
-      <Component Id="DirQService" Guid="5E6F7A8B-9C0D-1E2F-3A4B-5C6D7E8F9A0B">
-        <ServiceInstall
-          Id="DirQAgentService"
-          Name="DirQAgent"
-          DisplayName="DirQ Agent"
-          Description="DirQ real-time endpoint query and execution agent"
-          Start="auto"
-          Type="ownProcess"
-          ErrorControl="normal"
-          Account="LocalSystem">
-          <ServiceConfig
-            DelayedAutoStart="yes"
-            OnInstall="yes"
-            OnReinstall="yes" />
-          <!-- Recovery: restart on failure -->
-          <util:ServiceConfig xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
-            FirstFailureActionType="restart"
-            SecondFailureActionType="restart"
-            ThirdFailureActionType="restart"
-            RestartServiceDelayInSeconds="5"
-            ResetPeriodInDays="1" />
-        </ServiceInstall>
-        <ServiceControl
-          Id="DirQAgentControl"
-          Name="DirQAgent"
-          Stop="both"
-          Remove="uninstall"
-          Wait="yes" />
       </Component>
     </ComponentGroup>
   </Fragment>
