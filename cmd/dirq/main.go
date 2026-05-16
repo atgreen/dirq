@@ -2159,7 +2159,7 @@ Examples:
 				whereExtra = strings.Replace(whereExtra, " AND where ", " AND ", 1)
 			}
 
-			queryStr := fmt.Sprintf("SELECT hostname, os_info.os, os_info.os_version, packages.name, packages.version WHERE %s AND %s%s",
+			queryStr := fmt.Sprintf("SELECT hostname, os_info.os, os_info.os_version, os_info.kernel_version, packages.name, packages.version WHERE %s AND %s%s",
 				pkgFilter, osFilter, whereExtra)
 
 			fmt.Fprintf(os.Stderr, "Scanning fleet...\n\n")
@@ -2221,13 +2221,37 @@ Examples:
 					continue // not RHEL-family, skip
 				}
 
+				// Get running kernel version for kernel package comparisons.
+				runningKernel, _ := r.Data["os_info.kernel_version"].(string)
+				if runningKernel == "" {
+					if oi, ok := r.Data["os_info"].(map[string]any); ok {
+						runningKernel, _ = oi["kernel_version"].(string)
+					}
+				}
+
 				// Extract packages from results.
 				pkgs := extractPackageList(r.Data)
+
+				// For kernel packages, compare the running kernel version
+				// instead of every installed kernel (hosts can have multiple
+				// kernels installed but only one is running).
+				kernelHandled := map[string]bool{}
+
 				for _, pkg := range pkgs {
+					isKernelPkg := pkg.name == "kernel" || pkg.name == "kernel-rt" || pkg.name == "kpatch"
+					if isKernelPkg {
+						if kernelHandled[pkg.name] {
+							continue // already reported for this host
+						}
+						kernelHandled[pkg.name] = true
+						if runningKernel == "" {
+							continue
+						}
+						pkg.version = runningKernel
+					}
+
 					fp, hasfix := fixedVersionMap[fixKey{pkg.name, hostRHEL}]
 					if !hasfix {
-						// Check if this package is affected on ANY RHEL version
-						// but has no fix for this specific version.
 						affected := false
 						for k := range fixedVersionMap {
 							if k.name == pkg.name {
@@ -2236,27 +2260,39 @@ Examples:
 							}
 						}
 						if affected {
-							fmt.Printf("  %-24s %-20s %-20s  VULNERABLE (no fix for RHEL %s)\n",
-								r.Hostname, pkg.name, pkg.version, hostRHEL)
+							label := pkg.version
+							if isKernelPkg {
+								label += " (running)"
+							}
+							fmt.Printf("  %-24s %-20s %-24s  VULNERABLE (no fix for RHEL %s)\n",
+								r.Hostname, pkg.name, label, hostRHEL)
 							noFix++
 						}
 						continue
 					}
 
 					if fp.fixVersion == "" {
-						fmt.Printf("  %-24s %-20s %-20s  VULNERABLE (no fix available)\n",
-							r.Hostname, pkg.name, pkg.version)
+						label := pkg.version
+						if isKernelPkg {
+							label += " (running)"
+						}
+						fmt.Printf("  %-24s %-20s %-24s  VULNERABLE (no fix available)\n",
+							r.Hostname, pkg.name, label)
 						noFix++
 						continue
 					}
 
+					label := pkg.version
+					if isKernelPkg {
+						label += " (running)"
+					}
 					if rpmVersionCompare(pkg.version, fp.fixVersion) < 0 {
-						fmt.Printf("  %-24s %-20s %-20s  VULNERABLE (fixed in %s)\n",
-							r.Hostname, pkg.name, pkg.version, fp.fullNEVRA)
+						fmt.Printf("  %-24s %-20s %-24s  VULNERABLE (fixed in %s)\n",
+							r.Hostname, pkg.name, label, fp.fullNEVRA)
 						vulnerable++
 					} else {
-						fmt.Printf("  %-24s %-20s %-20s  patched\n",
-							r.Hostname, pkg.name, pkg.version)
+						fmt.Printf("  %-24s %-20s %-24s  patched\n",
+							r.Hostname, pkg.name, label)
 						patched++
 					}
 				}
