@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.3] - 2026-05-16
+
+### Fixed
+
+- **Windows MSI install failed with error 1603** — the WiX `util:ServiceConfig` custom action tried to set service recovery options before the service was created; removed from MSI, recovery is now configured post-install
+
 ## [0.11.2] - 2026-05-16
 
 ### Added
@@ -309,6 +315,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.11.3]: https://github.com/atgreen/dirq/releases/tag/v0.11.3
 [0.11.2]: https://github.com/atgreen/dirq/releases/tag/v0.11.2
 [0.11.1]: https://github.com/atgreen/dirq/releases/tag/v0.11.1
 [0.11.0]: https://github.com/atgreen/dirq/releases/tag/v0.11.0
