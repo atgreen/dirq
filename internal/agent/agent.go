@@ -641,8 +641,10 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 
 		// Check if all WHERE-referenced modules survived filtering.
 		// If a module was referenced in a condition but is missing from the
-		// result, this agent didn't match the query — don't send a response.
+		// result, this agent didn't match — send a no-match response so the
+		// server can count completions without waiting for an idle timeout.
 		if !query.AllFilteredModulesPresent(conds, collected) {
+			a.sendQueryResult(qr.QueryId, hostname, false, "no match", nil)
 			return
 		}
 	}
