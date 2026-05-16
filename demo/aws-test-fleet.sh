@@ -2,7 +2,7 @@
 # deploy/aws-test-fleet.sh — Provision a mixed Windows/Linux test fleet on AWS.
 #
 # Prerequisites:
-#   - aws CLI installed and configured (aws configure)
+#   - aws CLI installed and configured (aws sso login)
 #   - GitHub release binaries exist (or override with DIRQ_VERSION)
 #
 # Usage:
@@ -49,7 +49,7 @@ load_state() { cat "$STATE_DIR/$1" 2>/dev/null || echo ""; }
 
 check_prereqs() {
     command -v aws >/dev/null || die "aws CLI not found. Install: sudo dnf install awscli2"
-    aws_ sts get-caller-identity >/dev/null 2>&1 || die "Not logged in. Run: aws configure"
+    aws_ sts get-caller-identity >/dev/null 2>&1 || die "Not logged in. Run: aws sso login"
 }
 
 resolve_version() {
