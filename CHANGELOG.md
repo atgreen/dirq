@@ -5,6 +5,18 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.2] - 2026-05-16
+
+### Added
+
+- **Double quotes and unquoted strings in query DSL** — `WHERE hostname = "fedora"` and `WHERE hostname = fedora` now work alongside the existing single-quote syntax; the shell often strips single quotes, so this avoids a common frustration
+- **`ansible_*` tags passed through as Ansible host vars** — tags like `ansible_python_interpreter=/usr/bin/python3.12` set via `dirq hosts tag` are now used in the generated inventory, overriding defaults
+
+### Fixed
+
+- **`dirq run --module` treated WHERE as a playbook** — `dirq run --module ping WHERE ...` tried to run `WHERE` as a playbook file; now correctly treats all positional args as the WHERE clause when `--module` or `--command` is set
+- **`dirq run` didn't forward server URL and token to Ansible** — when configured via `client.conf` instead of env vars, the Ansible subprocess didn't receive `DIRQ_SERVER_URL` or `DIRQ_TOKEN`
+
 ## [0.9.1] - 2026-05-16
 
 ### Fixed
@@ -251,6 +263,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.9.2]: https://github.com/atgreen/dirq/releases/tag/v0.9.2
 [0.9.1]: https://github.com/atgreen/dirq/releases/tag/v0.9.1
 [0.9.0]: https://github.com/atgreen/dirq/releases/tag/v0.9.0
 [0.8.0]: https://github.com/atgreen/dirq/releases/tag/v0.8.0
