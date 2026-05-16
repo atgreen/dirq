@@ -2156,7 +2156,7 @@ Examples:
 				inList[i] = "'" + n + "'"
 			}
 			pkgFilter := "packages.name IN (" + strings.Join(inList, ", ") + ")"
-			osFilter := "os_info.os_version LIKE '%el%'"
+			osFilter := "os_info.kernel_version LIKE '%el%'"
 
 			// Add WHERE clause from remaining args if provided.
 			var whereExtra string
