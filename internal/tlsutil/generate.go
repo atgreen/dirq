@@ -99,14 +99,35 @@ func GenerateSelfSigned(dir string) (*GenerateResult, error) {
 		return nil, fmt.Errorf("generate server key: %w", err)
 	}
 
+	// Include all host IPs and hostname in server cert SANs so agents
+	// can connect by any address without TLS verification failures.
+	serverIPs := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+	serverDNS := []string{"localhost", "dirq-server", "*.dirq-server"}
+	if hostname, err := os.Hostname(); err == nil {
+		serverDNS = append(serverDNS, hostname)
+	}
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, _ := iface.Addrs()
+			for _, addr := range addrs {
+				if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP.To4() != nil {
+					serverIPs = append(serverIPs, ipNet.IP)
+				}
+			}
+		}
+	}
+
 	serverTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
 			Organization: []string{"DirQ"},
 			CommonName:   "DirQ Server",
 		},
-		DNSNames:    []string{"localhost", "dirq-server", "*.dirq-server"},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		DNSNames:    serverDNS,
+		IPAddresses: serverIPs,
 		NotBefore:   time.Now(),
 		NotAfter:    time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
