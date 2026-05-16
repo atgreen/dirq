@@ -2764,6 +2764,11 @@ Examples:
 				}
 			}
 
+			if len(allWindows) == 0 {
+				fmt.Println("No online Windows hosts in the fleet.")
+				return nil
+			}
+
 			// Print installed KBs.
 			if len(found) > 0 {
 				for _, h := range found {
