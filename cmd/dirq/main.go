@@ -717,13 +717,31 @@ Examples:
   dirq "run deploy.yml where tag.env = 'prod'"`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Flatten any quoted multi-word args containing WHERE
+			// (e.g., 'where os_info.hostname="fedora"' → where, os_info.hostname="fedora").
+			var flatArgs []string
+			for _, a := range args {
+				if strings.ContainsAny(a, " \t") {
+					flatArgs = append(flatArgs, strings.Fields(a)...)
+				} else {
+					flatArgs = append(flatArgs, a)
+				}
+			}
+			args = flatArgs
+
 			// Determine playbook from first arg (if it's a file, not a WHERE keyword).
 			var playbook string
 			var whereArgs []string
 
 			if len(args) > 0 && !strings.EqualFold(args[0], "WHERE") {
-				playbook = args[0]
-				whereArgs = args[1:]
+				// When --module or --command is set, don't consume the first arg
+				// as a playbook — it's likely part of the WHERE clause.
+				if module != "" || command != "" {
+					whereArgs = args
+				} else {
+					playbook = args[0]
+					whereArgs = args[1:]
+				}
 			} else {
 				whereArgs = args
 			}
