@@ -340,6 +340,13 @@ jobs:
         with:
           subject-path: artifacts/dist/*.tar.gz
 
+      - name: Generate SBOMs
+        uses: anchore/sbom-action@v0
+        with:
+          path: artifacts/dist/
+          output-file: artifacts/dist/sbom.spdx.json
+          format: spdx-json
+
       - name: Generate checksums
         run: |
           cd artifacts/dist
@@ -355,6 +362,7 @@ jobs:
             artifacts/dist/*.exe
             artifacts/dist/*.exe.bundle
             artifacts/dist/checksums.sha256
+            artifacts/dist/sbom.spdx.json
 
   # ─────────────────────────────────────────────────────────────────────────────
   # SLSA Level 3 provenance.
@@ -427,6 +435,7 @@ jobs:
             artifacts/signed-artifacts/*.exe \
             artifacts/signed-artifacts/*.exe.bundle \
             artifacts/signed-artifacts/checksums.sha256 \
+            artifacts/signed-artifacts/sbom.spdx.json \
             artifacts/rpm-packages/*.rpm \
             artifacts/deb-packages/*.deb \
             artifacts/windows-installers/*-setup.exe \
