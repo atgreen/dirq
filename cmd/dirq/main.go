@@ -789,6 +789,14 @@ Examples:
 			}
 
 			// Forward CLI settings to the Ansible connection plugin.
+			// These may come from client.conf rather than env vars,
+			// so always set them explicitly for the subprocess.
+			if serverURL != "" {
+				proc.Env = append(proc.Env, "DIRQ_SERVER_URL="+serverURL)
+			}
+			if apiToken != "" {
+				proc.Env = append(proc.Env, "DIRQ_TOKEN="+apiToken)
+			}
 			if tlsInsecure {
 				proc.Env = append(proc.Env, "DIRQ_TLS_INSECURE=true")
 			}
