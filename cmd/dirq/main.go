@@ -35,12 +35,14 @@ var (
 )
 
 func main() {
-	// Flatten args: split any multi-word quoted arguments by whitespace.
+	// Flatten args: split multi-word quoted arguments that look like queries.
 	// This lets users write dirq "select hostname where tag.env = 'prod'"
 	// instead of dirq select hostname where tag.env = 'prod'
+	// Only flatten args that start with SELECT — leave everything else
+	// intact so "ls -l" doesn't get split into ls and -l (cobra flag).
 	flatArgs := []string{}
 	for _, arg := range os.Args[1:] {
-		if strings.ContainsAny(arg, " \t") && !strings.HasPrefix(arg, "-") {
+		if strings.ContainsAny(arg, " \t") && strings.HasPrefix(strings.ToUpper(strings.TrimSpace(arg)), "SELECT") {
 			flatArgs = append(flatArgs, strings.Fields(arg)...)
 		} else {
 			flatArgs = append(flatArgs, arg)
