@@ -611,8 +611,28 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 
 	hostname, _ := os.Hostname()
 
+	// Extract name hints from filters for optimized collection.
+	// e.g., packages.name = 'kernel' → hints{"packages": ["kernel"]}
+	hints := modules.ModuleHints{}
+	for _, f := range qr.Filters {
+		parts := strings.SplitN(f.Field, ".", 2)
+		if len(parts) == 2 && parts[1] == "name" && (f.Operator == "=" || f.Operator == "IN") {
+			if f.Operator == "=" {
+				hints[parts[0]] = append(hints[parts[0]], f.Value)
+			} else {
+				// IN operator: value is comma-separated.
+				for _, v := range strings.Split(f.Value, ",") {
+					v = strings.TrimSpace(v)
+					if v != "" {
+						hints[parts[0]] = append(hints[parts[0]], v)
+					}
+				}
+			}
+		}
+	}
+
 	// Collect data from requested modules.
-	collected := modules.CollectModules(qr.Modules)
+	collected := modules.CollectModules(qr.Modules, hints)
 
 	// Apply agent-side filtering (array-aware: filters into packages, services, etc.)
 	if len(qr.Filters) > 0 {

@@ -34,6 +34,49 @@ func (p *PackagesModule) Collect() (map[string]any, error) {
 	}, nil
 }
 
+// CollectFiltered queries only the named packages instead of enumerating all
+// installed packages. Falls back to full collection on any error.
+func (p *PackagesModule) CollectFiltered(nameHints []string) (map[string]any, error) {
+	if len(nameHints) == 0 || runtime.GOOS != "linux" {
+		return p.Collect()
+	}
+
+	var packages []any
+
+	if rpmPath, err := exec.LookPath("rpm"); err == nil {
+		// rpm -q kernel openssl → only query specific packages.
+		args := append([]string{"-q", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"}, nameHints...)
+		cmd := exec.Command(rpmPath, args...)
+		out, err := cmd.Output()
+		if err != nil {
+			// Some packages may not be installed — that's fine, rpm -q
+			// returns non-zero but still outputs found packages.
+			if len(out) == 0 {
+				return map[string]any{"packages": []any{}}, nil
+			}
+		}
+		packages = parseTabSeparated(string(out), "rpm")
+	} else if dpkgPath, err := exec.LookPath("dpkg-query"); err == nil {
+		// dpkg-query -W kernel openssl
+		args := append([]string{"-W", "-f=${Package}\t${Version}\t${Architecture}\n"}, nameHints...)
+		cmd := exec.Command(dpkgPath, args...)
+		out, err := cmd.Output()
+		if err != nil {
+			if len(out) == 0 {
+				return map[string]any{"packages": []any{}}, nil
+			}
+		}
+		packages = parseTabSeparated(string(out), "dpkg")
+	} else {
+		return p.Collect()
+	}
+
+	if packages == nil {
+		packages = []any{}
+	}
+	return map[string]any{"packages": packages}, nil
+}
+
 func collectLinuxPackages() []any {
 	// Try rpm first
 	if rpmPath, err := exec.LookPath("rpm"); err == nil {
