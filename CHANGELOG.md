@@ -5,6 +5,19 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] - 2026-05-16
+
+### Added
+
+- **`dirq errata`** — check the fleet against Red Hat advisories (RHSA/RHBA/RHEA); fetches advisory data, extracts all CVEs and fixed packages, and reports which RHEL hosts are patched or vulnerable
+- **`dirq kb`** — check Windows hosts for installed hotfixes; reports which hosts have or are missing specific KBs
+- **`hotfixes` module** — collects installed Windows hotfixes via `Get-HotFix` (kb_id, description, installed_on); supports filtered collection for targeted KB queries
+
+### Fixed
+
+- **API token shown in CLI help** — the `--token` flag displayed the token from `client.conf` as its default value; now hidden from help output
+- **CVE not-assessed count was always zero** — the count compared against query results (which only included RHEL hosts) instead of the total online fleet
+
 ## [0.10.0] - 2026-05-16
 
 ### Added
@@ -280,6 +293,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.11.0]: https://github.com/atgreen/dirq/releases/tag/v0.11.0
 [0.10.0]: https://github.com/atgreen/dirq/releases/tag/v0.10.0
 [0.9.2]: https://github.com/atgreen/dirq/releases/tag/v0.9.2
 [0.9.1]: https://github.com/atgreen/dirq/releases/tag/v0.9.1
