@@ -142,7 +142,7 @@ func (l *lexer) scan() error {
 			l.emit(tkGreaterEq, start, 2)
 		case ch == '>':
 			l.emit(tkGreater, start, 1)
-		case ch == '\'':
+		case ch == '\'' || ch == '"':
 			if err := l.scanString(); err != nil {
 				return err
 			}
@@ -178,14 +178,15 @@ func (l *lexer) peek(offset int) byte {
 
 func (l *lexer) scanString() error {
 	start := l.pos
-	l.pos++ // skip opening quote
+	quote := l.input[l.pos] // ' or "
+	l.pos++                 // skip opening quote
 	var b strings.Builder
 	for l.pos < len(l.input) {
 		ch := l.input[l.pos]
-		if ch == '\'' {
-			if l.pos+1 < len(l.input) && l.input[l.pos+1] == '\'' {
-				// Escaped single quote.
-				b.WriteByte('\'')
+		if ch == quote {
+			if l.pos+1 < len(l.input) && l.input[l.pos+1] == quote {
+				// Escaped quote (doubled).
+				b.WriteByte(ch)
 				l.pos += 2
 				continue
 			}
@@ -627,6 +628,13 @@ func (p *parser) parseValue() (Value, error) {
 		return Value{Number: &n}, nil
 	}
 	if t.kind == tkString {
+		p.advance()
+		s := t.text
+		return Value{String: &s}, nil
+	}
+	// Accept unquoted identifiers as string values (e.g., WHERE hostname = fedora).
+	// The shell often strips single quotes, so this is a common user pattern.
+	if t.kind == tkIdent {
 		p.advance()
 		s := t.text
 		return Value{String: &s}, nil
