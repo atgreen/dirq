@@ -70,12 +70,6 @@
             DelayedAutoStart="yes"
             OnInstall="yes"
             OnReinstall="yes" />
-          <util:ServiceConfig xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
-            FirstFailureActionType="restart"
-            SecondFailureActionType="restart"
-            ThirdFailureActionType="restart"
-            RestartServiceDelayInSeconds="5"
-            ResetPeriodInDays="1" />
         </ServiceInstall>
         <ServiceControl
           Id="DirQAgentControl"

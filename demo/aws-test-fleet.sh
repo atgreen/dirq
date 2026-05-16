@@ -390,7 +390,9 @@ Add-Content 'C:\ProgramData\dirq\agent.conf' "  env: ${tag_env}"
 Add-Content 'C:\ProgramData\dirq\agent.conf' "  role: iis"
 Add-Content 'C:\ProgramData\dirq\agent.conf' "  fleet: aws-test"
 
-Write-Host "Config written, starting service..."
+Write-Host "Config written, configuring and starting service..."
+# Set service recovery: restart on failure.
+sc.exe failure DirQAgent reset= 86400 actions= restart/5000/restart/5000/restart/5000
 Start-Service DirQAgent
 Write-Host "DirQ agent service started"
 
