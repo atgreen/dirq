@@ -372,12 +372,8 @@ if (-not \$downloaded) {
     exit 1
 }
 
-# Install MSI.
-Write-Host "Installing MSI..."
-\$proc = Start-Process msiexec -ArgumentList "/i \$msiPath /qn /l*v C:\dirq-msi.log" -Wait -PassThru
-Write-Host "MSI exit code: \$(\$proc.ExitCode)"
-
-# Write the server-generated agent config (has inline TLS certs).
+# Write the server-generated agent config BEFORE install so the
+# service can start successfully (MSI starts it during install).
 New-Item -ItemType Directory -Force -Path 'C:\ProgramData\dirq' | Out-Null
 [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${agent_conf_b64}')) | Set-Content 'C:\ProgramData\dirq\agent.conf' -Encoding UTF8
 
@@ -388,11 +384,23 @@ Add-Content 'C:\ProgramData\dirq\agent.conf' "  env: ${tag_env}"
 Add-Content 'C:\ProgramData\dirq\agent.conf' "  role: iis"
 Add-Content 'C:\ProgramData\dirq\agent.conf' "  fleet: aws-test"
 
-# Install and start the agent service.
+Write-Host "Config written to C:\ProgramData\dirq\agent.conf"
+
+# Install MSI. The service will auto-start and find the config.
+Write-Host "Installing MSI..."
+\$proc = Start-Process msiexec -ArgumentList "/i \$msiPath /qn /l*v C:\dirq-msi.log" -Wait -PassThru
+Write-Host "MSI exit code: \$(\$proc.ExitCode)"
+
 if (Test-Path "C:\Program Files\DirQ\dirq-agent.exe") {
-    & "C:\Program Files\DirQ\dirq-agent.exe" install
-    Start-Service DirQAgent
-    Write-Host "DirQ agent service started"
+    # Verify service is running (MSI installs and starts it).
+    Start-Sleep -Seconds 3
+    \$svc = Get-Service DirQAgent -ErrorAction SilentlyContinue
+    if (\$svc -and \$svc.Status -eq 'Running') {
+        Write-Host "DirQ agent service is running"
+    } else {
+        Write-Host "Service not running, attempting manual start..."
+        Start-Service DirQAgent -ErrorAction SilentlyContinue
+    }
 } else {
     Write-Host "ERROR: dirq-agent.exe not found after MSI install"
 }
