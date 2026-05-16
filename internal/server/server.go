@@ -124,7 +124,12 @@ func (s *Server) writeAgentConfig(tlsCfg tlsutil.Config) {
 	outPath := filepath.Join(config.DataDir(), "agent.conf")
 
 	hostname, _ := os.Hostname()
-	serverAddr := hostname + s.cfg.GRPCAddr // e.g. "myserver:50051"
+	// Extract just the port from GRPCAddr (which may be "0.0.0.0:50051" or ":50051").
+	grpcPort := s.cfg.GRPCAddr
+	if _, port, err := net.SplitHostPort(s.cfg.GRPCAddr); err == nil {
+		grpcPort = ":" + port
+	}
+	serverAddr := hostname + grpcPort // e.g. "myserver:50051"
 
 	var lines []string
 	lines = append(lines,
