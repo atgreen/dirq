@@ -185,6 +185,29 @@ func HasTagConditions(expr Expr) bool {
 	return false
 }
 
+// HasFieldConditions returns true if the expression contains conditions on
+// agent-reported fields (e.g., os_info.os) that require querying agents to resolve.
+func HasFieldConditions(expr Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		return HasFieldConditions(e.Left) || HasFieldConditions(e.Right)
+	case *NotExpr:
+		return HasFieldConditions(e.Expr)
+	case *CompareExpr:
+		return !IsTagField(e.Field) && strings.Contains(e.Field, ".")
+	case *LikeExpr:
+		return !IsTagField(e.Field) && strings.Contains(e.Field, ".")
+	case *InExpr:
+		return !IsTagField(e.Field) && strings.Contains(e.Field, ".")
+	case *IsNullExpr:
+		return !IsTagField(e.Field) && strings.Contains(e.Field, ".")
+	}
+	return false
+}
+
 // ExtractModules returns the set of module names referenced in the query.
 func ExtractModules(q *Query) []string {
 	seen := make(map[string]bool)

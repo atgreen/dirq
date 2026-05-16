@@ -4,6 +4,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -665,7 +666,7 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-filter by tag conditions.
+	// Pre-filter by tag conditions (these can be resolved without querying agents).
 	agents := allAgents
 	if query.HasTagConditions(parsed.Where) {
 		agents = make([]db.Agent, 0, len(allAgents))
@@ -673,6 +674,27 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 			if query.MatchesAgentTags(parsed.Where, a.Tags) {
 				agents = append(agents, a)
 			}
+		}
+	}
+
+	// If there are non-tag field conditions (e.g., os_info.os = 'linux'),
+	// run a query first to resolve which agents match, then intersect.
+	if query.HasFieldConditions(parsed.Where) {
+		matchedIDs, err := s.resolveFieldTargets(ctx, req.Query, timeout)
+		if err != nil {
+			s.log.Warn("field-based target resolution failed, using tag filter only", "error", err)
+		} else {
+			matched := make(map[string]bool, len(matchedIDs))
+			for _, id := range matchedIDs {
+				matched[id] = true
+			}
+			filtered := make([]db.Agent, 0, len(agents))
+			for _, a := range agents {
+				if matched[a.ID] {
+					filtered = append(filtered, a)
+				}
+			}
+			agents = filtered
 		}
 	}
 
@@ -838,6 +860,57 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// resolveFieldTargets runs a SELECT hostname query to find which agents
+// match field-based WHERE conditions (e.g., os_info.os = 'linux').
+// Returns the list of matching agent IDs.
+func (s *Server) resolveFieldTargets(ctx context.Context, queryStr string, timeout int) ([]string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"query":   queryStr,
+		"timeout": timeout,
+	})
+
+	// Use the internal query handler by creating a fake HTTP request.
+	// This is a bit of a hack but avoids duplicating the query dispatch logic.
+	req, _ := http.NewRequestWithContext(ctx, "POST", "/api/v1/query", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := &responseRecorder{headers: make(http.Header), body: &bytes.Buffer{}}
+	s.handleQuery(rec, req)
+
+	if rec.code != http.StatusOK {
+		return nil, fmt.Errorf("query failed: HTTP %d", rec.code)
+	}
+
+	var result struct {
+		Results []struct {
+			AgentID string `json:"agent_id"`
+			Success bool   `json:"success"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.body.Bytes(), &result); err != nil {
+		return nil, err
+	}
+
+	var ids []string
+	for _, r := range result.Results {
+		if r.Success {
+			ids = append(ids, r.AgentID)
+		}
+	}
+	return ids, nil
+}
+
+// responseRecorder captures an HTTP response for internal use.
+type responseRecorder struct {
+	code    int
+	headers http.Header
+	body    *bytes.Buffer
+}
+
+func (r *responseRecorder) Header() http.Header         { return r.headers }
+func (r *responseRecorder) Write(b []byte) (int, error)  { return r.body.Write(b) }
+func (r *responseRecorder) WriteHeader(code int)         { r.code = code }
 
 // ─────────────────────────────────────────────────────────
 // Helpers
