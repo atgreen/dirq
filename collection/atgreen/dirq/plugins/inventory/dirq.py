@@ -226,6 +226,12 @@ class InventoryModule(BaseInventoryPlugin):
                 self.inventory.set_variable(hostname, "ansible_python_interpreter", "/usr/bin/python3")
                 self.inventory.set_variable(hostname, "ansible_become_method", "sudo")
 
+            # ── Pass through ansible_* tags as host vars (overrides defaults above) ──
+            for tag_key, tag_val in dv.items():
+                if tag_key.startswith("dirq_tag_ansible_"):
+                    ansible_var = tag_key[len("dirq_tag_"):]
+                    self.inventory.set_variable(hostname, ansible_var, tag_val)
+
             # ── CPU / memory as Ansible facts ──
             cpu = dv.get("dirq_cpu", {})
             if cpu:

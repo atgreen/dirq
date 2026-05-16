@@ -2579,6 +2579,7 @@ func buildWhereQuery(args []string) string {
 type queryHost struct {
 	hostname string
 	agentID  string
+	tags     map[string]string
 }
 
 // runQuery executes a DirQ query and returns matching hosts.
@@ -2603,10 +2604,24 @@ func runQuery(queryStr string, timeout int) ([]queryHost, error) {
 		return nil, fmt.Errorf("parse query result: %w", err)
 	}
 
+	// Fetch agent details (including tags) for matched hosts.
+	agentTags := map[string]map[string]string{}
+	if hostResp, err := apiRequest("GET", "/api/v1/hosts", nil); err == nil {
+		var agents []struct {
+			ID   string            `json:"id"`
+			Tags map[string]string `json:"tags"`
+		}
+		if json.Unmarshal(hostResp, &agents) == nil {
+			for _, a := range agents {
+				agentTags[a.ID] = a.Tags
+			}
+		}
+	}
+
 	var hosts []queryHost
 	for _, r := range result.Results {
 		if r.Success && r.Hostname != "" {
-			hosts = append(hosts, queryHost{r.Hostname, r.AgentID})
+			hosts = append(hosts, queryHost{r.Hostname, r.AgentID, agentTags[r.AgentID]})
 		}
 	}
 	return hosts, nil
@@ -2625,7 +2640,20 @@ func writeInventory(hosts []queryHost) (string, error) {
 		fmt.Fprintf(tmpInv, "      dirq_agent_id: %s\n", h.agentID)
 		fmt.Fprintf(tmpInv, "      dirq_server_url: %s\n", serverURL)
 		fmt.Fprintf(tmpInv, "      ansible_connection: dirq\n")
-		fmt.Fprintf(tmpInv, "      ansible_python_interpreter: /usr/bin/python3\n")
+
+		// Use ansible_python_interpreter from tag if set, else default.
+		pythonInterp := "/usr/bin/python3"
+		if v, ok := h.tags["ansible_python_interpreter"]; ok {
+			pythonInterp = v
+		}
+		fmt.Fprintf(tmpInv, "      ansible_python_interpreter: %s\n", pythonInterp)
+
+		// Pass through any other ansible_* tags as host vars.
+		for k, v := range h.tags {
+			if strings.HasPrefix(k, "ansible_") && k != "ansible_python_interpreter" {
+				fmt.Fprintf(tmpInv, "      %s: %s\n", k, v)
+			}
+		}
 	}
 	tmpInv.Close()
 	return tmpInv.Name(), nil
