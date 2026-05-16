@@ -106,8 +106,8 @@ scp_cmd() {
 wait_ssh() {
     local user="$1" ip="$2"
     log "  Waiting for SSH on $ip..."
-    for i in $(seq 1 40); do
-        ssh_cmd -o BatchMode=yes "$user@$ip" true 2>/dev/null && return 0
+    for i in $(seq 1 60); do
+        ssh_cmd -o BatchMode=yes "$user@$ip" true 2>/dev/null && { sleep 2; return 0; }
         sleep 5
     done
     die "SSH timeout for $ip"
@@ -283,8 +283,11 @@ SERVER_SETUP
         log "  Deploying agent to linux-$i ($vm_ip)"
         wait_ssh "ec2-user" "$vm_ip"
 
-        # Copy the server-generated agent.conf, then append tags.
-        scp_cmd "$STATE_DIR/agent.conf" "ec2-user@$vm_ip:/tmp/agent.conf"
+        # Copy the server-generated agent.conf (retry — cloud-init may restart sshd).
+        for attempt in 1 2 3; do
+            scp_cmd "$STATE_DIR/agent.conf" "ec2-user@$vm_ip:/tmp/agent.conf" && break
+            sleep 5
+        done
 
         ssh_cmd "ec2-user@$vm_ip" bash <<AGENT_SETUP
             set -e
