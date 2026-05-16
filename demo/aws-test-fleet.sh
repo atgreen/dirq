@@ -238,11 +238,11 @@ CONF
         sudo systemctl enable --now dirq-agent
 SERVER_SETUP
 
-    # Download the server-generated configs.
+    # Download the server-generated configs (root-owned, need sudo).
     log "  Fetching generated configs"
-    scp_cmd "ec2-user@$srv_ip:/var/lib/dirq/agent.conf" "$STATE_DIR/agent.conf"
-    scp_cmd "ec2-user@$srv_ip:/var/lib/dirq/client.conf" "$STATE_DIR/client.conf"
-    scp_cmd "ec2-user@$srv_ip:/var/lib/dirq/bootstrap-token" "$STATE_DIR/bootstrap-token"
+    ssh_cmd "ec2-user@$srv_ip" "sudo cat /var/lib/dirq/agent.conf" > "$STATE_DIR/agent.conf"
+    ssh_cmd "ec2-user@$srv_ip" "sudo cat /var/lib/dirq/client.conf" > "$STATE_DIR/client.conf"
+    ssh_cmd "ec2-user@$srv_ip" "sudo cat /var/lib/dirq/bootstrap-token" > "$STATE_DIR/bootstrap-token"
 
     log "  Server running at https://$srv_ip:8080"
 
