@@ -2054,37 +2054,45 @@ Examples:
 			fmt.Fprintf(os.Stderr, "%s: %s\n", cveID, cveData.Bugzilla.Description)
 			fmt.Fprintf(os.Stderr, "Severity: %s\n", cveData.ThreatSeverity)
 
-			// Extract affected package names and fixed versions from affected_release.
-			// Package format: "name-epoch:version-release.el9" or similar.
+			// Extract affected package names and fixed versions from affected_release,
+			// keyed by RHEL major version (e.g., "8", "9", "10").
 			type fixedPkg struct {
 				name       string // RPM source package name
 				fullNEVRA  string // full name-epoch:version-release string
 				fixVersion string // version-release portion for comparison
+				rhelVer    string // RHEL major version ("8", "9", etc.)
 			}
 
 			var fixedPkgs []fixedPkg
-			seenPkgs := map[string]bool{}
+			seenPkgs := map[string]bool{} // "name:rhelVer" dedup key
+			allPkgNames := map[string]bool{}
 
 			for _, ar := range cveData.AffectedRelease {
 				if ar.Package == "" {
 					continue
 				}
-				// Only care about RHEL (not middleware, containers, etc.)
 				if !strings.Contains(ar.CPE, "enterprise_linux") {
+					continue
+				}
+				rhelVer := extractRHELVersion(ar.CPE)
+				if rhelVer == "" {
 					continue
 				}
 				name, version := parseRPMNEVRA(ar.Package)
 				if name == "" {
 					continue
 				}
-				if seenPkgs[name] {
+				dedup := name + ":" + rhelVer
+				if seenPkgs[dedup] {
 					continue
 				}
-				seenPkgs[name] = true
+				seenPkgs[dedup] = true
+				allPkgNames[name] = true
 				fixedPkgs = append(fixedPkgs, fixedPkg{
 					name:       name,
 					fullNEVRA:  ar.Package,
 					fixVersion: version,
+					rhelVer:    rhelVer,
 				})
 			}
 
@@ -2096,10 +2104,17 @@ Examples:
 				if !strings.Contains(ps.CPE, "enterprise_linux") {
 					continue
 				}
-				if !seenPkgs[ps.PackageName] {
-					seenPkgs[ps.PackageName] = true
+				rhelVer := extractRHELVersion(ps.CPE)
+				if rhelVer == "" {
+					continue
+				}
+				dedup := ps.PackageName + ":" + rhelVer
+				if !seenPkgs[dedup] {
+					seenPkgs[dedup] = true
+					allPkgNames[ps.PackageName] = true
 					fixedPkgs = append(fixedPkgs, fixedPkg{
-						name: ps.PackageName,
+						name:    ps.PackageName,
+						rhelVer: rhelVer,
 					})
 				}
 			}
@@ -2110,27 +2125,30 @@ Examples:
 			}
 
 			// Build package name list for display and query.
-			pkgNames := make([]string, len(fixedPkgs))
-			for i, fp := range fixedPkgs {
-				pkgNames[i] = fp.name
+			pkgNames := make([]string, 0, len(allPkgNames))
+			for n := range allPkgNames {
+				pkgNames = append(pkgNames, n)
 			}
+			sort.Strings(pkgNames)
 
 			fmt.Fprintf(os.Stderr, "Packages: %s\n", strings.Join(pkgNames, ", "))
 			for _, fp := range fixedPkgs {
 				if fp.fixVersion != "" {
-					fmt.Fprintf(os.Stderr, "  %s: fixed in %s\n", fp.name, fp.fullNEVRA)
+					fmt.Fprintf(os.Stderr, "  %s (RHEL %s): fixed in %s\n", fp.name, fp.rhelVer, fp.fullNEVRA)
 				} else {
-					fmt.Fprintf(os.Stderr, "  %s: no fix available (still affected)\n", fp.name)
+					fmt.Fprintf(os.Stderr, "  %s (RHEL %s): no fix available (still affected)\n", fp.name, fp.rhelVer)
 				}
 			}
 			fmt.Fprintln(os.Stderr)
 
 			// Build DirQ query to find RHEL hosts with these packages installed.
+			// Filter to RHEL-family only (rhel, centos, rocky, alma, oracle).
 			inList := make([]string, len(pkgNames))
 			for i, n := range pkgNames {
 				inList[i] = "'" + n + "'"
 			}
 			pkgFilter := "packages.name IN (" + strings.Join(inList, ", ") + ")"
+			osFilter := "os_info.os_version LIKE '%el%'"
 
 			// Add WHERE clause from remaining args if provided.
 			var whereExtra string
@@ -2141,8 +2159,8 @@ Examples:
 				whereExtra = strings.Replace(whereExtra, " AND where ", " AND ", 1)
 			}
 
-			queryStr := fmt.Sprintf("SELECT hostname, os_info.os, os_info.os_version, packages.name, packages.version WHERE %s%s",
-				pkgFilter, whereExtra)
+			queryStr := fmt.Sprintf("SELECT hostname, os_info.os, os_info.os_version, packages.name, packages.version WHERE %s AND %s%s",
+				pkgFilter, osFilter, whereExtra)
 
 			fmt.Fprintf(os.Stderr, "Scanning fleet...\n\n")
 
@@ -2175,12 +2193,11 @@ Examples:
 				return nil
 			}
 
-			// Build fixed version lookup.
-			fixedVersionMap := map[string]string{} // pkg name → fixed version string
+			// Build fixed version lookup keyed by "pkgname:rhelver".
+			type fixKey struct{ name, rhelVer string }
+			fixedVersionMap := map[fixKey]fixedPkg{}
 			for _, fp := range fixedPkgs {
-				if fp.fixVersion != "" {
-					fixedVersionMap[fp.name] = fp.fixVersion
-				}
+				fixedVersionMap[fixKey{fp.name, fp.rhelVer}] = fp
 			}
 
 			vulnerable := 0
@@ -2192,30 +2209,50 @@ Examples:
 					continue
 				}
 
-				// Check OS — skip non-RHEL.
-				osName, _ := r.Data["os_info.os"].(string)
-				if osName == "" {
-					// Try nested format.
+				// Detect RHEL major version from os_version (e.g., "4.18.0-553.33.1.el8_10" → "8").
+				osVersion, _ := r.Data["os_info.os_version"].(string)
+				if osVersion == "" {
 					if oi, ok := r.Data["os_info"].(map[string]any); ok {
-						osName, _ = oi["os"].(string)
+						osVersion, _ = oi["os_version"].(string)
 					}
+				}
+				hostRHEL := detectRHELMajor(osVersion)
+				if hostRHEL == "" {
+					continue // not RHEL-family, skip
 				}
 
 				// Extract packages from results.
 				pkgs := extractPackageList(r.Data)
 				for _, pkg := range pkgs {
-					fixedVer, hasfix := fixedVersionMap[pkg.name]
+					fp, hasfix := fixedVersionMap[fixKey{pkg.name, hostRHEL}]
 					if !hasfix {
-						// Package is affected but no fix available.
+						// Check if this package is affected on ANY RHEL version
+						// but has no fix for this specific version.
+						affected := false
+						for k := range fixedVersionMap {
+							if k.name == pkg.name {
+								affected = true
+								break
+							}
+						}
+						if affected {
+							fmt.Printf("  %-24s %-20s %-20s  VULNERABLE (no fix for RHEL %s)\n",
+								r.Hostname, pkg.name, pkg.version, hostRHEL)
+							noFix++
+						}
+						continue
+					}
+
+					if fp.fixVersion == "" {
 						fmt.Printf("  %-24s %-20s %-20s  VULNERABLE (no fix available)\n",
 							r.Hostname, pkg.name, pkg.version)
 						noFix++
 						continue
 					}
 
-					if rpmVersionCompare(pkg.version, fixedVer) < 0 {
+					if rpmVersionCompare(pkg.version, fp.fixVersion) < 0 {
 						fmt.Printf("  %-24s %-20s %-20s  VULNERABLE (fixed in %s)\n",
-							r.Hostname, pkg.name, pkg.version, fixedVer)
+							r.Hostname, pkg.name, pkg.version, fp.fullNEVRA)
 						vulnerable++
 					} else {
 						fmt.Printf("  %-24s %-20s %-20s  patched\n",
@@ -2288,6 +2325,52 @@ func extractPackageList(data map[string]any) []pkgInfo {
 }
 
 // parseRPMNEVRA extracts the package name and version-release from an RPM NEVRA string.
+// extractRHELVersion extracts the RHEL major version from a CPE string.
+// e.g., "cpe:/o:redhat:enterprise_linux:8" → "8"
+//       "cpe:/o:redhat:enterprise_linux:9::baseos" → "9"
+func extractRHELVersion(cpe string) string {
+	// CPE format: cpe:/o:redhat:enterprise_linux:VERSION...
+	parts := strings.Split(cpe, ":")
+	for i, p := range parts {
+		if p == "enterprise_linux" && i+1 < len(parts) {
+			ver := parts[i+1]
+			// Strip sub-parts (e.g., "8::baseos" → "8")
+			if idx := strings.IndexAny(ver, ":."); idx >= 0 {
+				ver = ver[:idx]
+			}
+			return ver
+		}
+	}
+	return ""
+}
+
+// detectRHELMajor extracts the RHEL major version from an OS version string
+// or kernel version by looking for "elN" patterns.
+// e.g., "8.10" → "8", "4.18.0-553.33.1.el8_10" → "8", "9.4" → "9"
+func detectRHELMajor(osVersion string) string {
+	// Look for .elN pattern in the version string (common in kernel/package versions).
+	idx := strings.Index(osVersion, ".el")
+	if idx >= 0 {
+		rest := osVersion[idx+3:]
+		var ver string
+		for _, ch := range rest {
+			if ch >= '0' && ch <= '9' {
+				ver += string(ch)
+			} else {
+				break
+			}
+		}
+		if ver != "" {
+			return ver
+		}
+	}
+	// Try simple major version (e.g., "8.10" → "8", "9.4" → "9").
+	if dot := strings.Index(osVersion, "."); dot > 0 {
+		return osVersion[:dot]
+	}
+	return ""
+}
+
 // Input: "python3-setuptools-0:68.2.2-4.el8_10" or "openssl-1:3.0.7-27.el9"
 // Returns: name="python3-setuptools", version="0:68.2.2-4.el8_10"
 func parseRPMNEVRA(nevra string) (name, version string) {
