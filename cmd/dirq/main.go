@@ -2326,21 +2326,29 @@ Examples:
 				}
 			}
 
-			// Count hosts not assessed (non-RHEL or no matching packages).
-			allHosts := map[string]bool{}
-			for _, r := range result.Results {
-				if r.Success {
-					allHosts[r.Hostname] = true
+			// Count total online hosts to determine how many were not assessed.
+			notAssessed := 0
+			if hostsResp, err := apiRequest("GET", "/api/v1/hosts", nil); err == nil {
+				var allAgents []struct {
+					Online bool `json:"online"`
+				}
+				if json.Unmarshal(hostsResp, &allAgents) == nil {
+					online := 0
+					for _, a := range allAgents {
+						if a.Online {
+							online++
+						}
+					}
+					notAssessed = online - len(assessedHosts)
 				}
 			}
-			skipped := len(allHosts) - len(assessedHosts)
 
 			fmt.Printf("\n%d vulnerable, %d patched", vulnerable, patched)
 			if noFix > 0 {
 				fmt.Printf(", %d no fix available", noFix)
 			}
-			if skipped > 0 {
-				fmt.Printf(", %d not assessed (non-RHEL)", skipped)
+			if notAssessed > 0 {
+				fmt.Printf(", %d not assessed (non-RHEL)", notAssessed)
 			}
 			fmt.Println()
 
