@@ -3,17 +3,14 @@
 #
 # Prerequisites:
 #   - aws CLI installed and configured (aws configure)
-#   - Cross-compiled agent binaries in ./bin/:
-#       GOOS=linux  GOARCH=amd64 go build -o bin/dirq-agent-linux   ./cmd/dirq-agent
-#       GOOS=windows GOARCH=amd64 go build -o bin/dirq-agent.exe    ./cmd/dirq-agent
-#       GOOS=linux  GOARCH=amd64 go build -o bin/dirq-server-linux  ./cmd/dirq-server
+#   - GitHub release binaries exist (or override with DIRQ_VERSION)
 #
 # Usage:
 #   ./deploy/aws-test-fleet.sh up          # create everything
 #   ./deploy/aws-test-fleet.sh status       # show fleet status
 #   ./deploy/aws-test-fleet.sh down         # tear it all down
 #
-# Defaults: 3 Linux + 2 Windows VMs. Override with:
+# Defaults: 3 Linux (RHEL 8) + 2 Windows VMs. Override with:
 #   LINUX_COUNT=5 WIN_COUNT=3 ./deploy/aws-test-fleet.sh up
 
 set -euo pipefail
@@ -29,6 +26,10 @@ WIN_COUNT="${WIN_COUNT:-2}"
 KEY_NAME="${DIRQ_KEY_NAME:-dirq-test}"
 TAG_PREFIX="dirq-test"
 WIN_ADMIN_PASS="${DIRQ_WIN_PASSWORD:-DirQ-Test-2026!}"
+REGISTRATION_SECRET="${DIRQ_REGISTRATION_SECRET:-dirq-aws-test-secret}"
+
+# Version for RPM/MSI install. Uses latest GitHub release by default.
+DIRQ_VERSION="${DIRQ_VERSION:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -49,13 +50,17 @@ load_state() { cat "$STATE_DIR/$1" 2>/dev/null || echo ""; }
 check_prereqs() {
     command -v aws >/dev/null || die "aws CLI not found. Install: sudo dnf install awscli2"
     aws_ sts get-caller-identity >/dev/null 2>&1 || die "Not logged in. Run: aws configure"
+}
 
-    for f in "$REPO_DIR/bin/dirq-agent-linux" "$REPO_DIR/bin/dirq-agent.exe" "$REPO_DIR/bin/dirq-server-linux"; do
-        [[ -f "$f" ]] || die "Missing $f — build with:
-  GOOS=linux GOARCH=amd64 go build -o bin/dirq-agent-linux ./cmd/dirq-agent
-  GOOS=windows GOARCH=amd64 go build -o bin/dirq-agent.exe ./cmd/dirq-agent
-  GOOS=linux GOARCH=amd64 go build -o bin/dirq-server-linux ./cmd/dirq-server"
-    done
+resolve_version() {
+    if [[ -n "$DIRQ_VERSION" ]]; then
+        return
+    fi
+    log "Resolving latest DirQ release..."
+    DIRQ_VERSION=$(curl -s "https://api.github.com/repos/atgreen/dirq/releases/latest" \
+        | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
+    [[ -n "$DIRQ_VERSION" ]] || die "Could not determine latest release version"
+    log "  Using version: $DIRQ_VERSION"
 }
 
 # Look up latest AMI for a given owner/name pattern.
@@ -72,12 +77,6 @@ wait_instance_running() {
     local id="$1"
     log "  Waiting for $id to be running..."
     aws_ ec2 wait instance-running --instance-ids "$id"
-}
-
-wait_instance_ready() {
-    local id="$1"
-    log "  Waiting for $id status checks..."
-    aws_ ec2 wait instance-status-ok --instance-ids "$id" 2>/dev/null || true
 }
 
 get_public_ip() {
@@ -104,12 +103,23 @@ scp_cmd() {
         -i "$STATE_DIR/$KEY_NAME.pem" "$@"
 }
 
+wait_ssh() {
+    local user="$1" ip="$2"
+    log "  Waiting for SSH on $ip..."
+    for i in $(seq 1 40); do
+        ssh_cmd -o BatchMode=yes "$user@$ip" true 2>/dev/null && return 0
+        sleep 5
+    done
+    die "SSH timeout for $ip"
+}
+
 # ─────────────────────────────────────────────────────────
 # up — create everything
 # ─────────────────────────────────────────────────────────
 
 cmd_up() {
     check_prereqs
+    resolve_version
     mkdir -p "$STATE_DIR"
 
     # ── SSH key pair ───────────────────────────────────────
@@ -142,7 +152,6 @@ cmd_up() {
             --vpc-id "$vpc_id" \
             --query 'GroupId' --output text)
 
-        # SSH, RDP, DirQ gRPC, DirQ REST, relay port
         aws_ ec2 authorize-security-group-ingress --group-id "$sg_id" \
             --ip-permissions \
             "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=0.0.0.0/0}]" \
@@ -157,15 +166,15 @@ cmd_up() {
     # ── Find AMIs ─────────────────────────────────────────
     log "Looking up AMIs"
     local linux_ami win_ami
-    linux_ami=$(find_ami "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*" "099720109477")
+    linux_ami=$(find_ami "RHEL-8.*_HVM-*-x86_64-*-Hourly*" "309956199498")
     win_ami=$(find_ami "Windows_Server-2022-English-Full-Base-*" "801119661308")
-    [[ "$linux_ami" == "None" ]] && die "Could not find Ubuntu 24.04 AMI in $REGION"
+    [[ "$linux_ami" == "None" ]] && die "Could not find RHEL 8 AMI in $REGION"
     [[ "$win_ami" == "None" ]] && die "Could not find Windows Server 2022 AMI in $REGION"
-    log "  Linux AMI: $linux_ami"
-    log "  Windows AMI: $win_ami"
+    log "  Linux AMI: $linux_ami (RHEL 8)"
+    log "  Windows AMI: $win_ami (Server 2022)"
 
     # ── Server instance ───────────────────────────────────
-    log "Launching server instance"
+    log "Launching server instance (RHEL 8)"
     local srv_id
     srv_id=$(aws_ ec2 run-instances \
         --image-id "$linux_ami" \
@@ -184,56 +193,58 @@ cmd_up() {
     save_state server_private_ip "$srv_priv_ip"
     log "Server: $srv_id ($srv_ip / $srv_priv_ip)"
 
-    # Wait for SSH to be available.
-    log "  Waiting for SSH (can take 1-2 min)..."
-    for i in $(seq 1 40); do
-        ssh_cmd -o BatchMode=yes "ubuntu@$srv_ip" true 2>/dev/null && break
-        sleep 5
-    done
+    wait_ssh "ec2-user" "$srv_ip"
 
-    # Upload and start the server.
-    log "  Deploying dirq-server"
-    scp_cmd "$REPO_DIR/bin/dirq-server-linux" "ubuntu@$srv_ip:/tmp/dirq-server"
-
-    ssh_cmd "ubuntu@$srv_ip" bash <<'SERVER_SETUP'
+    # Install and configure the server via RPM.
+    log "  Installing dirq-server v$DIRQ_VERSION via RPM"
+    ssh_cmd "ec2-user@$srv_ip" bash <<SERVER_SETUP
         set -e
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq postgresql > /dev/null 2>&1
+        # Add DirQ RPM repo.
+        sudo tee /etc/yum.repos.d/dirq.repo > /dev/null <<'REPO'
+[dirq]
+name=DirQ
+baseurl=https://atgreen.github.io/dirq/rpm-repo/
+enabled=1
+gpgcheck=0
+REPO
+        sudo dnf install -y dirq-server dirq-agent dirq
 
-        sudo -u postgres createuser dirq 2>/dev/null || true
-        sudo -u postgres createdb -O dirq dirq 2>/dev/null || true
-        sudo -u postgres psql -c "ALTER USER dirq PASSWORD 'dirq';" > /dev/null
+        # Configure server.
+        sudo tee /etc/dirq/server.conf > /dev/null <<CONF
+grpc_addr: 0.0.0.0:50051
+http_addr: 0.0.0.0:8080
+db_url: sqlite:///var/lib/dirq/dirq.db
+registration_secret: ${REGISTRATION_SECRET}
+CONF
 
-        sudo mv /tmp/dirq-server /usr/local/bin/dirq-server
-        sudo chmod +x /usr/local/bin/dirq-server
-
-        sudo tee /etc/systemd/system/dirq-server.service > /dev/null <<EOF
-[Unit]
-Description=DirQ Server
-After=network-online.target postgresql.service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/dirq-server
-Environment=DIRQ_GRPC_ADDR=0.0.0.0:50051
-Environment=DIRQ_HTTP_ADDR=0.0.0.0:8080
-Environment=DIRQ_DB_URL=postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable
-Environment=DIRQ_TLS_INSECURE=true
-Environment=DIRQ_AUTH_DISABLED=true
-Restart=on-failure
-RestartSec=3
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        sudo systemctl daemon-reload
         sudo systemctl enable --now dirq-server
-        sleep 2
+        sleep 3
         sudo systemctl is-active dirq-server
+
+        # The server generates /var/lib/dirq/agent.conf with inline TLS certs.
+        # Wait for it to appear.
+        for i in \$(seq 1 10); do
+            [[ -f /var/lib/dirq/agent.conf ]] && break
+            sleep 1
+        done
+
+        # Configure the local agent using the server-generated config.
+        sudo cp /var/lib/dirq/agent.conf /etc/dirq/agent.conf
+        echo "exec_enabled: true" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+        echo "tags:" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+        echo "  env: prod" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+        echo "  role: server" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+        echo "  fleet: aws-test" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+        sudo systemctl enable --now dirq-agent
 SERVER_SETUP
 
-    log "  Server running at http://$srv_ip:8080"
+    # Download the server-generated configs.
+    log "  Fetching generated configs"
+    scp_cmd "ec2-user@$srv_ip:/var/lib/dirq/agent.conf" "$STATE_DIR/agent.conf"
+    scp_cmd "ec2-user@$srv_ip:/var/lib/dirq/client.conf" "$STATE_DIR/client.conf"
+    scp_cmd "ec2-user@$srv_ip:/var/lib/dirq/bootstrap-token" "$STATE_DIR/bootstrap-token"
+
+    log "  Server running at https://$srv_ip:8080"
 
     # ── Linux agent instances ─────────────────────────────
     local linux_ids=()
@@ -260,7 +271,7 @@ SERVER_SETUP
         wait_instance_running "$inst_id"
     done
 
-    # Deploy agent to each Linux instance.
+    # Deploy agent to each Linux instance using the server-generated config.
     for idx in "${!linux_ids[@]}"; do
         local entry="${linux_ids[$idx]}"
         local inst_id="${entry%%:*}"
@@ -270,40 +281,31 @@ SERVER_SETUP
         vm_ip=$(get_public_ip "$inst_id")
 
         log "  Deploying agent to linux-$i ($vm_ip)"
+        wait_ssh "ec2-user" "$vm_ip"
 
-        # Wait for SSH (can take 2-3 min on cold starts).
-        for attempt in $(seq 1 40); do
-            ssh_cmd -o BatchMode=yes "ubuntu@$vm_ip" true 2>/dev/null && break
-            sleep 5
-        done
+        # Copy the server-generated agent.conf, then append tags.
+        scp_cmd "$STATE_DIR/agent.conf" "ec2-user@$vm_ip:/tmp/agent.conf"
 
-        scp_cmd "$REPO_DIR/bin/dirq-agent-linux" "ubuntu@$vm_ip:/tmp/dirq-agent"
-
-        ssh_cmd "ubuntu@$vm_ip" bash <<AGENT_SETUP
+        ssh_cmd "ec2-user@$vm_ip" bash <<AGENT_SETUP
             set -e
-            sudo mv /tmp/dirq-agent /usr/local/bin/dirq-agent
-            sudo chmod +x /usr/local/bin/dirq-agent
+            # Add DirQ RPM repo and install agent.
+            sudo tee /etc/yum.repos.d/dirq.repo > /dev/null <<'REPO'
+[dirq]
+name=DirQ
+baseurl=https://atgreen.github.io/dirq/rpm-repo/
+enabled=1
+gpgcheck=0
+REPO
+            sudo dnf install -y dirq-agent
 
-            sudo tee /etc/systemd/system/dirq-agent.service > /dev/null <<EOF
-[Unit]
-Description=DirQ Agent
-After=network-online.target
+            # Use the server-generated config (has TLS certs inline).
+            sudo cp /tmp/agent.conf /etc/dirq/agent.conf
+            echo "exec_enabled: true" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+            echo "tags:" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+            echo "  env: ${tag_env}" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+            echo "  role: webserver" | sudo tee -a /etc/dirq/agent.conf > /dev/null
+            echo "  fleet: aws-test" | sudo tee -a /etc/dirq/agent.conf > /dev/null
 
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/dirq-agent
-Environment=DIRQ_SERVER=$srv_priv_ip:50051
-Environment=DIRQ_LISTEN=0.0.0.0:50052
-Environment=DIRQ_TAGS=env=$tag_env,os=linux,fleet=aws-test
-Environment=DIRQ_EXEC_ENABLED=true
-Environment=DIRQ_TLS_INSECURE=true
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-            sudo systemctl daemon-reload
             sudo systemctl enable --now dirq-agent
             sleep 1
             sudo systemctl is-active dirq-agent
@@ -312,16 +314,6 @@ AGENT_SETUP
     done
 
     # ── Windows agent instances ────────────────────────────
-
-    if (( WIN_COUNT > 0 )); then
-        # Upload the Windows binary to the server for download.
-        scp_cmd "$REPO_DIR/bin/dirq-agent.exe" "ubuntu@$srv_ip:/tmp/dirq-agent.exe"
-        # Start a temporary HTTP server for Windows to pull from.
-        ssh_cmd "ubuntu@$srv_ip" \
-            "cd /tmp && nohup timeout 600 python3 -m http.server 9999 > /dev/null 2>&1 &"
-        sleep 1
-    fi
-
     local win_ids=()
     for i in $(seq 1 "$WIN_COUNT"); do
         local name="$TAG_PREFIX-win-$i"
@@ -329,7 +321,10 @@ AGENT_SETUP
 
         log "Launching Windows agent: $name (env=$tag_env)"
 
-        # UserData script runs on first boot as Administrator.
+        # Read the agent.conf and base64-encode it for UserData.
+        local agent_conf_b64
+        agent_conf_b64=$(base64 -w0 "$STATE_DIR/agent.conf")
+
         local userdata
         userdata=$(cat <<WINEOF
 <powershell>
@@ -341,35 +336,28 @@ net user Administrator '${WIN_ADMIN_PASS}' /active:yes
 # Open firewall for DirQ relay.
 netsh advfirewall firewall add rule name="DirQ Agent" dir=in action=allow protocol=tcp localport=50052
 
-# Wait for network.
 Start-Sleep -Seconds 10
 
-# Create install directory.
-New-Item -ItemType Directory -Force -Path 'C:\dirq' | Out-Null
-
-# Download agent from server.
+# Download and install agent MSI from GitHub release.
+\$msiUrl = "https://github.com/atgreen/dirq/releases/download/v${DIRQ_VERSION}/dirq-agent-${DIRQ_VERSION}.msi"
+\$msiPath = "\$env:TEMP\dirq-agent.msi"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-Invoke-WebRequest -Uri 'http://${srv_priv_ip}:9999/dirq-agent.exe' -OutFile 'C:\dirq\dirq-agent.exe' -UseBasicParsing
+Invoke-WebRequest -Uri \$msiUrl -OutFile \$msiPath -UseBasicParsing
+Start-Process msiexec -ArgumentList "/i \$msiPath /qn" -Wait
 
-# Write config file (avoids Windows service env var issues).
+# Write the server-generated agent config (has inline TLS certs).
 New-Item -ItemType Directory -Force -Path 'C:\ProgramData\dirq' | Out-Null
-@"
-server: ${srv_priv_ip}:50051
-listen: 0.0.0.0:50052
-exec_enabled: true
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${agent_conf_b64}')) | Set-Content 'C:\ProgramData\dirq\agent.conf' -Encoding UTF8
 
-tags:
-  env: ${tag_env}
-  os: windows
-  fleet: aws-test
-"@ | Set-Content 'C:\ProgramData\dirq\agent.conf' -Encoding UTF8
+# Append tags.
+Add-Content 'C:\ProgramData\dirq\agent.conf' "exec_enabled: true"
+Add-Content 'C:\ProgramData\dirq\agent.conf' "tags:"
+Add-Content 'C:\ProgramData\dirq\agent.conf' "  env: ${tag_env}"
+Add-Content 'C:\ProgramData\dirq\agent.conf' "  role: iis"
+Add-Content 'C:\ProgramData\dirq\agent.conf' "  fleet: aws-test"
 
-# Set TLS insecure via env var (TLS config is handled separately).
-[Environment]::SetEnvironmentVariable('DIRQ_TLS_INSECURE', 'true', 'Machine')
-
-# Install and start as Windows service.
-C:\dirq\dirq-agent.exe install
-Start-Service DirQAgent
+# Start the agent service.
+Restart-Service DirQAgent
 </powershell>
 WINEOF
 )
@@ -384,37 +372,40 @@ WINEOF
             --query 'Instances[0].InstanceId' --output text)
         win_ids+=("$inst_id")
         save_state "win_${i}_id" "$inst_id"
-        log "  $name: $inst_id (agent installs automatically via UserData)"
+        log "  $name: $inst_id (installs automatically via UserData)"
     done
 
-    # Wait for Windows instances to be running.
     for inst_id in "${win_ids[@]}"; do
         wait_instance_running "$inst_id"
     done
 
-    # Stop the temp HTTP server.
-    if (( WIN_COUNT > 0 )); then
-        ssh_cmd "ubuntu@$srv_ip" "pkill -f 'python3 -m http.server 9999'" 2>/dev/null || true
-    fi
-
     echo
     log "Fleet deployed!"
     echo
-    echo "  Server:  http://$srv_ip:8080"
-    echo "  Agents:  $LINUX_COUNT Linux + $WIN_COUNT Windows"
+    echo "  Server:  https://$srv_ip:8080"
+    echo "  Agents:  $LINUX_COUNT Linux (RHEL 8) + $WIN_COUNT Windows (Server 2022)"
+    echo
+    echo "  Setup (copy-paste):"
+    echo "    cp $STATE_DIR/client.conf ~/.config/dirq/client.conf"
+    echo
+    echo "  Or manually:"
+    echo "    export DIRQ_SERVER_URL=https://$srv_ip:8080"
+    echo "    export DIRQ_TLS_INSECURE=true"
+    echo "    export DIRQ_TOKEN=$(cat "$STATE_DIR/bootstrap-token")"
     echo
     echo "  Test with:"
-    echo "    export DIRQ_SERVER_URL=http://$srv_ip:8080"
+    echo "    dirq doctor"
     echo "    dirq hosts list"
-    echo "    dirq query \"SELECT hostname, os_info.os, cpu.logical_cores\""
-    echo "    dirq query \"SELECT hostname WHERE tag.env = 'prod'\""
-    echo "    dirq query \"SELECT hostname WHERE tag.os = 'windows'\""
+    echo "    dirq graph"
+    echo "    dirq select hostname, os_info.distro, os_info.distro_version"
+    echo "    dirq exec uptime WHERE os_info.os = linux"
+    echo "    dirq cve CVE-2026-31431"
     echo
     echo "  Windows VMs take 3-5 minutes for UserData to complete."
     echo "  RDP credentials: Administrator / $WIN_ADMIN_PASS"
     echo
     echo "  Tear down:"
-    echo "    $0 down"
+    echo "    make aws-down   (or: $0 down)"
     echo
     echo "  Estimated cost: ~\$0.10/hr for the whole fleet"
     echo
@@ -432,14 +423,12 @@ cmd_status() {
         --query 'Reservations[].Instances[].{ID:InstanceId,Name:Tags[?Key==`Name`]|[0].Value,Type:InstanceType,IP:PublicIpAddress,PrivIP:PrivateIpAddress,State:State.Name}' \
         --output table
 
-    local srv_ip
-    srv_ip=$(load_state server_ip)
-    if [[ -n "$srv_ip" ]]; then
+    local client_conf="$STATE_DIR/client.conf"
+    if [[ -f "$client_conf" ]]; then
         echo
-        echo "DirQ agents (http://$srv_ip:8080):"
+        echo "DirQ fleet status:"
         echo
-        DIRQ_SERVER_URL="http://$srv_ip:8080" "$REPO_DIR/bin/dirq" hosts list 2>/dev/null || \
-            curl -s "http://$srv_ip:8080/api/v1/hosts" 2>/dev/null | python3 -m json.tool 2>/dev/null || \
+        dirq --config "$client_conf" hosts list 2>/dev/null || \
             echo "(could not reach server — it may still be starting)"
     fi
 }
@@ -449,7 +438,6 @@ cmd_status() {
 # ─────────────────────────────────────────────────────────
 
 cmd_down() {
-    # Find all instances with our tag.
     local instance_ids
     instance_ids=$(aws_ ec2 describe-instances \
         --filters "Name=tag:dirq-fleet,Values=$TAG_PREFIX" \
@@ -465,7 +453,6 @@ cmd_down() {
         log "No running instances found"
     fi
 
-    # Delete security group (may need a moment after instances terminate).
     local sg_id
     sg_id=$(load_state sg_id)
     if [[ -n "$sg_id" ]]; then
@@ -475,11 +462,9 @@ cmd_down() {
             log "  (security group may take a moment to delete — retry if needed)"
     fi
 
-    # Delete key pair.
     log "Deleting key pair $KEY_NAME"
     aws_ ec2 delete-key-pair --key-name "$KEY_NAME" 2>/dev/null || true
 
-    # Clean up local state.
     rm -rf "$STATE_DIR"
 
     log "Done. All resources cleaned up."
@@ -497,12 +482,14 @@ case "${1:-}" in
         echo "Usage: $0 {up|status|down}"
         echo
         echo "Environment variables:"
-        echo "  LINUX_COUNT          Number of Linux VMs (default: 3)"
-        echo "  WIN_COUNT            Number of Windows VMs (default: 2)"
-        echo "  AWS_REGION           AWS region (default: us-east-1)"
-        echo "  DIRQ_INSTANCE_TYPE   Instance type (default: t3.small)"
-        echo "  DIRQ_KEY_NAME        EC2 key pair name (default: dirq-test)"
-        echo "  DIRQ_WIN_PASSWORD    Windows admin password (default: DirQ-Test-2026!)"
+        echo "  LINUX_COUNT              Number of Linux VMs (default: 3)"
+        echo "  WIN_COUNT                Number of Windows VMs (default: 2)"
+        echo "  AWS_REGION               AWS region (default: us-east-1)"
+        echo "  DIRQ_INSTANCE_TYPE       Instance type (default: t3.small)"
+        echo "  DIRQ_KEY_NAME            EC2 key pair name (default: dirq-test)"
+        echo "  DIRQ_WIN_PASSWORD        Windows admin password"
+        echo "  DIRQ_REGISTRATION_SECRET Agent registration secret"
+        echo "  DIRQ_VERSION             DirQ version (default: latest release)"
         exit 1
         ;;
 esac
