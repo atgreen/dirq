@@ -5,6 +5,20 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-05-15
+
+### Added
+
+- **Server-generated agent config** — server writes `/var/lib/dirq/agent.conf` on startup with server address, registration secret, and base64-encoded TLS certs inline; copy one file to onboard an agent
+- **Server-generated client config** — server writes `/var/lib/dirq/client.conf` with server URL and bootstrap token; copy to `~/.config/dirq/client.conf` or `/etc/dirq/client.conf` for zero-config CLI
+- **CLI config file support** — `dirq` reads `server_url`, `token`, and `tls_insecure` from `~/.config/dirq/client.conf` (user-local, checked first) or `/etc/dirq/client.conf`; on Windows: `%APPDATA%\dirq\` then `C:\ProgramData\dirq\`
+- **Inline TLS certs in config** — `tls_ca_data`, `tls_cert_data`, `tls_key_data` keys accept base64-encoded PEM; agent materializes them to disk on startup
+
+### Fixed
+
+- **`exec` ignored field-based WHERE conditions** — `dirq exec "ls" WHERE os_info.os = 'linux'` sent to all agents; now runs a query first to resolve matching agents before dispatching
+- **Arg flattener broke exec commands with dashes** — `dirq exec "ls -l"` was split into `ls` and `-l` (cobra flag error); flattener now only splits args starting with `SELECT`
+
 ## [0.8.0] - 2026-05-15
 
 ### Added
@@ -231,6 +245,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.9.0]: https://github.com/atgreen/dirq/releases/tag/v0.9.0
 [0.8.0]: https://github.com/atgreen/dirq/releases/tag/v0.8.0
 [0.7.1]: https://github.com/atgreen/dirq/releases/tag/v0.7.1
 [0.7.0]: https://github.com/atgreen/dirq/releases/tag/v0.7.0
