@@ -11,6 +11,7 @@ package tlsutil
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
@@ -43,18 +44,64 @@ func (c Config) HasUserCerts() bool {
 
 // ConfigFromEnv reads TLS configuration from environment variables,
 // falling back to config file values.
+//
+// Supports inline base64-encoded PEM via tls_ca_data, tls_cert_data,
+// tls_key_data keys. When present and no file path is set, the PEM
+// content is decoded and written to the data directory so everything
+// can be distributed in a single config file.
 func ConfigFromEnv(fileCfg ...*config.File) Config {
 	var fc *config.File
 	if len(fileCfg) > 0 {
 		fc = fileCfg[0]
 	}
-	return Config{
+	cfg := Config{
 		CAFile:   config.EnvOr("DIRQ_TLS_CA", fc, "tls_ca", ""),
 		CertFile: config.EnvOr("DIRQ_TLS_CERT", fc, "tls_cert", ""),
 		KeyFile:  config.EnvOr("DIRQ_TLS_KEY", fc, "tls_key", ""),
 		Insecure: config.EnvOr("DIRQ_TLS_INSECURE", fc, "tls_insecure", "false") == "true",
 		Disabled: config.EnvOr("DIRQ_TLS_DISABLED", fc, "tls_disabled", "false") == "true",
 	}
+
+	// Materialize inline cert data to files if no paths were given.
+	dir := filepath.Join(config.DataDir(), "tls")
+	os.MkdirAll(dir, 0700)
+
+	if cfg.CAFile == "" {
+		if data := config.EnvOr("DIRQ_TLS_CA_DATA", fc, "tls_ca_data", ""); data != "" {
+			if p, err := materializePEM(dir, "ca.crt", data); err == nil {
+				cfg.CAFile = p
+			}
+		}
+	}
+	if cfg.CertFile == "" {
+		if data := config.EnvOr("DIRQ_TLS_CERT_DATA", fc, "tls_cert_data", ""); data != "" {
+			if p, err := materializePEM(dir, "agent.crt", data); err == nil {
+				cfg.CertFile = p
+			}
+		}
+	}
+	if cfg.KeyFile == "" {
+		if data := config.EnvOr("DIRQ_TLS_KEY_DATA", fc, "tls_key_data", ""); data != "" {
+			if p, err := materializePEM(dir, "agent.key", data); err == nil {
+				cfg.KeyFile = p
+			}
+		}
+	}
+
+	return cfg
+}
+
+// materializePEM decodes base64-encoded PEM data and writes it to a file.
+func materializePEM(dir, name, b64data string) (string, error) {
+	decoded, err := base64.StdEncoding.DecodeString(b64data)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, decoded, 0600); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // autoGenDir returns the directory for auto-generated certs.
