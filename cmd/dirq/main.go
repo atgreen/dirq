@@ -64,6 +64,11 @@ func main() {
 		config.EnvOr("DIRQ_SERVER_URL", clientCfg, "server_url", ""),
 		"DirQ server URL (or set DIRQ_SERVER_URL)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		// Apply config-file defaults for values not shown in help output.
+		if apiToken == "" {
+			apiToken = config.EnvOr("DIRQ_TOKEN", clientCfg, "token", "")
+		}
+
 		// Allow tls generate, skill, and ask --dry-run to run without a server URL.
 		if cmd.Name() == "generate" || cmd.Name() == "skill" || cmd.Name() == "doctor" {
 			return nil
@@ -76,9 +81,7 @@ func main() {
 		}
 		return nil
 	}
-	root.PersistentFlags().StringVar(&apiToken, "token",
-		config.EnvOr("DIRQ_TOKEN", clientCfg, "token", ""),
-		"API token")
+	root.PersistentFlags().StringVar(&apiToken, "token", "", "API token")
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "output raw JSON")
 	root.PersistentFlags().BoolVar(&tlsInsecure, "tls-insecure",
 		config.EnvOr("DIRQ_TLS_INSECURE", clientCfg, "tls_insecure", "false") == "true",
