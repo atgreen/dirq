@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.2] - 2026-05-16
+
+### Added
+
+- **SPDX SBOM** — release workflow now generates an SPDX JSON software bill of materials and attaches it to each GitHub release
+
+### Fixed
+
+- **Windows MSI install failed with error 1603** — the MSI tried to start the agent service during install, which failed if no config file existed yet; service is now registered but not started, letting the config be written first
+
 ## [0.11.1] - 2026-05-16
 
 ### Fixed
@@ -299,6 +309,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.11.2]: https://github.com/atgreen/dirq/releases/tag/v0.11.2
 [0.11.1]: https://github.com/atgreen/dirq/releases/tag/v0.11.1
 [0.11.0]: https://github.com/atgreen/dirq/releases/tag/v0.11.0
 [0.10.0]: https://github.com/atgreen/dirq/releases/tag/v0.10.0
