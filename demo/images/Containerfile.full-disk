@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: MIT
-# Full disk agent — /tmp is nearly full
-FROM localhost/dirq_dirq-agent:latest
-RUN dnf install -y --allowerasing openssl curl && dnf clean all
-# Fill up /tmp to simulate disk pressure
-RUN dd if=/dev/zero of=/tmp/ballast bs=1M count=200 2>/dev/null || true
-RUN echo "full-disk" > /etc/dirq-role

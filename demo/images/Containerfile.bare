@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: MIT
-# Bare agent — minimal install, missing common packages
-FROM localhost/dirq_dirq-agent:latest
-RUN echo "bare" > /etc/dirq-role

@@ -1,5 +1,0 @@
-# SPDX-License-Identifier: MIT
-# Database agent — has postgresql client, high memory
-FROM localhost/dirq_dirq-agent:latest
-RUN dnf install -y --allowerasing openssl curl postgresql && dnf clean all
-RUN echo "database" > /etc/dirq-role

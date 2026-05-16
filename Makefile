@@ -106,13 +106,13 @@ demo-logs:  ## Tail demo server logs
 	podman logs -f dirq-server-server
 
 aws:  ## Deploy test fleet on AWS (3 RHEL + 2 Windows)
-	./deploy/aws-test-fleet.sh up
+	./demo/aws-test-fleet.sh up
 
 aws-status:  ## Show AWS test fleet status
-	./deploy/aws-test-fleet.sh status
+	./demo/aws-test-fleet.sh status
 
 aws-down:  ## Tear down AWS test fleet
-	./deploy/aws-test-fleet.sh down
+	./demo/aws-test-fleet.sh down
 
 help:  ## Show this help
 	@grep -E '^[a-z][-a-z]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'

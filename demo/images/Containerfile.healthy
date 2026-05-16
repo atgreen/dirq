@@ -1,5 +1,0 @@
-# SPDX-License-Identifier: MIT
-# Healthy agent — up to date, all services running
-FROM localhost/dirq_dirq-agent:latest
-RUN dnf install -y --allowerasing openssl curl nginx && dnf clean all
-RUN echo "healthy" > /etc/dirq-role
