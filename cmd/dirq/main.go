@@ -1077,7 +1077,7 @@ Dotted notation: module.field. Available modules and their fields:
   memory       — total_bytes, available_bytes, used_bytes, pct_used
   disk         — (array of partitions) device, mount_point, fs_type,
                  total_bytes, used_bytes, free_bytes, pct_used
-  os_info      — hostname, os, os_version, kernel_version, arch, uptime_seconds
+  os_info      — hostname, os, os_version, kernel_version, arch, uptime_seconds, distro, distro_version, distro_family
   packages     — (array) name, version, arch, source
   services     — (array) name, display_name, state, start_type
   network      — (array of interfaces) name, mac, mtu, flags, addresses
@@ -2168,7 +2168,7 @@ Examples:
 				inList[i] = "'" + n + "'"
 			}
 			pkgFilter := "packages.name IN (" + strings.Join(inList, ", ") + ")"
-			osFilter := "os_info.kernel_version LIKE '%el%'"
+			osFilter := "os_info.distro_family = 'rhel'"
 
 			// Add WHERE clause from remaining args if provided.
 			var whereExtra string
@@ -2179,7 +2179,7 @@ Examples:
 				whereExtra = strings.Replace(whereExtra, " AND where ", " AND ", 1)
 			}
 
-			queryStr := fmt.Sprintf("SELECT hostname, os_info.os, os_info.os_version, os_info.kernel_version, packages.name, packages.version WHERE %s AND %s%s",
+			queryStr := fmt.Sprintf("SELECT hostname, os_info.distro_version, os_info.kernel_version, packages.name, packages.version WHERE %s AND %s%s",
 				pkgFilter, osFilter, whereExtra)
 
 			logStep("Query: %s", queryStr)
@@ -2240,14 +2240,14 @@ Examples:
 					continue
 				}
 
-				// Detect RHEL major version from os_version (e.g., "4.18.0-553.33.1.el8_10" → "8").
-				osVersion, _ := r.Data["os_info.os_version"].(string)
-				if osVersion == "" {
+				// Detect RHEL major version from distro_version (e.g., "8.10" → "8").
+				distroVer, _ := r.Data["os_info.distro_version"].(string)
+				if distroVer == "" {
 					if oi, ok := r.Data["os_info"].(map[string]any); ok {
-						osVersion, _ = oi["os_version"].(string)
+						distroVer, _ = oi["distro_version"].(string)
 					}
 				}
-				hostRHEL := detectRHELMajor(osVersion)
+				hostRHEL := detectRHELMajor(distroVer)
 				if hostRHEL == "" {
 					continue // not RHEL-family, skip
 				}

@@ -30,5 +30,8 @@ func (o *OSInfoModule) Collect() (map[string]any, error) {
 		"arch":           runtime.GOARCH,
 		"uptime_seconds": info.Uptime,
 		"kernel_version": info.KernelVersion,
+		"distro":         info.Platform,        // e.g., "rhel", "fedora", "ubuntu", "centos"
+		"distro_version": info.PlatformVersion, // e.g., "8.10", "43", "22.04"
+		"distro_family":  info.PlatformFamily,  // e.g., "rhel", "debian", "suse"
 	}, nil
 }
