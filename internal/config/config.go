@@ -36,6 +36,30 @@ func DefaultAgentPath() string {
 	return "/etc/dirq/agent.conf"
 }
 
+// DefaultClientPath returns the CLI config path, preferring a user-local
+// file (~/.config/dirq/client.conf) over the system-wide one (/etc/dirq/client.conf).
+func DefaultClientPath() string {
+	if runtime.GOOS == "windows" {
+		// Check user-local first.
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			local := filepath.Join(appData, "dirq", "client.conf")
+			if _, err := os.Stat(local); err == nil {
+				return local
+			}
+		}
+		return `C:\ProgramData\dirq\client.conf`
+	}
+
+	// Check ~/.config/dirq/client.conf first.
+	if home, err := os.UserHomeDir(); err == nil {
+		local := filepath.Join(home, ".config", "dirq", "client.conf")
+		if _, err := os.Stat(local); err == nil {
+			return local
+		}
+	}
+	return "/etc/dirq/client.conf"
+}
+
 // DefaultServerPath returns the platform-appropriate default server config path.
 func DefaultServerPath() string {
 	if runtime.GOOS == "windows" {

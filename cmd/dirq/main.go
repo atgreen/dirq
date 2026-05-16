@@ -20,6 +20,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/atgreen/dirq/internal/config"
 	"github.com/atgreen/dirq/internal/tlsutil"
 	"github.com/spf13/cobra"
 )
@@ -47,6 +48,9 @@ func main() {
 	}
 	os.Args = append([]string{os.Args[0]}, flatArgs...)
 
+	// Load client config file (missing file is fine).
+	clientCfg, _ := config.Load(config.DefaultClientPath())
+
 	root := &cobra.Command{
 		Use:          "dirq",
 		Short:        fmt.Sprintf("DirQ — Real-Time Endpoint Query CLI (%s)", version),
@@ -54,7 +58,9 @@ func main() {
 		SilenceUsage: true,
 	}
 
-	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("DIRQ_SERVER_URL"), "DirQ server URL (or set DIRQ_SERVER_URL)")
+	root.PersistentFlags().StringVar(&serverURL, "server",
+		config.EnvOr("DIRQ_SERVER_URL", clientCfg, "server_url", ""),
+		"DirQ server URL (or set DIRQ_SERVER_URL)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		// Allow tls generate, skill, and ask --dry-run to run without a server URL.
 		if cmd.Name() == "generate" || cmd.Name() == "skill" || cmd.Name() == "doctor" {
@@ -68,9 +74,13 @@ func main() {
 		}
 		return nil
 	}
-	root.PersistentFlags().StringVar(&apiToken, "token", os.Getenv("DIRQ_TOKEN"), "API token")
+	root.PersistentFlags().StringVar(&apiToken, "token",
+		config.EnvOr("DIRQ_TOKEN", clientCfg, "token", ""),
+		"API token")
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "output raw JSON")
-	root.PersistentFlags().BoolVar(&tlsInsecure, "tls-insecure", os.Getenv("DIRQ_TLS_INSECURE") == "true", "skip TLS certificate verification")
+	root.PersistentFlags().BoolVar(&tlsInsecure, "tls-insecure",
+		config.EnvOr("DIRQ_TLS_INSECURE", clientCfg, "tls_insecure", "false") == "true",
+		"skip TLS certificate verification")
 
 	root.AddCommand(hostsCmd())
 	root.AddCommand(tokenCmd())
