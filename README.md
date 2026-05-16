@@ -53,6 +53,7 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 - [Ansible Integration](#ansible-integration) — inventory, groups, facts, query-based targeting
 - [Execution Transport](#execution-transport) — run Ansible through the mesh
 - [Fleet Exec](#fleet-exec) — ad-hoc parallel command & script execution
+- [Topology Graph](#topology-graph) — visualize the agent mesh tree
 - [Security](#security) — TLS, authentication, exec safety
 - [Multi-Datacenter Deployment](#multi-datacenter-deployment) — isolated meshes, per-DC routing
 - [AAP Integration](#aap-integration) — collection, EE, credentials, setup checklist
@@ -90,9 +91,9 @@ DirQ is useful when traditional fleet access patterns start breaking down:
          └──────────────────┬───────────────────┘
                             │
                             ▼
-                     ┌──────────────┐
-                     │  PostgreSQL  │
-                     └──────────────┘
+                  ┌──────────────────┐
+                  │ SQLite / PostgreSQL│
+                  └──────────────────┘
 ```
 
 All links are **gRPC over TLS**. Agents connect outbound — no inbound ports required on managed hosts. Only a bounded number of zone leaders connect directly to the server.
@@ -101,7 +102,7 @@ All links are **gRPC over TLS**. Agents connect outbound — no inbound ports re
 
 | Component | Language | Description |
 |-----------|----------|-------------|
-| `dirq-server` | Go | Central server: gRPC, REST API, query engine, Ansible inventory. Runs on OpenShift or Podman. |
+| `dirq-server` | Go | Central server: gRPC, REST API, query engine, Ansible inventory. SQLite by default; PostgreSQL optional. |
 | `dirq-agent` | Go | Endpoint agent: collects data, relays queries, optionally executes commands. Single static binary. |
 | `dirq` | Go | CLI: submit queries, manage hosts/tags/tokens, run ad-hoc commands, generate TLS certs. |
 | `atgreen.dirq` | Python | Ansible collection: inventory plugin + connection plugin for AAP. |
@@ -132,11 +133,12 @@ registration, chosen from different branches of the tree. On parent failure:
 
 1. Try fallback parent 0 (different branch, sub-second)
 2. Try fallback parent 1 (another branch)
-3. Fall back to direct server connection (last resort)
+3. Ask the server for a new parent assignment via `RequestPeers` RPC
 
-This eliminates the thundering herd at the server when a relay dies — orphaned
-agents switch to fallback parents locally instead of all re-registering through
-the server simultaneously.
+Agents never fall back to direct server connections — they always ask the
+server where to go. The server marks the dead parent offline and assigns
+a healthy replacement. When a zone leader goes offline, the server
+immediately reassigns its orphaned children to other healthy nodes.
 
 ### Built-in Query Modules
 
@@ -156,7 +158,7 @@ the server simultaneously.
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.26+
 - Podman and podman-compose
 
 ### 1. Start the server and database
@@ -174,29 +176,55 @@ podman logs dirq_dirq-server_1 2>&1 | grep "bootstrap"
 cat /var/lib/dirq/bootstrap-token
 ```
 
-### 2. Build and run the agent
+### 2. Deploy agents
+
+The server writes ready-to-copy config files on startup:
+
+- **`/var/lib/dirq/agent.conf`** — agent config with server address, registration secret, and inline TLS certs (base64-encoded). Copy to `/etc/dirq/agent.conf` on each agent host.
+- **`/var/lib/dirq/client.conf`** — CLI config with server URL and bootstrap token. Copy to `/etc/dirq/client.conf` or `~/.config/dirq/client.conf` on any workstation.
+
+```bash
+# On the server, copy the generated agent config to a remote host:
+scp /var/lib/dirq/agent.conf agent-host:/etc/dirq/agent.conf
+
+# On the agent host:
+sudo systemctl enable --now dirq-agent
+```
+
+For local dev, build and run the agent directly:
 
 ```bash
 go build -o bin/dirq-agent ./cmd/dirq-agent
 ./bin/dirq-agent
 ```
 
-The agent auto-generates TLS certs into the same directory as the server (`/var/lib/dirq/tls`). When both run on the same machine, they share the auto-generated CA and verify each other automatically — no TLS flags needed for local dev.
+The agent auto-generates TLS certs into the same directory as the server (`/var/lib/dirq/tls`). When both run on the same machine, they share the auto-generated CA and verify each other automatically.
 
 ### 3. Build and use the CLI
 
 ```bash
 go build -o bin/dirq ./cmd/dirq
-export DIRQ_TOKEN=<bootstrap-token-from-step-1>
-export DIRQ_SERVER_URL=http://localhost:8090
-
-./bin/dirq hosts list
-./bin/dirq select os_info.hostname, cpu.logical_cores, memory.pct_used
-./bin/dirq select os_info.hostname, packages.name, packages.version WHERE packages.name IN "'openssl', 'curl'"
-./bin/dirq hosts tag <agent-id> env=dev role=workstation
 ```
 
-`DIRQ_SERVER_URL` is required — there is no default. Set it before using the CLI.
+The CLI reads config from `~/.config/dirq/client.conf` (user-local) or `/etc/dirq/client.conf` (system-wide). Copy the server-generated `client.conf`:
+
+```bash
+# Copy from server to your workstation:
+scp server:/var/lib/dirq/client.conf ~/.config/dirq/client.conf
+
+# Now just use dirq — no env vars needed:
+dirq doctor
+dirq hosts list
+dirq select hostname, cpu.logical_cores, memory.pct_used
+```
+
+Or set env vars directly:
+
+```bash
+export DIRQ_SERVER_URL=https://dirq-server:8080
+export DIRQ_TOKEN=<bootstrap-token>
+export DIRQ_TLS_INSECURE=true  # for self-signed certs
+```
 
 ### 4. Test with Ansible
 
@@ -481,6 +509,33 @@ Severity: Important
 2 vulnerable, 1 patched
 ```
 
+### Topology graph
+
+Visualize the agent mesh tree:
+
+```bash
+dirq graph
+```
+
+```
+dirq-server
+├── ● dirq-agent-01 [ZL]
+│   ├── ● dirq-agent-06
+│   └── ● dirq-agent-08
+├── ● dirq-agent-02 [ZL]
+│   └── ● dirq-agent-07
+└── ● dirq-agent-03 [ZL]
+    └── ● dirq-agent-09
+```
+
+`●` = online, `○` = offline, `[ZL]` = zone leader.
+
+Export to Graphviz DOT format for rendering:
+
+```bash
+dirq graph --dot | dot -Tpng -o topology.png
+```
+
 ### Deployment health
 
 Check the health of your DirQ deployment with `dirq doctor`:
@@ -505,13 +560,17 @@ dirq doctor
 
 ### Arg flattening
 
-Any quoted argument containing spaces is split into individual args before
-parsing. This means all DirQ commands work both quoted and unquoted:
+Quoted arguments that start with `SELECT` are automatically split into individual
+args before parsing. This lets you write queries as a single quoted string:
 
 ```bash
-dirq "hosts list"                    # same as: dirq hosts list
 dirq "select hostname where tag.env = 'prod'"  # same as: dirq select hostname where ...
-dirq "run deploy.yml where tag.env = 'prod'"   # same as: dirq run deploy.yml where ...
+```
+
+Other commands are **not** flattened, so quoted exec commands with dashes work correctly:
+
+```bash
+dirq exec "ls -l" WHERE tag.env = 'prod'   # "ls -l" stays as the command
 ```
 
 ---
@@ -936,7 +995,7 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 |-----------|----------|---------|-------------|
 | `grpc_addr` | `DIRQ_GRPC_ADDR` | `:50051` | gRPC listen address |
 | `http_addr` | `DIRQ_HTTP_ADDR` | `:8080` | REST API listen address |
-| `db_url` | `DIRQ_DB_URL` | `postgres://dirq:dirq@localhost:5432/dirq?sslmode=disable` | PostgreSQL connection string |
+| `db_url` | `DIRQ_DB_URL` | `sqlite:///var/lib/dirq/dirq.db` | Database URL (SQLite or `postgres://...`) |
 | `pod_id` | `DIRQ_POD_ID` | hostname | Unique pod identifier |
 | `max_zone_leaders` | `DIRQ_MAX_ZONE_LEADERS` | `5` | Max direct server connections |
 | `max_children` | `DIRQ_MAX_CHILDREN` | `50` | Max children per node (fan-out) |
@@ -987,13 +1046,35 @@ tags:
 | `signing_key` | `DIRQ_SIGNING_KEY` | | Ed25519 private key file |
 | `signing_pub` | `DIRQ_SIGNING_PUB` | | Ed25519 public key file |
 
+#### Inline TLS certs (agent config)
+
+Config files support inline base64-encoded PEM certs, so a single file contains everything an agent needs. The server generates these automatically in `/var/lib/dirq/agent.conf`.
+
+| Config key | Environment variable | Description |
+|-----------|----------|-------------|
+| `tls_ca_data` | `DIRQ_TLS_CA_DATA` | Base64-encoded CA certificate PEM |
+| `tls_cert_data` | `DIRQ_TLS_CERT_DATA` | Base64-encoded agent certificate PEM |
+| `tls_key_data` | `DIRQ_TLS_KEY_DATA` | Base64-encoded agent private key PEM |
+
+When `tls_ca_data`/`tls_cert_data`/`tls_key_data` are set and no file paths are given, the agent materializes them to `/var/lib/dirq/tls/` on startup.
+
 ### CLI
 
-| Variable / Flag | Default | Description |
-|----------------|---------|-------------|
-| `DIRQ_SERVER_URL` / `--server` | *(required)* | Server REST URL |
-| `DIRQ_TOKEN` / `--token` | | API token |
-| `--json` | `false` | Raw JSON output |
+**Config file:** `~/.config/dirq/client.conf` (user-local, checked first) or `/etc/dirq/client.conf` (system-wide). On Windows: `%APPDATA%\dirq\client.conf` or `C:\ProgramData\dirq\client.conf`. The server generates a ready-to-copy `client.conf` at `/var/lib/dirq/client.conf`.
+
+```
+# ~/.config/dirq/client.conf
+server_url: https://dirq-server:8080
+token: <your-api-token>
+tls_insecure: true
+```
+
+| Config key | Variable / Flag | Default | Description |
+|-----------|----------------|---------|-------------|
+| `server_url` | `DIRQ_SERVER_URL` / `--server` | *(required)* | Server REST URL |
+| `token` | `DIRQ_TOKEN` / `--token` | | API token |
+| `tls_insecure` | `DIRQ_TLS_INSECURE` / `--tls-insecure` | `false` | Skip TLS verification |
+| | `--json` | `false` | Raw JSON output |
 
 ---
 
@@ -1054,7 +1135,7 @@ internal/
   agent/                  Registration, relay mesh, query execution, exec
   query/                  DirQ DSL parser and evaluator
   modules/                System data collectors (7 modules)
-  db/                     PostgreSQL schema and data access
+  db/                     SQLite + PostgreSQL backends and data access
   tlsutil/                TLS configuration, cert generation
   signutil/               Message signing (Ed25519)
 collection/atgreen/dirq/  Ansible collection for AAP
