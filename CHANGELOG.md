@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.1] - 2026-05-16
+
+### Fixed
+
+- **Generated agent.conf had garbled server address** — when `grpc_addr` was `0.0.0.0:50051`, the generated config got `hostname0.0.0.0:50051` instead of `hostname:50051`; same for `client.conf` with `http_addr`
+
 ## [0.11.0] - 2026-05-16
 
 ### Added
@@ -293,6 +299,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.11.1]: https://github.com/atgreen/dirq/releases/tag/v0.11.1
 [0.11.0]: https://github.com/atgreen/dirq/releases/tag/v0.11.0
 [0.10.0]: https://github.com/atgreen/dirq/releases/tag/v0.10.0
 [0.9.2]: https://github.com/atgreen/dirq/releases/tag/v0.9.2
