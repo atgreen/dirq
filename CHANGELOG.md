@@ -5,6 +5,14 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.4] - 2026-05-16
+
+### Fixed
+
+- **Windows MSI installed to wrong directory** — MSI was built without `-arch x64`, causing the agent to install to `Program Files (x86)` instead of `Program Files`; the AWS provisioning script then failed to find the executable and exited before writing the server-generated config
+- **AWS fleet agents couldn't reach server** — the generated `agent.conf` used the server's internal hostname which Windows instances couldn't resolve; the provisioning script now rewrites it to the server's private IP
+- **Ansible PowerShell modules failed on Windows agents** — the agent double-wrapped PowerShell commands in another `powershell -Command` layer, breaking Ansible's `-EncodedCommand` execution
+
 ## [0.11.3] - 2026-05-16
 
 ### Fixed
@@ -329,6 +337,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [0.6.0]: https://github.com/atgreen/dirq/releases/tag/v0.6.0
 [0.5.1]: https://github.com/atgreen/dirq/releases/tag/v0.5.1
 [0.5.0]: https://github.com/atgreen/dirq/releases/tag/v0.5.0
+[0.11.4]: https://github.com/atgreen/dirq/releases/tag/v0.11.4
 [0.4.0]: https://github.com/atgreen/dirq/releases/tag/v0.4.0
 [0.3.0]: https://github.com/atgreen/dirq/releases/tag/v0.3.0
 [0.2.1]: https://github.com/atgreen/dirq/releases/tag/v0.2.1
