@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] - 2026-05-16
+
+### Added
+
+- **`dirq mcp`** — built-in [Model Context Protocol](https://modelcontextprotocol.io/) stdio server, allowing LLMs like Claude to manage the fleet directly as a tool; exposes 10 tools: host inventory, system facts, tagging, fleet queries, remote execution, CVE scanning, errata checks, KB verification, and topology graph
+
 ## [0.11.4] - 2026-05-16
 
 ### Fixed
@@ -337,6 +343,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [0.6.0]: https://github.com/atgreen/dirq/releases/tag/v0.6.0
 [0.5.1]: https://github.com/atgreen/dirq/releases/tag/v0.5.1
 [0.5.0]: https://github.com/atgreen/dirq/releases/tag/v0.5.0
+[0.12.0]: https://github.com/atgreen/dirq/releases/tag/v0.12.0
 [0.11.4]: https://github.com/atgreen/dirq/releases/tag/v0.11.4
 [0.4.0]: https://github.com/atgreen/dirq/releases/tag/v0.4.0
 [0.3.0]: https://github.com/atgreen/dirq/releases/tag/v0.3.0
