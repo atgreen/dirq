@@ -175,11 +175,27 @@ func buildCommandUnix(ctx context.Context, cmdStr string, become bool, becomeUse
 // scheduled-task trick to run as another user without storing passwords.
 func buildCommandWindows(ctx context.Context, cmdStr string, become bool, becomeUser string) *exec.Cmd {
 	if !become || becomeUser == "" || becomeUser == "Administrator" || becomeUser == "SYSTEM" {
+		// Ansible wraps commands in /bin/sh -c '...' even for Windows
+		// targets. Strip that wrapper since there's no /bin/sh on Windows.
+		trimmed := strings.TrimSpace(cmdStr)
+		if strings.HasPrefix(trimmed, "/bin/sh -c ") {
+			inner := strings.TrimPrefix(trimmed, "/bin/sh -c ")
+			// Remove surrounding quotes and trailing '; sleep 0'.
+			inner = strings.TrimSpace(inner)
+			if (strings.HasPrefix(inner, "'") && strings.HasSuffix(inner, "'")) ||
+				(strings.HasPrefix(inner, "\"") && strings.HasSuffix(inner, "\"")) {
+				inner = inner[1 : len(inner)-1]
+			}
+			// Ansible appends "; sleep 0" — remove it.
+			inner = strings.TrimSuffix(inner, " ; sleep 0")
+			inner = strings.TrimSuffix(inner, "; sleep 0")
+			trimmed = strings.TrimSpace(inner)
+		}
+
 		// Detect PowerShell: if the command starts with powershell/pwsh,
 		// parse the executable and arguments and run directly. Wrapping
 		// in another "powershell -Command ..." layer breaks commands that
 		// use -EncodedCommand (Ansible sends these when ansible_shell_type=powershell).
-		trimmed := strings.TrimSpace(cmdStr)
 		lower := strings.ToLower(trimmed)
 		if strings.HasPrefix(lower, "powershell ") || strings.HasPrefix(lower, "powershell.exe ") ||
 			strings.HasPrefix(lower, "pwsh ") || strings.HasPrefix(lower, "pwsh.exe ") {

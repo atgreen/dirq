@@ -3213,6 +3213,7 @@ type queryHost struct {
 	hostname string
 	agentID  string
 	tags     map[string]string
+	os       string // "linux", "windows", etc.
 }
 
 // runQuery executes a DirQ query and returns matching hosts.
@@ -3237,16 +3238,21 @@ func runQuery(queryStr string, timeout int) ([]queryHost, error) {
 		return nil, fmt.Errorf("parse query result: %w", err)
 	}
 
-	// Fetch agent details (including tags) for matched hosts.
-	agentTags := map[string]map[string]string{}
+	// Fetch agent details (including tags and OS) for matched hosts.
+	type agentInfo struct {
+		tags map[string]string
+		os   string
+	}
+	agentDetails := map[string]agentInfo{}
 	if hostResp, err := apiRequest("GET", "/api/v1/hosts", nil); err == nil {
 		var agents []struct {
 			ID   string            `json:"id"`
 			Tags map[string]string `json:"tags"`
+			OS   string            `json:"os"`
 		}
 		if json.Unmarshal(hostResp, &agents) == nil {
 			for _, a := range agents {
-				agentTags[a.ID] = a.Tags
+				agentDetails[a.ID] = agentInfo{tags: a.Tags, os: a.OS}
 			}
 		}
 	}
@@ -3254,7 +3260,8 @@ func runQuery(queryStr string, timeout int) ([]queryHost, error) {
 	var hosts []queryHost
 	for _, r := range result.Results {
 		if r.Success && r.Hostname != "" {
-			hosts = append(hosts, queryHost{r.Hostname, r.AgentID, agentTags[r.AgentID]})
+			info := agentDetails[r.AgentID]
+			hosts = append(hosts, queryHost{r.Hostname, r.AgentID, info.tags, info.os})
 		}
 	}
 	return hosts, nil
@@ -3267,7 +3274,7 @@ func discoverPythonInterpreters(hosts []queryHost) error {
 	// Collect Linux hosts that need probing.
 	var needProbe []int // indices into hosts
 	for i, h := range hosts {
-		if _, ok := h.tags["ansible_shell_type"]; ok {
+		if strings.EqualFold(h.os, "windows") {
 			// Windows hosts use PowerShell, no Python needed.
 			continue
 		}
@@ -3291,7 +3298,9 @@ func discoverPythonInterpreters(hosts []queryHost) error {
 	fmt.Fprintf(os.Stderr, "Detecting Python on %d Linux host(s)...\n", len(needProbe))
 
 	// Probe common Python paths. The first one found wins.
-	probeCmd := `for p in /usr/bin/python3 /usr/libexec/platform-python /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.9 /usr/bin/python3.6 /usr/bin/python; do [ -x "$p" ] && echo "$p" && exit 0; done; echo "NONE"; exit 1`
+	// Prefer versioned Python 3.7+ over the generic /usr/bin/python3,
+	// which on RHEL 8 is Python 3.6 (too old for modern Ansible).
+	probeCmd := `for p in /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.9 /usr/bin/python3; do [ -x "$p" ] && "$p" -c "import sys; sys.exit(0 if sys.version_info >= (3,7) else 1)" 2>/dev/null && echo "$p" && exit 0; done; echo "NONE"; exit 1`
 
 	payload := map[string]any{
 		"query":   "SELECT hostname WHERE os_info.hostname IN (" + strings.Join(hostnames, ", ") + ")",
@@ -3383,16 +3392,27 @@ func writeInventory(hosts []queryHost) (string, error) {
 		fmt.Fprintf(tmpInv, "      dirq_server_url: %s\n", serverURL)
 		fmt.Fprintf(tmpInv, "      ansible_connection: dirq\n")
 
-		// Use ansible_python_interpreter from tag if set, else default.
-		pythonInterp := "/usr/bin/python3"
-		if v, ok := h.tags["ansible_python_interpreter"]; ok {
-			pythonInterp = v
+		isWindows := strings.EqualFold(h.os, "windows")
+
+		if isWindows {
+			// Windows hosts need PowerShell shell type for Ansible.
+			shellType := "powershell"
+			if v, ok := h.tags["ansible_shell_type"]; ok {
+				shellType = v
+			}
+			fmt.Fprintf(tmpInv, "      ansible_shell_type: %s\n", shellType)
+		} else {
+			// Use ansible_python_interpreter from tag or auto-detected value.
+			pythonInterp := "/usr/bin/python3"
+			if v, ok := h.tags["ansible_python_interpreter"]; ok {
+				pythonInterp = v
+			}
+			fmt.Fprintf(tmpInv, "      ansible_python_interpreter: %s\n", pythonInterp)
 		}
-		fmt.Fprintf(tmpInv, "      ansible_python_interpreter: %s\n", pythonInterp)
 
 		// Pass through any other ansible_* tags as host vars.
 		for k, v := range h.tags {
-			if strings.HasPrefix(k, "ansible_") && k != "ansible_python_interpreter" {
+			if strings.HasPrefix(k, "ansible_") && k != "ansible_python_interpreter" && k != "ansible_shell_type" {
 				fmt.Fprintf(tmpInv, "      %s: %s\n", k, v)
 			}
 		}
