@@ -5,6 +5,18 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.12.1] - 2026-05-17
+
+### Added
+
+- **Auto-detect Python interpreter** — `dirq run` probes Linux targets for a working Python 3.7+ before invoking Ansible; errors clearly if no compatible Python is found
+- **Auto-configure Windows shell type** — `dirq run` automatically sets `ansible_shell_type=powershell` for Windows hosts in the generated inventory, no manual tagging required
+
+### Fixed
+
+- **Ansible commands failed on Windows agents** — the agent now strips the `/bin/sh -c '...'` wrapper that Ansible adds to all commands, which has no meaning on Windows
+- **Python 3.6 (platform-python) caused Ansible failures** — the interpreter probe now validates Python >= 3.7 and skips `/usr/libexec/platform-python` which is too old for modern Ansible
+
 ## [0.12.0] - 2026-05-16
 
 ### Added
@@ -344,6 +356,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [0.6.0]: https://github.com/atgreen/dirq/releases/tag/v0.6.0
 [0.5.1]: https://github.com/atgreen/dirq/releases/tag/v0.5.1
 [0.5.0]: https://github.com/atgreen/dirq/releases/tag/v0.5.0
+[0.12.1]: https://github.com/atgreen/dirq/releases/tag/v0.12.1
 [0.12.0]: https://github.com/atgreen/dirq/releases/tag/v0.12.0
 [0.11.4]: https://github.com/atgreen/dirq/releases/tag/v0.11.4
 [0.4.0]: https://github.com/atgreen/dirq/releases/tag/v0.4.0
