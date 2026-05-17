@@ -83,6 +83,11 @@ func main() {
 	}
 	root.PersistentFlags().StringVar(&apiToken, "token", "", "API token")
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "output raw JSON")
+	// LLM review configuration.
+	reviewConfig.url = config.EnvOr("DIRQ_LLM_URL", clientCfg, "llm_url", "")
+	reviewConfig.key = config.EnvOr("DIRQ_LLM_API_KEY", clientCfg, "llm_api_key", "")
+	reviewConfig.model = config.EnvOr("DIRQ_LLM_MODEL", clientCfg, "llm_model", "claude-sonnet-4-5-20250514")
+
 	root.PersistentFlags().BoolVar(&tlsInsecure, "tls-insecure",
 		config.EnvOr("DIRQ_TLS_INSECURE", clientCfg, "tls_insecure", "false") == "true",
 		"skip TLS certificate verification")
@@ -787,6 +792,29 @@ Examples:
 			}
 			defer os.Remove(invPath)
 
+			// LLM change review.
+			action := reviewAction{
+				ActionType:  "playbook",
+				TargetQuery: queryStr,
+				TargetCount: len(hosts),
+				Targets:     strings.Join(names, ", "),
+				Module:      module,
+				ModuleArgs:  moduleArgs,
+			}
+			if playbook != "" {
+				action.PlaybookPath = playbook
+				action.PlaybookFiles = gatherPlaybookFiles(playbook)
+			}
+			if command != "" {
+				action.Command = command
+			}
+			if len(extraArgs) > 0 {
+				action.ExtraArgs = strings.Join(extraArgs, " ")
+			}
+			if err := runReview(action); err != nil {
+				return err
+			}
+
 			// Build the ansible command.
 			var ansibleCmd []string
 
@@ -925,6 +953,24 @@ Examples:
 				fmt.Fprintf(os.Stderr, "Script: %s (%.1f KB)\n", filepath.Base(scriptFile), float64(len(content))/1024)
 			} else {
 				payload["command"] = commandStr
+			}
+
+			// LLM change review.
+			action := reviewAction{
+				ActionType:  "exec",
+				Command:     commandStr,
+				TargetQuery: queryStr,
+				Become:      become,
+				BecomeUser:  becomeUser,
+			}
+			if scriptFile != "" {
+				content, _ := os.ReadFile(scriptFile)
+				action.ScriptName = filepath.Base(scriptFile)
+				action.ScriptBody = string(content)
+				action.Command = ""
+			}
+			if err := runReview(action); err != nil {
+				return err
 			}
 
 			body, _ := json.Marshal(payload)
@@ -1681,6 +1727,18 @@ Examples:
 
 			// Build query from remaining args.
 			queryStr := buildWhereQuery(args[1:])
+
+			// LLM change review.
+			if err := runReview(reviewAction{
+				ActionType:     "deploy",
+				TargetQuery:    queryStr,
+				PackagePath:    filepath.Base(pkgPath),
+				InstallCommand: installCmd,
+				DestPath:       destPath,
+				Become:         true,
+			}); err != nil {
+				return err
+			}
 
 			// Single broadcast request to the server.
 			body, _ := json.Marshal(map[string]any{
