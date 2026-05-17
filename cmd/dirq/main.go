@@ -70,7 +70,7 @@ func main() {
 		}
 
 		// Allow tls generate, skill, and ask --dry-run to run without a server URL.
-		if cmd.Name() == "generate" || cmd.Name() == "skill" || cmd.Name() == "doctor" {
+		if cmd.Name() == "generate" || cmd.Name() == "skill" || cmd.Name() == "doctor" || cmd.Name() == "mcp" {
 			return nil
 		}
 		if cmd.Name() == "ask" && serverURL == "" {
@@ -102,6 +102,7 @@ func main() {
 	root.AddCommand(errataCmd())
 	root.AddCommand(kbCmd())
 	root.AddCommand(graphCmd())
+	root.AddCommand(mcpCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
