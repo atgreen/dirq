@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.12.2] - 2026-05-17
+
+### Added
+
+- **Server signing key pinned in agent.conf** — the server now writes its Ed25519 signing public key into the generated `agent.conf`; agents validate the server's key during registration, preventing MITM attacks at enrollment time
+
+### Fixed
+
+- **Non-PowerShell Ansible commands failed on Windows** — the `/bin/sh -c` wrapper stripping worked for PowerShell commands but the stripped result was not used for the `cmd /c` fallback path, causing `type`, `mkdir`, and other commands to fail
+
 ## [0.12.1] - 2026-05-17
 
 ### Added
@@ -342,6 +352,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.12.2]: https://github.com/atgreen/dirq/releases/tag/v0.12.2
 [0.12.1]: https://github.com/atgreen/dirq/releases/tag/v0.12.1
 [0.12.0]: https://github.com/atgreen/dirq/releases/tag/v0.12.0
 [0.11.4]: https://github.com/atgreen/dirq/releases/tag/v0.11.4
