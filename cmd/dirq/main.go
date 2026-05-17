@@ -777,7 +777,11 @@ Examples:
 			for i, h := range hosts {
 				names[i] = h.hostname
 			}
-			fmt.Printf("Query matched %d host(s): %s\n\n", len(hosts), strings.Join(names, ", "))
+			if len(names) <= 10 {
+				fmt.Printf("Query matched %d host(s): %s\n\n", len(hosts), strings.Join(names, ", "))
+			} else {
+				fmt.Printf("Query matched %d host(s): %s, ... and %d more\n\n", len(hosts), strings.Join(names[:10], ", "), len(hosts)-10)
+			}
 
 			// Auto-detect Python interpreters on Linux hosts that don't
 			// have ansible_python_interpreter set. Ansible modules need
@@ -793,11 +797,15 @@ Examples:
 			defer os.Remove(invPath)
 
 			// LLM change review.
+			sampleNames := names
+			if len(sampleNames) > 10 {
+				sampleNames = sampleNames[:10]
+			}
 			action := reviewAction{
 				ActionType:  "playbook",
 				TargetQuery: queryStr,
 				TargetCount: len(hosts),
-				Targets:     strings.Join(names, ", "),
+				Targets:     strings.Join(sampleNames, ", "),
 				Module:      module,
 				ModuleArgs:  moduleArgs,
 			}
