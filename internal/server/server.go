@@ -169,6 +169,13 @@ func (s *Server) writeAgentConfig(tlsCfg tlsutil.Config) {
 		}
 	}
 
+	// Embed server signing public key so agents can verify messages
+	// from registration onward (trust-on-first-use is not needed).
+	if s.signer != nil {
+		lines = append(lines, "", "# Server signing public key (base64-encoded Ed25519)")
+		lines = append(lines, "signing_public_key: "+base64.StdEncoding.EncodeToString(s.signer.PublicKey()))
+	}
+
 	lines = append(lines, "")
 	content := strings.Join(lines, "\n")
 
@@ -209,14 +216,15 @@ func (s *Server) Start(ctx context.Context) error {
 		// Only reached when tls_disabled=true
 	}
 
-	// Write a ready-to-deploy agent config file with inline TLS certs.
-	s.writeAgentConfig(tlsCfg)
-
 	signer, err := signutil.EnsureServerSigner(signutil.ConfigFromEnv(s.cfg.FileCfg), s.log)
 	if err != nil {
 		return fmt.Errorf("signing setup: %w", err)
 	}
 	s.signer = signer
+
+	// Write a ready-to-deploy agent config file with inline TLS certs
+	// and the server's signing public key.
+	s.writeAgentConfig(tlsCfg)
 
 	s.grpcSv = grpc.NewServer(grpcOpts...)
 	pb.RegisterDirQServerServer(s.grpcSv, s)
