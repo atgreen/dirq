@@ -774,6 +774,13 @@ Examples:
 			}
 			fmt.Printf("Query matched %d host(s): %s\n\n", len(hosts), strings.Join(names, ", "))
 
+			// Auto-detect Python interpreters on Linux hosts that don't
+			// have ansible_python_interpreter set. Ansible modules need
+			// Python on the target.
+			if err := discoverPythonInterpreters(hosts); err != nil {
+				return err
+			}
+
 			invPath, err := writeInventory(hosts)
 			if err != nil {
 				return err
@@ -3251,6 +3258,115 @@ func runQuery(queryStr string, timeout int) ([]queryHost, error) {
 		}
 	}
 	return hosts, nil
+}
+
+// discoverPythonInterpreters probes Linux hosts that lack an
+// ansible_python_interpreter tag to find a working Python. If no Python
+// is found on a host, it returns an error listing the failing hosts.
+func discoverPythonInterpreters(hosts []queryHost) error {
+	// Collect Linux hosts that need probing.
+	var needProbe []int // indices into hosts
+	for i, h := range hosts {
+		if _, ok := h.tags["ansible_shell_type"]; ok {
+			// Windows hosts use PowerShell, no Python needed.
+			continue
+		}
+		if _, ok := h.tags["ansible_python_interpreter"]; ok {
+			// Already configured.
+			continue
+		}
+		needProbe = append(needProbe, i)
+	}
+
+	if len(needProbe) == 0 {
+		return nil
+	}
+
+	// Build a hostname filter for the probe.
+	hostnames := make([]string, len(needProbe))
+	for i, idx := range needProbe {
+		hostnames[i] = "'" + hosts[idx].hostname + "'"
+	}
+
+	fmt.Fprintf(os.Stderr, "Detecting Python on %d Linux host(s)...\n", len(needProbe))
+
+	// Probe common Python paths. The first one found wins.
+	probeCmd := `for p in /usr/bin/python3 /usr/libexec/platform-python /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.9 /usr/bin/python3.6 /usr/bin/python; do [ -x "$p" ] && echo "$p" && exit 0; done; echo "NONE"; exit 1`
+
+	payload := map[string]any{
+		"query":   "SELECT hostname WHERE os_info.hostname IN (" + strings.Join(hostnames, ", ") + ")",
+		"command": probeCmd,
+		"timeout": 15,
+	}
+
+	body, _ := json.Marshal(payload)
+	resp, err := apiStreamRequest("POST", "/api/v1/exec_multi", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("python probe failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("python probe failed: HTTP %d: %s", resp.StatusCode, string(data))
+	}
+
+	// Parse streamed results.
+	dec := json.NewDecoder(resp.Body)
+
+	// Skip header.
+	var header json.RawMessage
+	if err := dec.Decode(&header); err != nil {
+		return fmt.Errorf("python probe: read header: %w", err)
+	}
+
+	// Map hostname → discovered python path.
+	discovered := map[string]string{}
+	for dec.More() {
+		var r struct {
+			Type     string `json:"type"`
+			Hostname string `json:"hostname"`
+			RC       int    `json:"rc"`
+			Stdout   string `json:"stdout"`
+			Success  bool   `json:"success"`
+		}
+		if err := dec.Decode(&r); err != nil {
+			break
+		}
+		if r.Type != "result" || r.Hostname == "" {
+			continue
+		}
+		if r.Success && r.RC == 0 {
+			stdout, _ := base64.StdEncoding.DecodeString(r.Stdout)
+			path := strings.TrimSpace(string(stdout))
+			if path != "" && path != "NONE" {
+				discovered[r.Hostname] = path
+			}
+		}
+	}
+
+	// Apply discovered interpreters and collect failures.
+	var noPython []string
+	for _, idx := range needProbe {
+		h := &hosts[idx]
+		if path, ok := discovered[h.hostname]; ok {
+			if h.tags == nil {
+				h.tags = map[string]string{}
+			}
+			h.tags["ansible_python_interpreter"] = path
+			fmt.Fprintf(os.Stderr, "  %s: %s\n", h.hostname, path)
+		} else {
+			noPython = append(noPython, h.hostname)
+		}
+	}
+
+	if len(noPython) > 0 {
+		return fmt.Errorf("no Python interpreter found on %d host(s): %s\nInstall python3 or set the ansible_python_interpreter tag",
+			len(noPython), strings.Join(noPython, ", "))
+	}
+
+	fmt.Fprintln(os.Stderr)
+	return nil
 }
 
 // writeInventory creates a temporary YAML inventory file for Ansible.
