@@ -5,6 +5,13 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] - 2026-05-17
+
+### Added
+
+- **LLM-powered change review** — `dirq exec`, `dirq run`, and `dirq deploy` can now send proposed actions to an LLM for risk analysis before execution; identifies destructive operations, typos, privilege misuse, and scope concerns; supports Anthropic's native API and any OpenAI-compatible endpoint; configure with `DIRQ_LLM_URL`, `DIRQ_LLM_API_KEY`, and `DIRQ_LLM_MODEL`; disabled by default
+- **Playbook content gathering** — for `dirq run`, recursively resolves all referenced task files, roles, and handlers and includes their contents in the review prompt
+
 ## [0.12.2] - 2026-05-17
 
 ### Added
@@ -352,6 +359,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.13.0]: https://github.com/atgreen/dirq/releases/tag/v0.13.0
 [0.12.2]: https://github.com/atgreen/dirq/releases/tag/v0.12.2
 [0.12.1]: https://github.com/atgreen/dirq/releases/tag/v0.12.1
 [0.12.0]: https://github.com/atgreen/dirq/releases/tag/v0.12.0
