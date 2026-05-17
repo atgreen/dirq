@@ -175,12 +175,20 @@ func buildCommandUnix(ctx context.Context, cmdStr string, become bool, becomeUse
 // scheduled-task trick to run as another user without storing passwords.
 func buildCommandWindows(ctx context.Context, cmdStr string, become bool, becomeUser string) *exec.Cmd {
 	if !become || becomeUser == "" || becomeUser == "Administrator" || becomeUser == "SYSTEM" {
-		// Detect PowerShell: if the command starts with powershell/pwsh or
-		// contains PowerShell-specific syntax, use PowerShell directly.
-		// Ansible sends PowerShell-wrapped commands when ansible_shell_type=powershell.
-		lower := strings.ToLower(strings.TrimSpace(cmdStr))
-		if strings.HasPrefix(lower, "powershell") || strings.HasPrefix(lower, "pwsh") {
-			return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", cmdStr)
+		// Detect PowerShell: if the command starts with powershell/pwsh,
+		// parse the executable and arguments and run directly. Wrapping
+		// in another "powershell -Command ..." layer breaks commands that
+		// use -EncodedCommand (Ansible sends these when ansible_shell_type=powershell).
+		trimmed := strings.TrimSpace(cmdStr)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "powershell ") || strings.HasPrefix(lower, "powershell.exe ") ||
+			strings.HasPrefix(lower, "pwsh ") || strings.HasPrefix(lower, "pwsh.exe ") {
+			// Split into executable and remaining arguments.
+			parts := strings.SplitN(trimmed, " ", 2)
+			exe := parts[0]
+			args := strings.TrimSpace(parts[1])
+			// Parse the argument string into individual args, preserving quoted values.
+			return exec.CommandContext(ctx, exe, splitPowerShellArgs(args)...)
 		}
 		return exec.CommandContext(ctx, "cmd", "/c", cmdStr)
 	}
@@ -700,6 +708,40 @@ func escapePowerShellArg(s string) string {
 		}
 	}
 	return result
+}
+
+// splitPowerShellArgs splits a PowerShell argument string into individual
+// arguments, respecting quoted strings. This allows the agent to pass
+// through Ansible's PowerShell commands (e.g. -EncodedCommand <base64>)
+// without wrapping them in another powershell -Command layer.
+func splitPowerShellArgs(s string) []string {
+	var args []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			current.WriteByte(c)
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			current.WriteByte(c)
+		case c == ' ' && !inSingle && !inDouble:
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteByte(c)
+		}
+	}
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+	return args
 }
 
 // encodeUTF16Base64 encodes a string as UTF-16LE base64 for PowerShell's

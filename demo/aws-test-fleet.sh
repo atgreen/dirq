@@ -215,6 +215,7 @@ grpc_addr: 0.0.0.0:50051
 http_addr: 0.0.0.0:8080
 db_url: sqlite:///var/lib/dirq/dirq.db
 registration_secret: ${REGISTRATION_SECRET}
+max_children: 5
 CONF
 
         sudo systemctl enable --now dirq-server
@@ -243,6 +244,10 @@ SERVER_SETUP
     ssh_cmd "ec2-user@$srv_ip" "sudo cat /var/lib/dirq/agent.conf" > "$STATE_DIR/agent.conf"
     ssh_cmd "ec2-user@$srv_ip" "sudo cat /var/lib/dirq/client.conf" > "$STATE_DIR/client.conf"
     ssh_cmd "ec2-user@$srv_ip" "sudo cat /var/lib/dirq/bootstrap-token" > "$STATE_DIR/bootstrap-token"
+
+    # The server writes agent.conf with os.Hostname() which may not resolve
+    # from other instances. Replace with the private IP (works across the VPC).
+    sed -i "s|^server: .*|server: ${srv_priv_ip}:50051|" "$STATE_DIR/agent.conf"
 
     log "  Server running at https://$srv_ip:8080"
 
@@ -373,7 +378,7 @@ Write-Host "Installing MSI..."
 \$proc = Start-Process msiexec -ArgumentList "/i \$msiPath /qn /l*v C:\dirq-msi.log" -Wait -PassThru
 Write-Host "MSI exit code: \$(\$proc.ExitCode)"
 
-if (-not (Test-Path "C:\Program Files\DirQ\dirq-agent.exe")) {
+if (-not (Test-Path "C:\Program Files\DirQ\dirq-agent.exe") -and -not (Test-Path "C:\Program Files (x86)\DirQ\dirq-agent.exe")) {
     Write-Host "ERROR: dirq-agent.exe not found after MSI install"
     Stop-Transcript
     exit 1

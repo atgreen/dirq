@@ -282,7 +282,7 @@ jobs:
           Copy-Item "README.md" "releng\installer\wix\"
           Push-Location releng\installer\wix
           wix build dirq-agent.wxs -o "dirq-agent-$env:VERSION.msi" -d VERSION=$env:VERSION `
-            -ext WixToolset.UI.wixext -ext WixToolset.Firewall.wixext
+            -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Firewall.wixext
           Pop-Location
           Move-Item "releng\installer\wix\dirq-agent-$env:VERSION.msi" "artifacts\dist\"
 
