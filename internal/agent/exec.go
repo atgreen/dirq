@@ -206,7 +206,7 @@ func buildCommandWindows(ctx context.Context, cmdStr string, become bool, become
 			// Parse the argument string into individual args, preserving quoted values.
 			return exec.CommandContext(ctx, exe, splitPowerShellArgs(args)...)
 		}
-		return exec.CommandContext(ctx, "cmd", "/c", cmdStr)
+		return exec.CommandContext(ctx, "cmd", "/c", trimmed)
 	}
 
 	// Run as a different user using a one-shot scheduled task.
