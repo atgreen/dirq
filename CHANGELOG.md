@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **`dirq mcp`** — built-in [Model Context Protocol](https://modelcontextprotocol.io/) stdio server, allowing LLMs like Claude to manage the fleet directly as a tool; exposes 10 tools: host inventory, system facts, tagging, fleet queries, remote execution, CVE scanning, errata checks, KB verification, and topology graph
+- **Auto-detect Python interpreter** — `dirq run` now probes Linux targets for a working Python before invoking Ansible, checking `/usr/bin/python3`, `/usr/libexec/platform-python`, and versioned `python3.x` paths; errors clearly if no Python is found
 
 ## [0.11.4] - 2026-05-16
 
