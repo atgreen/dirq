@@ -181,6 +181,113 @@ func GenerateSelfSigned(dir string) (*GenerateResult, error) {
 	return result, nil
 }
 
+// LoadCA loads a CA certificate and private key from PEM files.
+func LoadCA(caFile, caKeyFile string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	certPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read CA cert: %w", err)
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, nil, fmt.Errorf("no PEM block in CA cert")
+	}
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse CA cert: %w", err)
+	}
+
+	keyPEM, err := os.ReadFile(caKeyFile)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read CA key: %w", err)
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		return nil, nil, fmt.Errorf("no PEM block in CA key")
+	}
+	caKey, err := x509.ParseECPrivateKey(keyBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse CA key: %w", err)
+	}
+
+	return caCert, caKey, nil
+}
+
+// IssueCert generates a new ECDSA P-256 client certificate signed by the
+// given CA, with the agent ID as the CN. The cert is valid for both client
+// and server auth (agents act as relay servers for downstream peers).
+// Returns PEM-encoded cert, key, and CA cert bytes.
+func IssueCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, agentID string) (certPEM, keyPEM, caCertPEM []byte, err error) {
+	// Generate a new key pair for this agent.
+	agentKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("generate agent key: %w", err)
+	}
+
+	// Random serial number (RFC 5280 §4.1.2.2).
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("generate serial number: %w", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"DirQ"},
+			CommonName:   agentID,
+		},
+		DNSNames:    []string{"localhost"},
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &agentKey.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("sign agent cert: %w", err)
+	}
+
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	keyDER, err := x509.MarshalECPrivateKey(agentKey)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("marshal agent key: %w", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	caCertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
+
+	return certPEM, keyPEM, caCertPEM, nil
+}
+
+// CertExpiresWithin returns true if the PEM-encoded certificate expires
+// within the given duration.
+func CertExpiresWithin(certPEM []byte, d time.Duration) bool {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return true
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return true
+	}
+	return time.Until(cert.NotAfter) < d
+}
+
+// CertCN returns the CommonName from a PEM-encoded certificate.
+func CertCN(certPEM []byte) string {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return ""
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return ""
+	}
+	return cert.Subject.CommonName
+}
+
 func filesExist(paths ...string) bool {
 	for _, p := range paths {
 		if _, err := os.Stat(p); err != nil {

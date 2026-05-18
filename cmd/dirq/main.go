@@ -664,10 +664,17 @@ func tlsCmd() *cobra.Command {
 All files are written to the specified directory:
   ca.crt, ca.key       — Certificate Authority
   server.crt, server.key — DirQ server
-  agent.crt, agent.key   — DirQ agent
+  agent.crt, agent.key   — Bootstrap agent cert (for initial registration only)
 
-Usage:
-  DIRQ_TLS_CA=./certs/ca.crt DIRQ_TLS_CERT=./certs/server.crt DIRQ_TLS_KEY=./certs/server.key dirq-server
+With mTLS enabled (default when CA key is available), each agent receives
+a unique client certificate during registration with its agent ID as the CN.
+The bootstrap agent.crt is only used for the initial TLS handshake.
+
+Server usage (with mTLS):
+  DIRQ_TLS_CA=./certs/ca.crt DIRQ_TLS_CA_KEY=./certs/ca.key \
+  DIRQ_TLS_CERT=./certs/server.crt DIRQ_TLS_KEY=./certs/server.key dirq-server
+
+Agent usage:
   DIRQ_TLS_CA=./certs/ca.crt DIRQ_TLS_CERT=./certs/agent.crt DIRQ_TLS_KEY=./certs/agent.key dirq-agent
 
 For self-signed certs without distributing the CA, agents can use:

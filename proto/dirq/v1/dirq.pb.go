@@ -210,7 +210,12 @@ type RegisterResponse struct {
 	FallbackAddrs []string `protobuf:"bytes,8,rep,name=fallback_addrs,json=fallbackAddrs,proto3" json:"fallback_addrs,omitempty"`
 	// Session token: must be presented in AgentHello to authenticate the
 	// stream connection. Prevents unauthenticated clients from impersonating agents.
-	SessionToken  string `protobuf:"bytes,9,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
+	SessionToken string `protobuf:"bytes,9,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
+	// mTLS: server-issued client certificate (PEM). The CN is the agent_id.
+	// Agent must present this cert on all subsequent gRPC connections.
+	TlsClientCert []byte `protobuf:"bytes,10,opt,name=tls_client_cert,json=tlsClientCert,proto3" json:"tls_client_cert,omitempty"`
+	TlsClientKey  []byte `protobuf:"bytes,11,opt,name=tls_client_key,json=tlsClientKey,proto3" json:"tls_client_key,omitempty"`
+	TlsCaCert     []byte `protobuf:"bytes,12,opt,name=tls_ca_cert,json=tlsCaCert,proto3" json:"tls_ca_cert,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -306,6 +311,27 @@ func (x *RegisterResponse) GetSessionToken() string {
 		return x.SessionToken
 	}
 	return ""
+}
+
+func (x *RegisterResponse) GetTlsClientCert() []byte {
+	if x != nil {
+		return x.TlsClientCert
+	}
+	return nil
+}
+
+func (x *RegisterResponse) GetTlsClientKey() []byte {
+	if x != nil {
+		return x.TlsClientKey
+	}
+	return nil
+}
+
+func (x *RegisterResponse) GetTlsCaCert() []byte {
+	if x != nil {
+		return x.TlsCaCert
+	}
+	return nil
 }
 
 type PeerInfo struct {
@@ -2418,7 +2444,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	" \x01(\tR\x12registrationSecret\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa0\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x04\n" +
 	"\x10RegisterResponse\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12&\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x12.dirq.v1.AgentRoleR\x04role\x12'\n" +
@@ -2428,7 +2454,11 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x19server_signing_public_key\x18\x06 \x01(\fR\x16serverSigningPublicKey\x121\n" +
 	"\x15server_signing_key_id\x18\a \x01(\tR\x12serverSigningKeyId\x12%\n" +
 	"\x0efallback_addrs\x18\b \x03(\tR\rfallbackAddrs\x12#\n" +
-	"\rsession_token\x18\t \x01(\tR\fsessionToken\"9\n" +
+	"\rsession_token\x18\t \x01(\tR\fsessionToken\x12&\n" +
+	"\x0ftls_client_cert\x18\n" +
+	" \x01(\fR\rtlsClientCert\x12$\n" +
+	"\x0etls_client_key\x18\v \x01(\fR\ftlsClientKey\x12\x1e\n" +
+	"\vtls_ca_cert\x18\f \x01(\fR\ttlsCaCert\"9\n" +
 	"\bPeerInfo\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\"(\n" +

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/atgreen/dirq/internal/db"
+	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -128,7 +129,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 	s.sessionTokens[agent.ID] = token
 	s.sessionMu.Unlock()
 
-	return &pb.RegisterResponse{
+	resp := &pb.RegisterResponse{
 		AgentId:                  agent.ID,
 		Role:                     a.Role,
 		ZoneLeaderAddr:           a.ParentAddr,
@@ -137,7 +138,23 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		ServerSigningKeyId:       s.signer.KeyID(),
 		FallbackAddrs:            a.FallbackAddrs,
 		SessionToken:             token,
-	}, nil
+	}
+
+	// Issue a per-agent mTLS client certificate if the CA is available.
+	if s.caCert != nil && s.caKey != nil {
+		certPEM, keyPEM, caCertPEM, err := tlsutil.IssueCert(s.caCert, s.caKey, agent.ID)
+		if err != nil {
+			s.log.Error("failed to issue mTLS cert", "agent_id", agent.ID, "error", err)
+			// Non-fatal: agent can still connect without mTLS (until enforcement is on).
+		} else {
+			resp.TlsClientCert = certPEM
+			resp.TlsClientKey = keyPEM
+			resp.TlsCaCert = caCertPEM
+			s.log.Info("issued mTLS client cert", "agent_id", agent.ID)
+		}
+	}
+
+	return resp, nil
 }
 
 // AgentStream handles the persistent bidirectional stream with zone leaders.
@@ -154,6 +171,13 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 	}
 
 	agentID := hello.AgentId
+
+	// If mTLS is active, verify the TLS cert CN matches the claimed agent ID.
+	if cn, ok := TLSCNFromContext(stream.Context()); ok && cn != agentID {
+		s.log.Warn("agent stream rejected: cert CN mismatch",
+			"cert_cn", cn, "claimed_agent_id", agentID)
+		return fmt.Errorf("cert CN %q does not match agent_id %q", cn, agentID)
+	}
 
 	// Validate session token — reject unauthenticated streams.
 	// The token is the server's Ed25519 signature over the agent ID, so we
@@ -305,6 +329,13 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 
 // RequestPeers handles an agent requesting a new parent after losing connectivity.
 func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.PeerResponse, error) {
+	// If mTLS is active, verify the TLS cert CN matches the claimed agent ID.
+	if cn, ok := TLSCNFromContext(ctx); ok && cn != req.AgentId {
+		s.log.Warn("RequestPeers rejected: cert CN mismatch",
+			"cert_cn", cn, "claimed_agent_id", req.AgentId)
+		return nil, fmt.Errorf("cert CN %q does not match agent_id %q", cn, req.AgentId)
+	}
+
 	s.log.Info("agent requesting peers", "agent_id", req.AgentId)
 
 	// The agent's current parent may be unreachable. Only mark it offline

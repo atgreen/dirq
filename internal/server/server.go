@@ -5,7 +5,9 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -69,6 +71,15 @@ type Server struct {
 	// disconnect from the old parent is expected — don't mark offline.
 	reassigningMu sync.Mutex
 	reassigning   map[string]time.Time
+
+	// mTLS: when true, all gRPC methods except Register require a
+	// valid client certificate. Enabled when the CA key is available.
+	mtlsEnabled bool
+
+	// CA for issuing per-agent client certificates during registration.
+	tlsCfg tlsutil.Config
+	caCert *x509.Certificate
+	caKey  *ecdsa.PrivateKey
 
 	// Dampening: tracks agents that were demoted but bounced back to
 	// a direct server connection.  Prevents the rebalancer from
@@ -147,25 +158,13 @@ func (s *Server) writeAgentConfig(tlsCfg tlsutil.Config) {
 		lines = append(lines, "registration_secret: "+s.cfg.RegistrationSecret)
 	}
 
-	// Embed TLS certs inline as base64.
+	// Embed TLS CA cert inline. Agent cert/key are NOT included — each agent
+	// receives its own mTLS client cert during registration with the agent ID
+	// as the CN. The CA cert is needed so the agent can verify the server.
 	if tlsCfg.Enabled() && tlsCfg.CAFile != "" {
 		if caData, err := os.ReadFile(tlsCfg.CAFile); err == nil {
 			lines = append(lines, "", "# TLS CA certificate (base64-encoded PEM)")
 			lines = append(lines, "tls_ca_data: "+base64.StdEncoding.EncodeToString(caData))
-		}
-
-		// Use agent cert/key — they're in the same directory as the CA.
-		dir := filepath.Dir(tlsCfg.CAFile)
-		agentCert := filepath.Join(dir, "agent.crt")
-		agentKey := filepath.Join(dir, "agent.key")
-
-		if certData, err := os.ReadFile(agentCert); err == nil {
-			lines = append(lines, "", "# TLS agent certificate (base64-encoded PEM)")
-			lines = append(lines, "tls_cert_data: "+base64.StdEncoding.EncodeToString(certData))
-		}
-		if keyData, err := os.ReadFile(agentKey); err == nil {
-			lines = append(lines, "", "# TLS agent private key (base64-encoded PEM)")
-			lines = append(lines, "tls_key_data: "+base64.StdEncoding.EncodeToString(keyData))
 		}
 	}
 
@@ -206,15 +205,37 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("TLS setup: %w", err)
 	}
+	s.tlsCfg = tlsCfg
 	if tlsCfg.Enabled() {
-		creds, err := tlsutil.ServerCredentials(tlsCfg)
+		// Use mixed-auth TLS: verify client certs if given, but don't
+		// require them at the TLS layer. The mTLS interceptor enforces
+		// per-method requirements (Register is exempt).
+		creds, err := tlsutil.ServerCredentialsMixedAuth(tlsCfg)
 		if err != nil {
 			return fmt.Errorf("TLS credentials: %w", err)
 		}
 		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+
+		// Enable mTLS enforcement if we have the CA key for issuing certs.
+		if tlsCfg.CAKeyFile != "" {
+			caCert, caKey, err := tlsutil.LoadCA(tlsCfg.CAFile, tlsCfg.CAKeyFile)
+			if err != nil {
+				return fmt.Errorf("load CA for mTLS: %w", err)
+			}
+			s.caCert = caCert
+			s.caKey = caKey
+			s.mtlsEnabled = true
+			s.log.Info("mTLS enabled — agents receive client certs during registration")
+		}
 	} else {
 		// Only reached when tls_disabled=true
 	}
+
+	// Add mTLS interceptors (they are no-ops when mtlsEnabled is false).
+	grpcOpts = append(grpcOpts,
+		grpc.UnaryInterceptor(s.mtlsUnaryInterceptor),
+		grpc.StreamInterceptor(s.mtlsStreamInterceptor),
+	)
 
 	signer, err := signutil.EnsureServerSigner(signutil.ConfigFromEnv(s.cfg.FileCfg), s.log)
 	if err != nil {

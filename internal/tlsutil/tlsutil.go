@@ -24,6 +24,7 @@ import (
 // Config holds TLS file paths loaded from environment variables.
 type Config struct {
 	CAFile     string // path to CA certificate
+	CAKeyFile  string // path to CA private key (needed for mTLS cert issuance)
 	CertFile   string // path to this process's certificate
 	KeyFile    string // path to this process's private key
 	Insecure   bool   // skip cert verification (for self-signed)
@@ -55,11 +56,12 @@ func ConfigFromEnv(fileCfg ...*config.File) Config {
 		fc = fileCfg[0]
 	}
 	cfg := Config{
-		CAFile:   config.EnvOr("DIRQ_TLS_CA", fc, "tls_ca", ""),
-		CertFile: config.EnvOr("DIRQ_TLS_CERT", fc, "tls_cert", ""),
-		KeyFile:  config.EnvOr("DIRQ_TLS_KEY", fc, "tls_key", ""),
-		Insecure: config.EnvOr("DIRQ_TLS_INSECURE", fc, "tls_insecure", "false") == "true",
-		Disabled: config.EnvOr("DIRQ_TLS_DISABLED", fc, "tls_disabled", "false") == "true",
+		CAFile:    config.EnvOr("DIRQ_TLS_CA", fc, "tls_ca", ""),
+		CAKeyFile: config.EnvOr("DIRQ_TLS_CA_KEY", fc, "tls_ca_key", ""),
+		CertFile:  config.EnvOr("DIRQ_TLS_CERT", fc, "tls_cert", ""),
+		KeyFile:   config.EnvOr("DIRQ_TLS_KEY", fc, "tls_key", ""),
+		Insecure:  config.EnvOr("DIRQ_TLS_INSECURE", fc, "tls_insecure", "false") == "true",
+		Disabled:  config.EnvOr("DIRQ_TLS_DISABLED", fc, "tls_disabled", "false") == "true",
 	}
 
 	// Materialize inline cert data to files if no paths were given.
@@ -129,6 +131,16 @@ func EnsureCerts(cfg Config, role string, log *slog.Logger) (Config, error) {
 		return cfg, nil
 	}
 
+	// If the agent has a CA but no cert/key (e.g., from a server-generated
+	// agent.conf with tls_ca_data only), that's valid — the agent will get
+	// its own cert during registration via mTLS cert issuance. Don't
+	// auto-generate a new CA that would override the server's CA.
+	if cfg.CAFile != "" && role == "agent" {
+		log.Info("TLS CA configured but no client cert — agent will obtain a cert during registration",
+			"ca", cfg.CAFile)
+		return cfg, nil
+	}
+
 	// No user certs — auto-generate self-signed.
 	log.Warn("No TLS certs configured — auto-generating self-signed certificates. " +
 		"Set DIRQ_TLS_CERT and DIRQ_TLS_KEY for production use.")
@@ -145,6 +157,7 @@ func EnsureCerts(cfg Config, role string, log *slog.Logger) (Config, error) {
 	// verification entirely. Server and agent share the same auto-gen
 	// directory, so they use the same CA.
 	cfg.CAFile = result.CAFile
+	cfg.CAKeyFile = result.CAKeyFile
 
 	switch role {
 	case "server":
@@ -187,6 +200,34 @@ func ServerCredentials(cfg Config) (credentials.TransportCredentials, error) {
 			return nil, err
 		}
 		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+		tlsCfg.ClientCAs = caPool
+	}
+
+	return credentials.NewTLS(tlsCfg), nil
+}
+
+// ServerCredentialsMixedAuth returns gRPC transport credentials that verify
+// client certs if presented but don't require them at the TLS layer. This
+// allows Register (no client cert) and AgentStream (client cert required)
+// to share the same listener. A gRPC interceptor enforces client certs
+// per-method.
+func ServerCredentialsMixedAuth(cfg Config) (credentials.TransportCredentials, error) {
+	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load server cert: %w", err)
+	}
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	if cfg.CAFile != "" && !cfg.Insecure {
+		caPool, err := loadCAPool(cfg.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
 		tlsCfg.ClientCAs = caPool
 	}
 

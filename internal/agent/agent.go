@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,8 +18,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	grpccreds "google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	grpcpeer "google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -97,6 +100,35 @@ func grpcDialOpts() []grpc.DialOption {
 	return opts
 }
 
+// registrationDialOpts returns gRPC dial options for the Register RPC.
+// Unlike grpcDialOpts, this does NOT present a client certificate — the agent
+// doesn't have a server-issued cert yet. Only the CA is loaded so the agent
+// can verify the server's identity.
+func registrationDialOpts() []grpc.DialOption {
+	opts := []grpc.DialOption{
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                60 * time.Second,
+			Timeout:             15 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	}
+
+	cfg := cachedTLSConfig
+	if cfg != nil && cfg.Enabled() {
+		// Build a config with CA only — no client cert.
+		regCfg := *cfg
+		regCfg.CertFile = ""
+		regCfg.KeyFile = ""
+		creds, err := tlsutil.ClientCredentials(regCfg)
+		if err == nil {
+			opts = append(opts, grpc.WithTransportCredentials(creds))
+			return opts
+		}
+	}
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return opts
+}
+
 // peerDialOpts returns gRPC dial options for connecting to a peer agent's
 // relay server.  Peer certs contain "localhost" as a SAN but not the peer's
 // IP, so we override ServerName to "localhost" for TLS verification.
@@ -145,6 +177,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		return fmt.Errorf("TLS setup: %w", err)
 	}
 	cachedTLSConfig = &tlsCfg
+
+	// Load an existing mTLS cert from a previous registration (if valid).
+	a.loadExistingMTLSCert()
 
 	// Step 1: Register with the server (retry until success or context cancelled).
 	if err := a.registerWithRetry(ctx); err != nil {
@@ -280,7 +315,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 }
 
 func (a *Agent) register(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.cfg.ServerAddr, grpcDialOpts()...)
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, registrationDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
@@ -325,6 +360,16 @@ func (a *Agent) register(ctx context.Context) error {
 	a.sessionToken = resp.SessionToken
 	if err := a.setServerVerifier(resp.GetServerSigningPublicKey(), resp.GetServerSigningKeyId()); err != nil {
 		return fmt.Errorf("load server signing key: %w", err)
+	}
+
+	// Persist server-issued mTLS client certificate if provided.
+	if len(resp.TlsClientCert) > 0 && len(resp.TlsClientKey) > 0 {
+		if err := a.persistMTLSCert(resp.TlsClientCert, resp.TlsClientKey, resp.TlsCaCert); err != nil {
+			a.log.Error("failed to persist mTLS cert", "error", err)
+			// Non-fatal: agent can still operate without mTLS.
+		} else {
+			a.log.Info("mTLS client cert persisted", "agent_id", resp.AgentId)
+		}
 	}
 
 	// Determine where to connect upstream.
@@ -430,6 +475,95 @@ func (a *Agent) sendHello() error {
 			},
 		},
 	})
+}
+
+// mtlsCertDir returns the directory for mTLS client certs.
+func mtlsCertDir() string {
+	return filepath.Join(config.DataDir(), "tls")
+}
+
+// persistMTLSCert saves the server-issued client cert/key/CA to disk and
+// updates cachedTLSConfig so subsequent connections use mTLS.
+func (a *Agent) persistMTLSCert(certPEM, keyPEM, caCertPEM []byte) error {
+	dir := mtlsCertDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create mTLS cert dir: %w", err)
+	}
+
+	certPath := filepath.Join(dir, "mtls-client.crt")
+	keyPath := filepath.Join(dir, "mtls-client.key")
+
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		return fmt.Errorf("write client cert: %w", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		return fmt.Errorf("write client key: %w", err)
+	}
+
+	// Also persist CA cert if provided and not already present.
+	if len(caCertPEM) > 0 {
+		caPath := filepath.Join(dir, "ca.crt")
+		if err := os.WriteFile(caPath, caCertPEM, 0644); err != nil {
+			return fmt.Errorf("write CA cert: %w", err)
+		}
+	}
+
+	// Update TLS config to use the new cert for all subsequent connections.
+	if cachedTLSConfig != nil {
+		cachedTLSConfig.CertFile = certPath
+		cachedTLSConfig.KeyFile = keyPath
+		if len(caCertPEM) > 0 {
+			cachedTLSConfig.CAFile = filepath.Join(dir, "ca.crt")
+			cachedTLSConfig.Insecure = false
+		}
+	}
+
+	return nil
+}
+
+// loadExistingMTLSCert checks for a previously-issued mTLS cert and loads
+// it into the TLS config if valid.
+func (a *Agent) loadExistingMTLSCert() {
+	dir := mtlsCertDir()
+	certPath := filepath.Join(dir, "mtls-client.crt")
+	keyPath := filepath.Join(dir, "mtls-client.key")
+
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		return // no existing cert
+	}
+	if _, err := os.Stat(keyPath); err != nil {
+		return // no key
+	}
+
+	// Check expiry.
+	if tlsutil.CertExpiresWithin(certPEM, 30*24*time.Hour) {
+		a.log.Info("existing mTLS cert expires soon, will re-register for a new one")
+		return
+	}
+
+	// Verify the CN matches our expected agent ID (if we have one from
+	// a previous run). On first run, agentID is empty so we accept any cert.
+	if a.agentID != "" {
+		cn := tlsutil.CertCN(certPEM)
+		if cn != a.agentID {
+			a.log.Info("existing mTLS cert CN mismatch, will re-register",
+				"cert_cn", cn, "agent_id", a.agentID)
+			return
+		}
+	}
+
+	// Load it.
+	if cachedTLSConfig != nil {
+		cachedTLSConfig.CertFile = certPath
+		cachedTLSConfig.KeyFile = keyPath
+		caPath := filepath.Join(dir, "ca.crt")
+		if _, err := os.Stat(caPath); err == nil {
+			cachedTLSConfig.CAFile = caPath
+			cachedTLSConfig.Insecure = false
+		}
+		a.log.Info("loaded existing mTLS client cert", "cert", certPath)
+	}
 }
 
 // requestNewParent calls the server's RequestPeers RPC to get a new parent
@@ -757,6 +891,14 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 
 	peerID := hello.AgentId
 
+	// If the peer presented a TLS client certificate, verify that its CN
+	// matches the claimed agent ID.
+	if cn := peerTLSCN(stream.Context()); cn != "" && cn != peerID {
+		a.log.Warn("downstream peer rejected: cert CN mismatch",
+			"cert_cn", cn, "claimed_agent_id", peerID)
+		return fmt.Errorf("cert CN %q does not match agent_id %q", cn, peerID)
+	}
+
 	// Verify the session token: it's the server's Ed25519 signature over
 	// the agent ID. We can verify it using the signing public key we
 	// received during registration.
@@ -831,6 +973,29 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 
 // protoFiltersToConditions converts proto Filter messages back into query.Condition
 // objects so the agent can use the query package's FilterCollectedData.
+// peerTLSCN extracts the CN from a gRPC peer's TLS client certificate.
+// Returns empty string if no client cert is present.
+func peerTLSCN(ctx context.Context) string {
+	p, ok := grpcpeer.FromContext(ctx)
+	if !ok {
+		return ""
+	}
+	tlsInfo, ok := p.AuthInfo.(grpccreds.TLSInfo)
+	if !ok {
+		return ""
+	}
+	if len(tlsInfo.State.VerifiedChains) == 0 || len(tlsInfo.State.VerifiedChains[0]) == 0 {
+		// No verified client cert — peer connected without mTLS.
+		// Also check PeerCertificates for the case where VerifyClientCertIfGiven
+		// is used and the cert was presented but chains weren't built.
+		if len(tlsInfo.State.PeerCertificates) == 0 {
+			return ""
+		}
+		return tlsInfo.State.PeerCertificates[0].Subject.CommonName
+	}
+	return tlsInfo.State.VerifiedChains[0][0].Subject.CommonName
+}
+
 // resolveOutboundIP discovers the IP address this host uses to reach a target.
 // It opens a UDP connection (no actual traffic) to the target and reads the
 // local address. Returns empty string on failure.
