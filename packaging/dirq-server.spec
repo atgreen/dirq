@@ -40,7 +40,12 @@ install -m 0644 LICENSE %{buildroot}/usr/share/licenses/dirq-server/LICENSE
 
 %post
 systemctl daemon-reload
+if [ "$1" -ge 2 ]; then
+    systemctl try-restart dirq-server 2>/dev/null || true
+fi
 
 %preun
-systemctl stop dirq-server 2>/dev/null || true
-systemctl disable dirq-server 2>/dev/null || true
+if [ "$1" -eq 0 ]; then
+    systemctl stop dirq-server 2>/dev/null || true
+    systemctl disable dirq-server 2>/dev/null || true
+fi

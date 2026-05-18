@@ -6,6 +6,7 @@
 
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "LogicLib.nsh"
 !include "nsDialogs.nsh"
 
 ; ============================================================================
@@ -39,6 +40,7 @@ SetCompressor /SOLID lzma
 
 Var ServerAddr
 Var ExecEnabled
+Var WasRunning
 
 ; ============================================================================
 ; Modern UI Configuration
@@ -108,6 +110,16 @@ FunctionEnd
 Section "DirQ Agent" SEC_CORE
   SectionIn RO  ; Required section
 
+  ; Check if the service was running before upgrade.
+  ; "sc query" returns 0 if the service exists; we parse STATE via a
+  ; PowerShell one-liner to avoid needing StrContains.
+  StrCpy $WasRunning "0"
+  nsExec::ExecToStack 'powershell -NoProfile -Command "if ((Get-Service -Name ${SERVICE_NAME} -ErrorAction SilentlyContinue).Status -eq ''Running'') { exit 0 } else { exit 1 }"'
+  Pop $0
+  ${If} $0 == 0
+    StrCpy $WasRunning "1"
+  ${EndIf}
+
   ; Stop existing service if running.
   nsExec::ExecToLog 'sc stop ${SERVICE_NAME}'
   Sleep 2000
@@ -139,9 +151,14 @@ Section "DirQ Agent" SEC_CORE
   FileWrite $0 "  os: windows$\r$\n"
   FileClose $0
 
-  ; Install and start service.
+  ; Install service (registers but does not start).
   nsExec::ExecToLog '"$INSTDIR\dirq-agent.exe" install'
-  nsExec::ExecToLog 'sc start ${SERVICE_NAME}'
+
+  ; On upgrade, restart the service if it was running before.
+  ; On fresh install, leave it stopped — user must configure agent.conf first.
+  ${If} $WasRunning == "1"
+    nsExec::ExecToLog 'sc start ${SERVICE_NAME}'
+  ${EndIf}
 
   ; Add firewall rule for relay port.
   nsExec::ExecToLog 'netsh advfirewall firewall add rule name="DirQ Agent" dir=in action=allow protocol=tcp localport=50052'

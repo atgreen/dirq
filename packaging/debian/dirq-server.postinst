@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    systemctl daemon-reload
+    if systemctl is-active --quiet dirq-server 2>/dev/null; then
+        systemctl restart dirq-server
+    fi
+fi

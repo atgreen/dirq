@@ -40,7 +40,17 @@ install -m 0644 LICENSE %{buildroot}/usr/share/licenses/dirq-agent/LICENSE
 
 %post
 systemctl daemon-reload
+# On upgrade ($1 == 2), restart if the service was already running.
+# On fresh install ($1 == 1), don't start — agent.conf must be
+# configured first.
+if [ "$1" -ge 2 ]; then
+    systemctl try-restart dirq-agent 2>/dev/null || true
+fi
 
 %preun
-systemctl stop dirq-agent 2>/dev/null || true
-systemctl disable dirq-agent 2>/dev/null || true
+# On uninstall ($1 == 0), stop and disable.
+# On upgrade ($1 == 1), don't stop — %post will restart.
+if [ "$1" -eq 0 ]; then
+    systemctl stop dirq-agent 2>/dev/null || true
+    systemctl disable dirq-agent 2>/dev/null || true
+fi

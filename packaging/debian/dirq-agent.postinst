@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    systemctl daemon-reload
+    # Restart on upgrade if the service was already running.
+    # Don't start on fresh install — agent.conf must be configured first.
+    if systemctl is-active --quiet dirq-agent 2>/dev/null; then
+        systemctl restart dirq-agent
+    fi
+fi

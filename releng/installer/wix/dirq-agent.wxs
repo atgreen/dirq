@@ -68,7 +68,7 @@
           Account="LocalSystem">
           <ServiceConfig
             DelayedAutoStart="yes"
-            OnInstall="yes"
+            OnInstall="no"
             OnReinstall="yes" />
         </ServiceInstall>
         <ServiceControl
