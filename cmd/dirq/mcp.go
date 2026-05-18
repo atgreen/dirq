@@ -76,16 +76,6 @@ func mcpAPIGet(path string) (string, error) {
 	return mcpPrettyJSON(resp), nil
 }
 
-// mcpAPIPost makes a POST request and returns the JSON response as a pretty string.
-func mcpAPIPost(path string, payload any) (string, error) {
-	body, _ := json.Marshal(payload)
-	resp, err := apiRequest("POST", path, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	return mcpPrettyJSON(resp), nil
-}
-
 // mcpStreamPost makes a POST request and collects all streamed JSON lines.
 func mcpStreamPost(path string, payload any) (string, error) {
 	body, _ := json.Marshal(payload)

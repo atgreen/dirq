@@ -300,11 +300,7 @@ func ToFilterProtos(q *Query) []*dirqv1.Filter {
 	if conds == nil {
 		return nil // too complex for pushdown
 	}
-	filters := make([]*dirqv1.Filter, 0, len(conds))
-	for _, c := range conds {
-		filters = append(filters, c)
-	}
-	return filters
+	return append(make([]*dirqv1.Filter, 0, len(conds)), conds...)
 }
 
 // flattenANDs extracts a list of simple filters from a pure AND chain.

@@ -1,0 +1,27 @@
+version: "2"
+
+linters:
+  disable:
+    - errcheck  # too noisy for CLI code (defer Close, fmt.Fprintf, etc.)
+  enable:
+    - ineffassign
+    - staticcheck
+    - unused
+    - govet
+
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-ST1000"  # package comments not required
+        - "-ST1005"  # error strings may be capitalized (API names)
+        - "-ST1016"  # receiver name consistency is a style preference
+        - "-ST1020"  # comment format not enforced
+        - "-QF1012"  # WriteString(Sprintf) is fine
+        - "-QF1003"  # tagged switch suggestion is style preference
+        - "-SA5011"  # nil pointer analysis has false positives in test code
+        - "-SA9003"  # empty branch is intentional (TLS disabled path)
+
+issues:
+  exclude-dirs:
+    - proto

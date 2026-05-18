@@ -195,13 +195,6 @@ func newTestServer(mock *mockDB, authDisabled bool) *Server {
 	}
 }
 
-func decodeError(t *testing.T, rec *httptest.ResponseRecorder) string {
-	t.Helper()
-	var body struct{ Error string }
-	json.NewDecoder(rec.Body).Decode(&body)
-	return body.Error
-}
-
 // ─────────────────────────────────────────────────────────
 // Auth middleware tests
 // ─────────────────────────────────────────────────────────

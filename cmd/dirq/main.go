@@ -3857,9 +3857,3 @@ func apiRequest(method, path string, body io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}

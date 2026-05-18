@@ -92,12 +92,12 @@ func (d *DB) ListAgents(ctx context.Context, f db.ListAgentsFilter) ([]db.Agent,
 			// Match specific tag key=value: tags->>'env' = 'prod'
 			conditions = append(conditions, fmt.Sprintf("tags->>$%d = $%d", argIdx, argIdx+1))
 			args = append(args, f.Tag, f.TagValue)
-			argIdx += 2
+			argIdx += 2 //nolint:ineffassign // argIdx may be used by future filter additions
 		} else {
 			// Match tag key exists (any value): tags ? 'env'
 			conditions = append(conditions, fmt.Sprintf("tags ? $%d", argIdx))
 			args = append(args, f.Tag)
-			argIdx++
+			argIdx++ //nolint:ineffassign // argIdx may be used by future filter additions
 		}
 	}
 
