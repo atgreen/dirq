@@ -22,6 +22,6 @@ linters:
         - "-SA5011"  # nil pointer analysis has false positives in test code
         - "-SA9003"  # empty branch is intentional (TLS disabled path)
 
-issues:
-  exclude-dirs:
-    - proto
+  exclusions:
+    paths:
+      - proto
