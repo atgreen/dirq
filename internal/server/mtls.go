@@ -35,6 +35,9 @@ func peerCerts(ctx context.Context) []*x509.Certificate {
 	if !ok {
 		return nil
 	}
+	if len(tlsInfo.State.VerifiedChains) == 0 || len(tlsInfo.State.VerifiedChains[0]) == 0 {
+		return nil
+	}
 	return tlsInfo.State.VerifiedChains[0]
 }
 

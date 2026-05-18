@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.14.1] - 2026-05-18
+
+### Fixed
+
+- **Server panic when agent registers without client cert** — the mTLS interceptor accessed an empty `VerifiedChains` slice when an agent connected without a client certificate (e.g., during initial registration), crashing the server
+
 ## [0.14.0] - 2026-05-17
 
 ### Added
@@ -371,6 +377,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.14.1]: https://github.com/atgreen/dirq/releases/tag/v0.14.1
 [0.14.0]: https://github.com/atgreen/dirq/releases/tag/v0.14.0
 [0.13.0]: https://github.com/atgreen/dirq/releases/tag/v0.13.0
 [0.12.2]: https://github.com/atgreen/dirq/releases/tag/v0.12.2
