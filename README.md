@@ -343,6 +343,16 @@ LIMIT 10
 
 **Aggregation functions:** `COUNT`, `AVG`, `SUM`, `MIN`, `MAX`
 
+Aggregates work with or without `GROUP BY`:
+
+```sql
+-- Fleet-wide total (bare aggregate)
+SELECT COUNT(hostname) WHERE os_info.os = 'linux'
+
+-- Per-group breakdown
+SELECT os_info.os, COUNT(hostname) GROUP BY os_info.os
+```
+
 ### Examples
 
 ```sql
@@ -399,29 +409,41 @@ dirq "select * where tag.env = 'prod'" --timeout 30
 
 ### Natural language queries
 
-Ask questions in plain English — DirQ translates them to queries using an LLM (requires `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`):
+Ask questions in plain English — an LLM uses DirQ's fleet tools to gather data and compose an answer. The LLM can call multiple tools and iterate until it has enough information.
 
 ```bash
 dirq ask "which prod hosts have full disks?"
-# Query: SELECT hostname, disk.mount_point, disk.pct_used WHERE tag.env = 'prod' AND disk.pct_used > 80
-
-dirq ask "show me all windows servers"
 dirq ask "how many hosts are running linux?"
-dirq ask "find hosts with openssl installed"
-dirq ask "what packages are on the staging servers?"
+dirq ask "what versions of openssl are installed?"
+dirq ask "are any hosts vulnerable to CVE-2024-6345?"
 ```
 
-Use `--dry-run` to see the generated query without executing it:
+Tool calls are shown as the LLM works:
 
-```bash
-dirq ask "hosts with more than 8 cores" --dry-run
+```
+$ dirq ask "how many linux servers do I have?"
+  [dirq_query] SELECT COUNT(hostname) WHERE os_info.os = 'linux'
+You have 4 Linux servers, all running RHEL 8.10.
 ```
 
-Use `--provider` and `--model` to choose the LLM:
+The LLM is **read-only** — it can query and inspect but cannot execute commands or modify hosts. If you ask it to make changes, it will suggest the `dirq exec` command to run.
+
+**Configuration:** Uses `DIRQ_LLM_URL` + `DIRQ_LLM_API_KEY` + `DIRQ_LLM_MODEL`, or falls back to `ANTHROPIC_API_KEY`. Supports both Anthropic's native API and any OpenAI-compatible endpoint.
 
 ```bash
-dirq ask "stopped services" --provider openai --model gpt-4o
-dirq ask "disk usage in prod" --provider anthropic --model claude-sonnet-4-20250514
+# Anthropic (direct)
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI-compatible (any provider)
+export DIRQ_LLM_URL=https://api.openai.com/v1
+export DIRQ_LLM_API_KEY=sk-...
+export DIRQ_LLM_MODEL=gpt-4o
+```
+
+Use `--model` to override the model for a single query:
+
+```bash
+dirq ask "disk usage in prod" --model claude-sonnet-4-20250514
 ```
 
 ### AI integration
@@ -786,12 +808,23 @@ TLS is **enabled by default** on all gRPC and REST API connections. If no certif
 
 | TLS vars set | Behavior |
 |---|---|
-| Nothing | Auto-generate self-signed, encrypted, no mTLS, log warning |
+| Nothing | Auto-generate self-signed + mTLS cert issuance per agent |
 | `CERT` + `KEY` | TLS with user certs, no mTLS |
-| `CERT` + `KEY` + `CA` | Full mTLS (mutual authentication) |
+| `CERT` + `KEY` + `CA` + `CA_KEY` | Full mTLS with user-supplied CA |
 | `DIRQ_TLS_DISABLED=true` | Explicitly insecure (must opt in) |
 
-**Auto-generated certs** protect against passive sniffing but NOT against MITM or rogue impersonation (no shared CA to verify). For production, use user-supplied certs with `DIRQ_TLS_CA` for full mTLS.
+#### Per-agent mTLS certificates
+
+When the server has access to the CA private key (auto-generated or via `DIRQ_TLS_CA_KEY`), it issues a **unique TLS client certificate** to each agent during registration. The certificate's CN is the agent ID, binding the TLS identity to the application identity.
+
+After registration:
+- All gRPC connections (AgentStream, RequestPeers, relay) require a valid client cert signed by the server's CA
+- The server and relay agents verify that the cert CN matches the claimed agent ID
+- The registration secret becomes a **one-time bootstrap token** — a leaked secret can register an agent once, but the cert it receives is bound to that specific agent ID
+
+This activates automatically when the CA key is available. On auto-generated certs, it's always on. For user-supplied certs, set `DIRQ_TLS_CA_KEY`.
+
+Agents persist their issued cert to disk and reuse it across restarts. Certs are valid for 1 year; agents re-register automatically when their cert is within 30 days of expiry.
 
 **Generate self-signed certs manually:**
 ```bash
@@ -799,7 +832,15 @@ TLS is **enabled by default** on all gRPC and REST API connections. If no certif
 # Creates: ca.crt, ca.key, server.crt, server.key, agent.crt, agent.key
 ```
 
-**mTLS:** Set `DIRQ_TLS_CA` on both server and agent. Server rejects agents without a valid cert. Agents reject rogue servers.
+**Full mTLS with user-supplied CA:**
+```bash
+# Server (needs CA key to issue per-agent certs)
+DIRQ_TLS_CA=./certs/ca.crt DIRQ_TLS_CA_KEY=./certs/ca.key \
+DIRQ_TLS_CERT=./certs/server.crt DIRQ_TLS_KEY=./certs/server.key dirq-server
+
+# Agent (only needs CA cert — gets its own cert during registration)
+DIRQ_TLS_CA=./certs/ca.crt dirq-agent
+```
 
 ### Authentication
 
@@ -1099,7 +1140,8 @@ Tags can be set in the config file as an indented block under `tags:`, or via th
 
 | Config key | Environment variable | Default | Description |
 |-----------|----------|---------|-------------|
-| `tls_ca` | `DIRQ_TLS_CA` | | CA certificate path (enables mTLS) |
+| `tls_ca` | `DIRQ_TLS_CA` | | CA certificate path |
+| `tls_ca_key` | `DIRQ_TLS_CA_KEY` | | CA private key path (server only — enables per-agent mTLS cert issuance) |
 | `tls_cert` | `DIRQ_TLS_CERT` | | This process's certificate path |
 | `tls_key` | `DIRQ_TLS_KEY` | | This process's private key path |
 | `tls_insecure` | `DIRQ_TLS_INSECURE` | `false` | Skip cert verification (agent only) |
@@ -1155,7 +1197,12 @@ tls_insecure: true
 | `server_url` | `DIRQ_SERVER_URL` / `--server` | *(required)* | Server REST URL |
 | `token` | `DIRQ_TOKEN` / `--token` | | API token |
 | `tls_insecure` | `DIRQ_TLS_INSECURE` / `--tls-insecure` | `false` | Skip TLS verification |
+| `llm_url` | `DIRQ_LLM_URL` | | LLM API base URL (Anthropic or OpenAI-compatible) |
+| `llm_api_key` | `DIRQ_LLM_API_KEY` | | LLM API key |
+| `llm_model` | `DIRQ_LLM_MODEL` | `claude-sonnet-4-20250514` | LLM model name |
 | | `--json` | `false` | Raw JSON output |
+
+For `dirq ask`, if `DIRQ_LLM_*` is not configured, falls back to `ANTHROPIC_API_KEY` with Anthropic's native API.
 
 ---
 

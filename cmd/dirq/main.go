@@ -2269,6 +2269,55 @@ func doctorCmd() *cobra.Command {
 				return "ok", pluginFile
 			})
 
+			// ── Config file ──
+
+			check("Client config", func() (string, string) {
+				validKeys := map[string]bool{
+					"server_url":   true,
+					"token":        true,
+					"tls_insecure": true,
+					"llm_url":      true,
+					"llm_api_key":  true,
+					"llm_model":    true,
+				}
+
+				var cfgPath string
+				candidates := []string{}
+				if home, err := os.UserHomeDir(); err == nil {
+					candidates = append(candidates, filepath.Join(home, ".config", "dirq", "client.conf"))
+				}
+				candidates = append(candidates, "/etc/dirq/client.conf")
+
+				for _, p := range candidates {
+					if _, err := os.Stat(p); err == nil {
+						cfgPath = p
+						break
+					}
+				}
+
+				if cfgPath == "" {
+					return "ok", "no client.conf found (using env vars or defaults)"
+				}
+
+				cfg, err := config.Load(cfgPath)
+				if err != nil {
+					return "fail", fmt.Sprintf("cannot read %s: %v", cfgPath, err)
+				}
+
+				var unknown []string
+				for k := range cfg.Values {
+					if !validKeys[k] {
+						unknown = append(unknown, k)
+					}
+				}
+
+				if len(unknown) > 0 {
+					sort.Strings(unknown)
+					return "warn", fmt.Sprintf("%s: unknown key(s): %s", cfgPath, strings.Join(unknown, ", "))
+				}
+				return "ok", cfgPath
+			})
+
 			// ── Summary ──
 
 			fmt.Println()

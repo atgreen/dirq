@@ -617,6 +617,144 @@ func TestParseMultipleWhereConditions(t *testing.T) {
 	_ = and
 }
 
+func TestHasAggregates(t *testing.T) {
+	// Query with aggregate function.
+	q, err := Parse(`SELECT COUNT(hostname)`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if !q.HasAggregates() {
+		t.Error("expected HasAggregates() = true for COUNT(hostname)")
+	}
+
+	// Query without aggregate function.
+	q, err = Parse(`SELECT hostname, cpu.cores`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if q.HasAggregates() {
+		t.Error("expected HasAggregates() = false for bare fields")
+	}
+}
+
+func TestBareAggregate_Count(t *testing.T) {
+	q, err := Parse(`SELECT COUNT(hostname)`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	rows := []Row{
+		{"hostname": "web1"},
+		{"hostname": "web2"},
+		{"hostname": "web3"},
+	}
+
+	result, err := Aggregate(q, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result row, got %d", len(result))
+	}
+	if result[0].Values["COUNT(hostname)"] != 3 {
+		t.Errorf("COUNT(hostname): got %v, want 3", result[0].Values["COUNT(hostname)"])
+	}
+}
+
+func TestBareAggregate_Avg(t *testing.T) {
+	q, err := Parse(`SELECT AVG(cpu.cores)`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	rows := []Row{
+		{"cpu.cores": 4.0},
+		{"cpu.cores": 8.0},
+		{"cpu.cores": 12.0},
+	}
+
+	result, err := Aggregate(q, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result row, got %d", len(result))
+	}
+	avg, ok := result[0].Values["AVG(cpu.cores)"].(float64)
+	if !ok {
+		t.Fatalf("AVG(cpu.cores): expected float64, got %T", result[0].Values["AVG(cpu.cores)"])
+	}
+	if avg != 8.0 {
+		t.Errorf("AVG(cpu.cores): got %v, want 8.0", avg)
+	}
+}
+
+func TestBareAggregate_Multiple(t *testing.T) {
+	q, err := Parse(`SELECT COUNT(hostname), AVG(cpu.cores), MAX(cpu.cores)`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	rows := []Row{
+		{"hostname": "web1", "cpu.cores": 4.0},
+		{"hostname": "web2", "cpu.cores": 8.0},
+		{"hostname": "web3", "cpu.cores": 16.0},
+	}
+
+	result, err := Aggregate(q, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result row, got %d", len(result))
+	}
+	if result[0].Values["COUNT(hostname)"] != 3 {
+		t.Errorf("COUNT(hostname): got %v, want 3", result[0].Values["COUNT(hostname)"])
+	}
+	avg, ok := result[0].Values["AVG(cpu.cores)"].(float64)
+	if !ok {
+		t.Fatalf("AVG(cpu.cores): expected float64, got %T", result[0].Values["AVG(cpu.cores)"])
+	}
+	want := (4.0 + 8.0 + 16.0) / 3.0
+	if avg != want {
+		t.Errorf("AVG(cpu.cores): got %v, want %v", avg, want)
+	}
+	max, ok := result[0].Values["MAX(cpu.cores)"].(float64)
+	if !ok {
+		t.Fatalf("MAX(cpu.cores): expected float64, got %T", result[0].Values["MAX(cpu.cores)"])
+	}
+	if max != 16.0 {
+		t.Errorf("MAX(cpu.cores): got %v, want 16.0", max)
+	}
+}
+
+func TestBareAggregate_EmptyRows(t *testing.T) {
+	q, err := Parse(`SELECT COUNT(hostname), AVG(cpu.cores)`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	var rows []Row
+
+	result, err := Aggregate(q, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result row, got %d", len(result))
+	}
+	if result[0].Values["COUNT(hostname)"] != 0 {
+		t.Errorf("COUNT(hostname) over empty rows: got %v, want 0", result[0].Values["COUNT(hostname)"])
+	}
+	avg, ok := result[0].Values["AVG(cpu.cores)"].(float64)
+	if !ok {
+		t.Fatalf("AVG(cpu.cores): expected float64, got %T", result[0].Values["AVG(cpu.cores)"])
+	}
+	if avg != 0.0 {
+		t.Errorf("AVG(cpu.cores) over empty rows: got %v, want 0.0", avg)
+	}
+}
+
 func TestMatchLikeUnderscore(t *testing.T) {
 	if !matchLike("web1", "web_") {
 		t.Error("web_ should match web1")
