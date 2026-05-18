@@ -933,6 +933,7 @@ type ServerMessage struct {
 	//	*ServerMessage_FetchFile
 	//	*ServerMessage_DeployRequest
 	//	*ServerMessage_RotateCommand
+	//	*ServerMessage_BroadcastContent
 	Payload       isServerMessage_Payload `protobuf_oneof:"payload"`
 	SignerKeyId   string                  `protobuf:"bytes,7,opt,name=signer_key_id,json=signerKeyId,proto3" json:"signer_key_id,omitempty"`
 	SignedAtUnix  int64                   `protobuf:"varint,8,opt,name=signed_at_unix,json=signedAtUnix,proto3" json:"signed_at_unix,omitempty"`
@@ -1051,6 +1052,15 @@ func (x *ServerMessage) GetRotateCommand() *RotateCommand {
 	return nil
 }
 
+func (x *ServerMessage) GetBroadcastContent() *BroadcastContent {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_BroadcastContent); ok {
+			return x.BroadcastContent
+		}
+	}
+	return nil
+}
+
 func (x *ServerMessage) GetSignerKeyId() string {
 	if x != nil {
 		return x.SignerKeyId
@@ -1115,6 +1125,10 @@ type ServerMessage_RotateCommand struct {
 	RotateCommand *RotateCommand `protobuf:"bytes,12,opt,name=rotate_command,json=rotateCommand,proto3,oneof"` // certificate/key rotation push
 }
 
+type ServerMessage_BroadcastContent struct {
+	BroadcastContent *BroadcastContent `protobuf:"bytes,13,opt,name=broadcast_content,json=broadcastContent,proto3,oneof"` // content-addressable cache push
+}
+
 func (*ServerMessage_QueryRequest) isServerMessage_Payload() {}
 
 func (*ServerMessage_PeerUpdate) isServerMessage_Payload() {}
@@ -1130,6 +1144,8 @@ func (*ServerMessage_FetchFile) isServerMessage_Payload() {}
 func (*ServerMessage_DeployRequest) isServerMessage_Payload() {}
 
 func (*ServerMessage_RotateCommand) isServerMessage_Payload() {}
+
+func (*ServerMessage_BroadcastContent) isServerMessage_Payload() {}
 
 // RotateCommand is pushed through the mesh to trigger certificate or key
 // rotation on all agents. Signed by the server (with the CURRENT key)
@@ -2103,6 +2119,9 @@ func (x *ExecResponse) GetFinishedAt() *timestamppb.Timestamp {
 }
 
 // PutFileRequest asks the agent to write a file to disk.
+// If content_hash is set and content is empty, the agent looks up the
+// content in its local cache (populated by BroadcastContent). This
+// avoids re-transferring the same module/file to every host.
 type PutFileRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	RequestId  string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -2116,8 +2135,11 @@ type PutFileRequest struct {
 	AapJobId       string `protobuf:"bytes,8,opt,name=aap_job_id,json=aapJobId,proto3" json:"aap_job_id,omitempty"`
 	AapJobTemplate string `protobuf:"bytes,9,opt,name=aap_job_template,json=aapJobTemplate,proto3" json:"aap_job_template,omitempty"`
 	AapUser        string `protobuf:"bytes,10,opt,name=aap_user,json=aapUser,proto3" json:"aap_user,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Content-addressable cache: SHA256 hex digest of content. If set
+	// and content is empty, agent resolves from its content cache.
+	ContentHash   string `protobuf:"bytes,11,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PutFileRequest) Reset() {
@@ -2220,6 +2242,69 @@ func (x *PutFileRequest) GetAapUser() string {
 	return ""
 }
 
+func (x *PutFileRequest) GetContentHash() string {
+	if x != nil {
+		return x.ContentHash
+	}
+	return ""
+}
+
+// BroadcastContent pushes content through the mesh so every agent
+// caches it. Subsequent PutFileRequests with the same content_hash
+// skip the transfer. Used by the Ansible connection plugin to
+// pre-distribute modules before a playbook run.
+type BroadcastContent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ContentHash   string                 `protobuf:"bytes,1,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"` // SHA256 hex digest
+	Content       []byte                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`                            // raw content
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BroadcastContent) Reset() {
+	*x = BroadcastContent{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BroadcastContent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BroadcastContent) ProtoMessage() {}
+
+func (x *BroadcastContent) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BroadcastContent.ProtoReflect.Descriptor instead.
+func (*BroadcastContent) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *BroadcastContent) GetContentHash() string {
+	if x != nil {
+		return x.ContentHash
+	}
+	return ""
+}
+
+func (x *BroadcastContent) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
 // FetchFileRequest asks the agent to read a file from disk and send it back.
 type FetchFileRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
@@ -2238,7 +2323,7 @@ type FetchFileRequest struct {
 
 func (x *FetchFileRequest) Reset() {
 	*x = FetchFileRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2250,7 +2335,7 @@ func (x *FetchFileRequest) String() string {
 func (*FetchFileRequest) ProtoMessage() {}
 
 func (x *FetchFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2263,7 +2348,7 @@ func (x *FetchFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchFileRequest.ProtoReflect.Descriptor instead.
 func (*FetchFileRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{22}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *FetchFileRequest) GetRequestId() string {
@@ -2339,7 +2424,7 @@ type FetchFileResponse struct {
 
 func (x *FetchFileResponse) Reset() {
 	*x = FetchFileResponse{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2351,7 +2436,7 @@ func (x *FetchFileResponse) String() string {
 func (*FetchFileResponse) ProtoMessage() {}
 
 func (x *FetchFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2364,7 +2449,7 @@ func (x *FetchFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchFileResponse.ProtoReflect.Descriptor instead.
 func (*FetchFileResponse) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{23}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *FetchFileResponse) GetRequestId() string {
@@ -2437,7 +2522,7 @@ type FileChunk struct {
 
 func (x *FileChunk) Reset() {
 	*x = FileChunk{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[24]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2449,7 +2534,7 @@ func (x *FileChunk) String() string {
 func (*FileChunk) ProtoMessage() {}
 
 func (x *FileChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[24]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2462,7 +2547,7 @@ func (x *FileChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileChunk.ProtoReflect.Descriptor instead.
 func (*FileChunk) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{24}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *FileChunk) GetRequestId() string {
@@ -2520,7 +2605,7 @@ type DeployRequest struct {
 
 func (x *DeployRequest) Reset() {
 	*x = DeployRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[25]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2532,7 +2617,7 @@ func (x *DeployRequest) String() string {
 func (*DeployRequest) ProtoMessage() {}
 
 func (x *DeployRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[25]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2545,7 +2630,7 @@ func (x *DeployRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeployRequest.ProtoReflect.Descriptor instead.
 func (*DeployRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{25}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DeployRequest) GetRequestId() string {
@@ -2629,7 +2714,7 @@ type DeployResponse struct {
 
 func (x *DeployResponse) Reset() {
 	*x = DeployResponse{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[26]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2641,7 +2726,7 @@ func (x *DeployResponse) String() string {
 func (*DeployResponse) ProtoMessage() {}
 
 func (x *DeployResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[26]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2654,7 +2739,7 @@ func (x *DeployResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeployResponse.ProtoReflect.Descriptor instead.
 func (*DeployResponse) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{26}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *DeployResponse) GetRequestId() string {
@@ -2788,7 +2873,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x0fdeploy_response\x18\t \x01(\v2\x17.dirq.v1.DeployResponseH\x00R\x0edeployResponseB\t\n" +
 	"\apayload\"-\n" +
 	"\x10PeerDisconnected\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x8c\x05\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\xd6\x05\n" +
 	"\rServerMessage\x12<\n" +
 	"\rquery_request\x18\x01 \x01(\v2\x15.dirq.v1.QueryRequestH\x00R\fqueryRequest\x126\n" +
 	"\vpeer_update\x18\x02 \x01(\v2\x13.dirq.v1.PeerUpdateH\x00R\n" +
@@ -2800,7 +2885,8 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\n" +
 	"fetch_file\x18\x06 \x01(\v2\x19.dirq.v1.FetchFileRequestH\x00R\tfetchFile\x12?\n" +
 	"\x0edeploy_request\x18\v \x01(\v2\x16.dirq.v1.DeployRequestH\x00R\rdeployRequest\x12?\n" +
-	"\x0erotate_command\x18\f \x01(\v2\x16.dirq.v1.RotateCommandH\x00R\rrotateCommand\x12\"\n" +
+	"\x0erotate_command\x18\f \x01(\v2\x16.dirq.v1.RotateCommandH\x00R\rrotateCommand\x12H\n" +
+	"\x11broadcast_content\x18\r \x01(\v2\x19.dirq.v1.BroadcastContentH\x00R\x10broadcastContent\x12\"\n" +
 	"\rsigner_key_id\x18\a \x01(\tR\vsignerKeyId\x12$\n" +
 	"\x0esigned_at_unix\x18\b \x01(\x03R\fsignedAtUnix\x12&\n" +
 	"\x0fexpires_at_unix\x18\t \x01(\x03R\rexpiresAtUnix\x12\x1c\n" +
@@ -2903,7 +2989,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"started_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"finishedAt\"\xb1\x02\n" +
+	"finishedAt\"\xd4\x02\n" +
 	"\x0ePutFileRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
@@ -2918,7 +3004,11 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"aap_job_id\x18\b \x01(\tR\baapJobId\x12(\n" +
 	"\x10aap_job_template\x18\t \x01(\tR\x0eaapJobTemplate\x12\x19\n" +
 	"\baap_user\x18\n" +
-	" \x01(\tR\aaapUser\"\x83\x02\n" +
+	" \x01(\tR\aaapUser\x12!\n" +
+	"\fcontent_hash\x18\v \x01(\tR\vcontentHash\"O\n" +
+	"\x10BroadcastContent\x12!\n" +
+	"\fcontent_hash\x18\x01 \x01(\tR\vcontentHash\x12\x18\n" +
+	"\acontent\x18\x02 \x01(\fR\acontent\"\x83\x02\n" +
 	"\x10FetchFileRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
@@ -2998,7 +3088,7 @@ func file_proto_dirq_v1_dirq_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_dirq_v1_dirq_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_proto_dirq_v1_dirq_proto_goTypes = []any{
 	(AgentRole)(0),                  // 0: dirq.v1.AgentRole
 	(RotateCommand_RotationType)(0), // 1: dirq.v1.RotateCommand.RotationType
@@ -3024,18 +3114,19 @@ var file_proto_dirq_v1_dirq_proto_goTypes = []any{
 	(*ExecRequest)(nil),             // 21: dirq.v1.ExecRequest
 	(*ExecResponse)(nil),            // 22: dirq.v1.ExecResponse
 	(*PutFileRequest)(nil),          // 23: dirq.v1.PutFileRequest
-	(*FetchFileRequest)(nil),        // 24: dirq.v1.FetchFileRequest
-	(*FetchFileResponse)(nil),       // 25: dirq.v1.FetchFileResponse
-	(*FileChunk)(nil),               // 26: dirq.v1.FileChunk
-	(*DeployRequest)(nil),           // 27: dirq.v1.DeployRequest
-	(*DeployResponse)(nil),          // 28: dirq.v1.DeployResponse
-	nil,                             // 29: dirq.v1.RegisterRequest.TagsEntry
-	nil,                             // 30: dirq.v1.ExecRequest.EnvironmentEntry
-	(*timestamppb.Timestamp)(nil),   // 31: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),         // 32: google.protobuf.Struct
+	(*BroadcastContent)(nil),        // 24: dirq.v1.BroadcastContent
+	(*FetchFileRequest)(nil),        // 25: dirq.v1.FetchFileRequest
+	(*FetchFileResponse)(nil),       // 26: dirq.v1.FetchFileResponse
+	(*FileChunk)(nil),               // 27: dirq.v1.FileChunk
+	(*DeployRequest)(nil),           // 28: dirq.v1.DeployRequest
+	(*DeployResponse)(nil),          // 29: dirq.v1.DeployResponse
+	nil,                             // 30: dirq.v1.RegisterRequest.TagsEntry
+	nil,                             // 31: dirq.v1.ExecRequest.EnvironmentEntry
+	(*timestamppb.Timestamp)(nil),   // 32: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),         // 33: google.protobuf.Struct
 }
 var file_proto_dirq_v1_dirq_proto_depIdxs = []int32{
-	29, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
+	30, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
 	0,  // 1: dirq.v1.RegisterResponse.role:type_name -> dirq.v1.AgentRole
 	6,  // 2: dirq.v1.RegisterResponse.peers:type_name -> dirq.v1.PeerInfo
 	6,  // 3: dirq.v1.PeerResponse.peers:type_name -> dirq.v1.PeerInfo
@@ -3043,45 +3134,46 @@ var file_proto_dirq_v1_dirq_proto_depIdxs = []int32{
 	17, // 5: dirq.v1.AgentMessage.query_result:type_name -> dirq.v1.QueryResult
 	13, // 6: dirq.v1.AgentMessage.hello:type_name -> dirq.v1.AgentHello
 	22, // 7: dirq.v1.AgentMessage.exec_response:type_name -> dirq.v1.ExecResponse
-	26, // 8: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
-	25, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
+	27, // 8: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
+	26, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
 	18, // 10: dirq.v1.AgentMessage.aggregated_result:type_name -> dirq.v1.AggregatedQueryResult
 	10, // 11: dirq.v1.AgentMessage.peer_disconnected:type_name -> dirq.v1.PeerDisconnected
-	28, // 12: dirq.v1.AgentMessage.deploy_response:type_name -> dirq.v1.DeployResponse
+	29, // 12: dirq.v1.AgentMessage.deploy_response:type_name -> dirq.v1.DeployResponse
 	15, // 13: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
 	19, // 14: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
 	20, // 15: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
 	21, // 16: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
 	23, // 17: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
-	24, // 18: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
-	27, // 19: dirq.v1.ServerMessage.deploy_request:type_name -> dirq.v1.DeployRequest
+	25, // 18: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
+	28, // 19: dirq.v1.ServerMessage.deploy_request:type_name -> dirq.v1.DeployRequest
 	12, // 20: dirq.v1.ServerMessage.rotate_command:type_name -> dirq.v1.RotateCommand
-	1,  // 21: dirq.v1.RotateCommand.type:type_name -> dirq.v1.RotateCommand.RotationType
-	31, // 22: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
-	16, // 23: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
-	32, // 24: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
-	31, // 25: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
-	17, // 26: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
-	6,  // 27: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
-	0,  // 28: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
-	30, // 29: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
-	31, // 30: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
-	31, // 31: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
-	2,  // 32: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
-	9,  // 33: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
-	7,  // 34: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
-	4,  // 35: dirq.v1.DirQServer.RenewCert:input_type -> dirq.v1.RenewCertRequest
-	9,  // 36: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
-	3,  // 37: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
-	11, // 38: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
-	8,  // 39: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
-	5,  // 40: dirq.v1.DirQServer.RenewCert:output_type -> dirq.v1.RenewCertResponse
-	11, // 41: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
-	37, // [37:42] is the sub-list for method output_type
-	32, // [32:37] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	24, // 21: dirq.v1.ServerMessage.broadcast_content:type_name -> dirq.v1.BroadcastContent
+	1,  // 22: dirq.v1.RotateCommand.type:type_name -> dirq.v1.RotateCommand.RotationType
+	32, // 23: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
+	16, // 24: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
+	33, // 25: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
+	32, // 26: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
+	17, // 27: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
+	6,  // 28: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
+	0,  // 29: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
+	31, // 30: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
+	32, // 31: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
+	32, // 32: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
+	2,  // 33: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
+	9,  // 34: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
+	7,  // 35: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
+	4,  // 36: dirq.v1.DirQServer.RenewCert:input_type -> dirq.v1.RenewCertRequest
+	9,  // 37: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
+	3,  // 38: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
+	11, // 39: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
+	8,  // 40: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
+	5,  // 41: dirq.v1.DirQServer.RenewCert:output_type -> dirq.v1.RenewCertResponse
+	11, // 42: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
+	38, // [38:43] is the sub-list for method output_type
+	33, // [33:38] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_proto_dirq_v1_dirq_proto_init() }
@@ -3109,6 +3201,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 		(*ServerMessage_FetchFile)(nil),
 		(*ServerMessage_DeployRequest)(nil),
 		(*ServerMessage_RotateCommand)(nil),
+		(*ServerMessage_BroadcastContent)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3116,7 +3209,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_dirq_v1_dirq_proto_rawDesc), len(file_proto_dirq_v1_dirq_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   29,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

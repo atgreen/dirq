@@ -634,9 +634,19 @@ func (p *parser) parseValue() (Value, error) {
 	}
 	// Accept unquoted identifiers as string values (e.g., WHERE hostname = fedora).
 	// The shell often strips single quotes, so this is a common user pattern.
+	// Also consume dots so dotted values like ip-10-0-1-5.ec2.internal work.
 	if t.kind == tkIdent {
 		p.advance()
 		s := t.text
+		for p.cur().kind == tkDot {
+			p.advance()
+			next := p.cur()
+			if next.kind != tkIdent && !isKeywordKind(next.kind) {
+				break
+			}
+			p.advance()
+			s += "." + next.text
+		}
 		return Value{String: &s}, nil
 	}
 	return Value{}, p.errorf("expected number or string, got %q at position %d", t.text, t.pos)

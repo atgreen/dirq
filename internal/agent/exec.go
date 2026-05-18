@@ -260,6 +260,25 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		return
 	}
 
+	// Resolve content: if content_hash is set and content is empty, look up
+	// the content from the local content-addressable cache.
+	content := req.GetContent()
+	if req.GetContentHash() != "" && len(content) == 0 {
+		var err error
+		content, err = a.contentCache.Get(req.GetContentHash())
+		if err != nil {
+			a.log.Error("put_file cache miss", slog.String("request_id", req.GetRequestId()), slog.String("hash", req.GetContentHash()), slog.String("error", err.Error()))
+			a.sendFileChunk(&pb.FileChunk{
+				RequestId: req.GetRequestId(),
+				AgentId:   a.agentID,
+				Hostname:  hostname,
+				Success:   false,
+				Error:     fmt.Sprintf("content hash %s not found in cache: %v", req.GetContentHash(), err),
+			})
+			return
+		}
+	}
+
 	destPath := filepath.Clean(req.GetDestPath())
 	if !filepath.IsAbs(destPath) {
 		a.sendFileChunk(&pb.FileChunk{
@@ -272,7 +291,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		return
 	}
 
-	if len(req.GetContent()) > maxFileSize {
+	if len(content) > maxFileSize {
 		a.sendFileChunk(&pb.FileChunk{
 			RequestId: req.GetRequestId(),
 			AgentId:   a.agentID,
@@ -293,7 +312,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		}
 		cmdStr := fmt.Sprintf("sudo -n -u %s tee %s > /dev/null", shellQuote(becomeUser), shellQuote(destPath))
 		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
-		cmd.Stdin = bytes.NewReader(req.GetContent())
+		cmd.Stdin = bytes.NewReader(content)
 		var stderrBuf bytes.Buffer
 		cmd.Stderr = &stderrBuf
 		if err := cmd.Run(); err != nil {
@@ -316,7 +335,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			writeErr = fmt.Errorf("mkdir failed: %w", err)
 		} else {
-			writeErr = os.WriteFile(destPath, req.GetContent(), mode)
+			writeErr = os.WriteFile(destPath, content, mode)
 		}
 	}
 
