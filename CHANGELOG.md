@@ -5,6 +5,24 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.0] - 2026-05-18
+
+### Added
+
+- **`dirq grep`** — search log files across the fleet in parallel; uses `grep` on Linux and `Select-String` on Windows; supports `-i` (case-insensitive), `--tail N` (last N lines only), `--become` (sudo); results formatted as HOST / LINE / MATCH table
+- **`dirq hosts list` shows distro name** — OS column now shows the distribution (e.g. "fedora", "rhel", "ubuntu") instead of "linux"; agents report distro at registration via gopsutil
+
+### Changed
+
+- **`dirq exec` syntax reworked** — remote command now goes after `--` separator: `dirq exec WHERE tag.env = 'prod' -- ls -la`; eliminates quoting issues and flag conflicts with the remote command
+- **`dirq tls` renamed to `dirq cert`** — subcommands: `generate` (with new `--ca`/`--ca-key` for bring-your-own CA) and `rotate`
+- **Package service lifecycle** — RPM, DEB, NSIS, and MSI packages no longer start the agent on fresh install (config must be written first); upgrades restart the service if it was already running
+
+### Fixed
+
+- **`WHERE hostname = 'foo'` now works** — bare `hostname` is injected as a top-level key in query data so it can be used in WHERE without the `os_info.` prefix
+- **Ansible connection plugin O(N) hostname lookup** — now calls `GET /api/v1/hosts/{hostname}` (single server-side lookup) instead of fetching the entire host list
+
 ## [0.16.0] - 2026-05-18
 
 ### Added
@@ -416,6 +434,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.0]: https://github.com/atgreen/dirq/releases/tag/v0.17.0
 [0.16.0]: https://github.com/atgreen/dirq/releases/tag/v0.16.0
 [0.15.1]: https://github.com/atgreen/dirq/releases/tag/v0.15.1
 [0.15.0]: https://github.com/atgreen/dirq/releases/tag/v0.15.0
