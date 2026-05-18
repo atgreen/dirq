@@ -356,14 +356,18 @@ func (a *Agent) register(ctx context.Context) error {
 		}
 	}
 
+	osName := runtime.GOOS
 	var osVersion string
 	if hi, err := host.Info(); err == nil {
 		osVersion = hi.PlatformVersion
+		if hi.Platform != "" {
+			osName = hi.Platform
+		}
 	}
 
 	resp, err := client.Register(ctx, &pb.RegisterRequest{
 		Hostname:           hostname,
-		Os:                 runtime.GOOS,
+		Os:                 osName,
 		OsVersion:          osVersion,
 		Arch:               runtime.GOARCH,
 		AgentVersion:       a.cfg.Version,

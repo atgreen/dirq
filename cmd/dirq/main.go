@@ -108,6 +108,7 @@ func main() {
 	root.AddCommand(cveCmd())
 	root.AddCommand(errataCmd())
 	root.AddCommand(kbCmd())
+	root.AddCommand(grepCmd())
 	root.AddCommand(mcpCmd())
 
 	if err := root.Execute(); err != nil {
@@ -954,51 +955,51 @@ func execCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "exec [command] [WHERE ...]",
+		Use:   "exec [WHERE ...] -- [command ...]",
 		Short: "Execute a command or script across the fleet in parallel",
 		Long: `Run a command or script on multiple agents simultaneously and stream results.
 
-The first argument is the command to execute on each target agent.
-Use --script to upload and execute a local script file instead.
+The command comes after -- so it can contain any flags or arguments
+without conflicting with dirq's own flags. An optional WHERE clause
+before -- filters which agents are targeted.
 
-Commands with dashes must be quoted so the shell doesn't interpret
-them as flags. Simple commands work unquoted.
+Use --script to upload and execute a local script file instead.
 
 Script handling by platform:
   Linux:   Shebang (#!) is honored. Scripts are chmod +x and run directly.
   Windows: .ps1 files run with PowerShell. .bat/.cmd run with cmd.exe.
 
-An optional WHERE clause filters which agents are targeted.
-
 Examples:
-  dirq exec uptime
-  dirq exec "du -h" WHERE tag.env = 'prod'
-  dirq exec "df -h /"
-  dirq exec --become "systemctl status nginx"
-  dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
-  dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'`,
-		Args: cobra.ArbitraryArgs,
+  dirq exec -- uptime
+  dirq exec WHERE tag.env = 'prod' -- du -h
+  dirq exec WHERE os_info.os = 'windows' -- where myprogram.exe
+  dirq exec --become WHERE tag.role = 'webserver' -- systemctl restart nginx
+  dirq exec WHERE tag.env = 'prod' --script ./health-check.sh
+  dirq exec WHERE os_info.os = 'windows' --script ./audit.ps1`,
+		Args:               cobra.ArbitraryArgs,
+		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if scriptFile == "" && len(args) == 0 {
-				return fmt.Errorf("provide a command string or use --script <file>")
+			// Cobra sets ArgsLenAtDash() to the number of args before --.
+			// Everything before -- is the WHERE clause, everything after
+			// is the remote command (verbatim, no flag conflicts).
+			var whereArgs []string
+			var commandParts []string
+			dashAt := cmd.ArgsLenAtDash()
+
+			if dashAt >= 0 {
+				whereArgs = args[:dashAt]
+				commandParts = args[dashAt:]
+			} else if scriptFile != "" {
+				// No --, all args are the WHERE clause.
+				whereArgs = args
+			} else {
+				return fmt.Errorf("usage: dirq exec [WHERE ...] -- <command>\n\nPut the remote command after -- to avoid flag conflicts")
 			}
 
-			// Split args at WHERE — everything before is the command,
-			// everything from WHERE onward is the query filter.
-			// This allows unquoted commands: dirq exec du -h WHERE ...
-			var commandParts []string
-			var whereArgs []string
-			if scriptFile == "" {
-				for i, a := range args {
-					if strings.EqualFold(a, "WHERE") {
-						whereArgs = args[i:]
-						break
-					}
-					commandParts = append(commandParts, a)
-				}
-			} else {
-				whereArgs = args
+			if scriptFile == "" && len(commandParts) == 0 {
+				return fmt.Errorf("provide a command after -- or use --script <file>")
 			}
+
 			commandStr := strings.Join(commandParts, " ")
 			queryStr := buildWhereQuery(whereArgs)
 
@@ -1273,20 +1274,20 @@ identically to typing each word as a separate argument.
 
 ### dirq exec — execute a command or script across the fleet in parallel
 
-    dirq exec "uptime" WHERE tag.env = 'prod'
-    dirq exec "openssl version" WHERE packages.name = 'openssl'
-    dirq exec --become "systemctl status nginx" WHERE tag.role = 'webserver'
-    dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
-    dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'
-    dirq exec "df -h /" --json
+    dirq exec -- uptime
+    dirq exec WHERE tag.env = 'prod' -- openssl version
+    dirq exec --become WHERE tag.role = 'webserver' -- systemctl status nginx
+    dirq exec WHERE tag.env = 'prod' --script ./health-check.sh
+    dirq exec WHERE os_info.os = 'windows' --script ./audit.ps1
 
 Fan-out exec: runs the command or script on all matching agents
-simultaneously, streaming results back in real time.
+simultaneously, streaming results back in real time. The remote
+command goes after -- so it can contain any flags without conflict.
 
 Use --script to upload and execute a local script file. Without
---script, the argument is a command string run on the remote hosts.
-Linux scripts use their shebang (#!) line. Windows scripts run as
-PowerShell (.ps1) or cmd (.bat/.cmd).
+--script, everything after -- is the command string run on remote
+hosts. Linux scripts use their shebang (#!) line. Windows scripts
+run as PowerShell (.ps1) or cmd (.bat/.cmd).
 
 ### dirq run — run Ansible against matching hosts
 
@@ -1461,21 +1462,21 @@ Rules:
 - You are READ-ONLY. You cannot execute commands, modify hosts, or change tags.
   If the user asks to make changes, give them the exact dirq command to run.
   Keep the suggested command simple and correct:
-    - dirq exec "echo 5 > /hello.txt"           (inline command, NOT --script)
-    - dirq exec --script ./myscript.sh WHERE ... (--script takes a LOCAL FILENAME, not inline code)
-    - dirq exec --become "systemctl restart foo"  (privilege escalation)
-    - dirq hosts tag <agent-id> key=value         (tagging)
+    - dirq exec -- echo 5 > /hello.txt           (inline command, NOT --script)
+    - dirq exec WHERE ... --script ./myscript.sh   (--script takes a LOCAL FILENAME, not inline code)
+    - dirq exec --become -- systemctl restart foo  (privilege escalation)
+    - dirq hosts tag <agent-id> key=value          (tagging)
   Do NOT invent flags or syntax that doesn't exist.
-  IMPORTANT: dirq exec runs the command string on remote agents. Shell
+  IMPORTANT: The remote command goes after -- in dirq exec. Shell
   subshell expansions like $(...) or backticks expand LOCALLY, not on the
   remote host. Keep commands simple and self-contained. Prefer hardcoded
   device names or simple pipelines. For example:
-    GOOD: dirq exec "ethtool eth0 | grep Speed"
-    BAD:  dirq exec "ethtool $(ip route | awk '{print $5}')"  (expands locally!)
+    GOOD: dirq exec -- ethtool eth0
+    BAD:  dirq exec -- ethtool $(ip route | awk '{print $5}')  (expands locally!)
 - The fleet is mixed Linux and Windows. When suggesting commands, always
   consider both platforms. If a command is OS-specific, add a WHERE clause:
-    - dirq exec "cat /etc/os-release" WHERE os_info.os = 'linux'
-    - dirq exec "powershell Get-Content C:\hello.txt" WHERE os_info.os = 'windows'
+    - dirq exec WHERE os_info.os = 'linux' -- cat /etc/os-release
+    - dirq exec WHERE os_info.os = 'windows' -- powershell Get-Content C:\hello.txt
   If the user's request applies to both, give separate commands for each OS.
   Linux commands run via sh, Windows commands run via cmd (or PowerShell if
   the command starts with "powershell").
@@ -2103,6 +2104,227 @@ Examples:
 
 	return cmd
 }
+
+// ─────────────────────────────────────────────────────────
+// dirq grep
+// ─────────────────────────────────────────────────────────
+
+func grepCmd() *cobra.Command {
+	var (
+		ignoreCase bool
+		tail       int
+		become     bool
+		timeout    int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "grep [pattern] [file] [WHERE ...]",
+		Short: "Search log files across the fleet",
+		Long: `Search for a pattern in a file across multiple hosts in parallel.
+
+Uses grep on Linux and Select-String on Windows. Results are formatted
+as a table with hostname, line number, and matching text.
+
+Examples:
+  dirq grep "Out of memory" /var/log/messages
+  dirq grep -i "error|timeout" /var/log/nginx/error.log WHERE tag.env = 'prod'
+  dirq grep "FATAL" /var/log/app.log --tail 1000
+  dirq grep "Failed password" /var/log/secure --become`,
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pattern := args[0]
+			filePath := args[1]
+			whereArgs := args[2:]
+			queryStr := buildWhereQuery(whereArgs)
+
+			// Build the grep command per platform.
+			// Linux: grep -n [-i] "pattern" file  (or tail -N file | grep -n [-i] "pattern")
+			// Windows: Select-String [-CaseSensitive] -Pattern "pattern" -Path file
+			//   (or Get-Content -Tail N file | Select-String ...)
+			//
+			// We can't know the OS ahead of time in a mixed fleet, so we
+			// send a polyglot command that uses shell detection.
+			var linuxCmd, winCmd string
+
+			grepFlags := "-n"
+			if ignoreCase {
+				grepFlags = "-in"
+			}
+
+			sqPattern := "'" + strings.ReplaceAll(pattern, "'", "'\\''") + "'"
+			sqFile := "'" + strings.ReplaceAll(filePath, "'", "'\\''") + "'"
+
+			if tail > 0 {
+				linuxCmd = fmt.Sprintf("tail -%d %s | grep %s %s",
+					tail, sqFile, grepFlags, sqPattern)
+			} else {
+				linuxCmd = fmt.Sprintf("grep %s %s %s",
+					grepFlags, sqPattern, sqFile)
+			}
+
+			csFlag := " -CaseSensitive"
+			if ignoreCase {
+				csFlag = ""
+			}
+			escapedPattern := strings.ReplaceAll(pattern, "'", "''")
+			escapedPath := strings.ReplaceAll(filePath, "'", "''")
+
+			if tail > 0 {
+				winCmd = fmt.Sprintf("Get-Content -Tail %d '%s' | Select-String%s -Pattern '%s'",
+					tail, escapedPath, csFlag, escapedPattern)
+			} else {
+				winCmd = fmt.Sprintf("Select-String%s -Pattern '%s' -Path '%s'",
+					csFlag, escapedPattern, escapedPath)
+			}
+
+			commandStr := fmt.Sprintf(
+				"if [ -f /etc/os-release ] 2>/dev/null; then %s; else powershell -NoProfile -Command \"%s\"; fi",
+				linuxCmd, strings.ReplaceAll(winCmd, "\"", "\\\""))
+
+			payload := map[string]any{
+				"query":   queryStr,
+				"command": commandStr,
+				"become":  become,
+				"timeout": timeout,
+			}
+
+			body, _ := json.Marshal(payload)
+			resp, err := apiStreamRequest("POST", "/api/v1/exec_multi", bytes.NewReader(body))
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode >= 400 {
+				data, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
+			}
+
+			dec := json.NewDecoder(resp.Body)
+
+			var header struct {
+				Type         string `json:"type"`
+				TotalTargets int    `json:"total_targets"`
+			}
+			if err := dec.Decode(&header); err != nil {
+				return fmt.Errorf("failed to read response header: %w", err)
+			}
+
+			if header.TotalTargets == 0 {
+				fmt.Println("No hosts matched the query (or none have exec enabled).")
+				return nil
+			}
+
+			if jsonOut {
+				fmt.Printf("{\"total_targets\":%d}\n", header.TotalTargets)
+			}
+
+			// Collect and format results.
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			if !jsonOut {
+				fmt.Fprintln(w, "HOST\tLINE\tMATCH")
+			}
+
+			totalMatches := 0
+			hostsWithMatches := 0
+			hostsSearched := 0
+
+			for dec.More() {
+				var r struct {
+					Type         string `json:"type"`
+					Hostname     string `json:"hostname"`
+					RC           int    `json:"rc"`
+					Stdout       string `json:"stdout"`
+					Stderr       string `json:"stderr"`
+					Success      bool   `json:"success"`
+					Error        string `json:"error"`
+					Received     int    `json:"received"`
+					TotalTargets int    `json:"total_targets"`
+				}
+				if err := dec.Decode(&r); err != nil {
+					break
+				}
+
+				if r.Type == "progress" {
+					if !jsonOut {
+						fmt.Fprintf(os.Stderr, "\r\033[K%d/%d hosts searched...", r.Received, r.TotalTargets)
+					}
+					continue
+				}
+
+				if !jsonOut {
+					fmt.Fprintf(os.Stderr, "\r\033[K")
+				}
+
+				hostsSearched++
+
+				if !r.Success || r.RC != 0 {
+					// rc=1 means no matches (normal for grep), skip silently.
+					// Other errors: log them.
+					if r.RC != 1 && r.Error != "" {
+						fmt.Fprintf(os.Stderr, "%s: %s\n", r.Hostname, r.Error)
+					}
+					continue
+				}
+
+				stdout, _ := base64.StdEncoding.DecodeString(r.Stdout)
+				lines := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
+				if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
+					continue
+				}
+
+				hostsWithMatches++
+				hostMatches := 0
+
+				for _, line := range lines {
+					if line == "" {
+						continue
+					}
+					totalMatches++
+					hostMatches++
+
+					if jsonOut {
+						jl, _ := json.Marshal(map[string]string{
+							"host": r.Hostname,
+							"line": line,
+						})
+						fmt.Println(string(jl))
+						continue
+					}
+
+					// Parse "linenum:text" from grep -n output.
+					lineNum := "-"
+					matchText := line
+					if idx := strings.IndexByte(line, ':'); idx > 0 {
+						if _, err := strconv.Atoi(line[:idx]); err == nil {
+							lineNum = line[:idx]
+							matchText = line[idx+1:]
+						}
+					}
+					fmt.Fprintf(w, "%s\t%s\t%s\n", r.Hostname, lineNum, matchText)
+				}
+			}
+
+			if !jsonOut {
+				w.Flush()
+				if totalMatches > 0 {
+					fmt.Println()
+				}
+				fmt.Printf("%d matches across %d hosts (%d hosts searched)\n",
+					totalMatches, hostsWithMatches, hostsSearched)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVarP(&ignoreCase, "ignore-case", "i", false, "case-insensitive search")
+	cmd.Flags().IntVar(&tail, "tail", 0, "search only the last N lines of the file")
+	cmd.Flags().BoolVar(&become, "become", false, "run with privilege escalation (sudo)")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "timeout in seconds")
+
+	return cmd
+}
+
 
 // ─────────────────────────────────────────────────────────
 // dirq doctor

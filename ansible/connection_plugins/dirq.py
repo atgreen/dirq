@@ -133,10 +133,9 @@ class Connection(ConnectionBase):
     def _resolve_agent_id(self, hostname):
         """Look up agent_id by hostname via the server API."""
         try:
-            hosts = self._api_request("GET", "/api/v1/hosts")
-            for host in hosts:
-                if host.get("hostname") == hostname and host.get("online"):
-                    return host.get("id")
+            host = self._api_request("GET", f"/api/v1/hosts/{hostname}")
+            if host.get("online"):
+                return host.get("id")
         except Exception as e:
             raise AnsibleConnectionFailure(f"Failed to look up agent for '{hostname}': {e}")
         return None

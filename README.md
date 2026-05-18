@@ -24,7 +24,7 @@ Examples:
 - Query for hosts with vulnerable OpenSSL package versions, build an inventory from the result, and patch only those systems.
 - A new CVE drops — run `dirq cve CVE-2024-6345` and instantly see which hosts are vulnerable and which are already patched, across the entire fleet.
 - Query for hosts where `sshd` or another critical service is stopped, generate an inventory, and run a remediation playbook immediately.
-- Quick ad-hoc check: `dirq exec "uptime" WHERE tag.env = 'prod'` to see every prod host's uptime without setting up a playbook.
+- Quick ad-hoc check: `dirq exec WHERE tag.env = 'prod' -- uptime` to see every prod host's uptime without setting up a playbook.
 
 ## Why DirQ?
 
@@ -52,7 +52,7 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 - [Query DSL](#query-dsl) — the fleet query language
 - [Ansible Integration](#ansible-integration) — inventory, groups, facts, query-based targeting
 - [Execution Transport](#execution-transport) — run Ansible through the mesh
-- [Fleet Exec](#fleet-exec) — ad-hoc parallel command & script execution
+- [Fleet Exec](#fleet-exec) — ad-hoc parallel command, script, and grep execution
 - [Topology Graph](#topology-graph) — visualize the agent mesh tree
 - [Security](#security) — TLS, authentication, exec safety
 - [Multi-Datacenter Deployment](#multi-datacenter-deployment) — isolated meshes, per-DC routing
@@ -591,10 +591,10 @@ args before parsing. This lets you write queries as a single quoted string:
 dirq "select hostname where tag.env = 'prod'"  # same as: dirq select hostname where ...
 ```
 
-Other commands are **not** flattened, so quoted exec commands with dashes work correctly:
+Other commands are **not** flattened. For `dirq exec`, the remote command goes after `--` so flags and special characters pass through without conflict:
 
 ```bash
-dirq exec "ls -l" WHERE tag.env = 'prod'   # "ls -l" stays as the command
+dirq exec WHERE tag.env = 'prod' -- ls -l   # everything after -- is the remote command
 ```
 
 ---
@@ -760,11 +760,11 @@ For quick ad-hoc tasks that don't need a full Ansible playbook, `dirq exec` runs
 ### Commands
 
 ```bash
-dirq exec "uptime" WHERE tag.env = 'prod'
-dirq exec "openssl version" WHERE packages.name = 'openssl'
-dirq exec --become "systemctl restart nginx" WHERE tag.role = 'webserver'
-dirq exec "hostname -f"
-dirq exec "df -h /" --json
+dirq exec -- uptime
+dirq exec WHERE tag.env = 'prod' -- openssl version
+dirq exec --become WHERE tag.role = 'webserver' -- systemctl restart nginx
+dirq exec -- hostname -f
+dirq exec --json -- df -h /
 ```
 
 ### Scripts
@@ -772,10 +772,36 @@ dirq exec "df -h /" --json
 Upload and execute a local script file with `--script`. Linux scripts honor their shebang. Windows `.ps1` files run with PowerShell.
 
 ```bash
-dirq exec --script ./health-check.sh WHERE tag.env = 'prod'
-dirq exec --script ./audit.ps1 WHERE os_info.os = 'windows'
-dirq exec --become --script ./patch.sh WHERE tag.role = 'webserver'
+dirq exec WHERE tag.env = 'prod' --script ./health-check.sh
+dirq exec WHERE os_info.os = 'windows' --script ./audit.ps1
+dirq exec WHERE tag.role = 'webserver' --become --script ./patch.sh
 ```
+
+With `--script`, no `--` separator is needed since the script path is a dirq flag, not a remote command.
+
+### Fleet Grep
+
+Search log files across the fleet without a centralized logging stack. Uses `grep` on Linux and `Select-String` on Windows.
+
+```bash
+dirq grep "Out of memory" /var/log/messages
+dirq grep -i "error|timeout" /var/log/nginx/error.log WHERE tag.env = 'prod'
+dirq grep "FATAL" /var/log/app.log --tail 1000
+dirq grep "Failed password" /var/log/secure --become
+```
+
+Results are formatted as a table with matches grouped by host:
+
+```
+HOST                 LINE  MATCH
+web-prod-01          4821  Jan 15 03:22:41 kernel: Out of memory: Killed process 1234 (java)
+web-prod-01          6103  Jan 15 08:14:02 kernel: Out of memory: Killed process 5678 (python3)
+db-prod-02          11042  Jan 14 22:01:18 kernel: Out of memory: Killed process 891 (mysqld)
+
+3 matches across 2 hosts (15 hosts searched)
+```
+
+Use `--tail N` to search only the last N lines of a file (avoids scanning multi-GB logs). Use `--become` for files that require root access (e.g. `/var/log/secure`).
 
 ### Streaming output
 
