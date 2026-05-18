@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/host"
 	"google.golang.org/grpc"
 	grpccreds "google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -340,9 +341,15 @@ func (a *Agent) register(ctx context.Context) error {
 		}
 	}
 
+	var osVersion string
+	if hi, err := host.Info(); err == nil {
+		osVersion = hi.PlatformVersion
+	}
+
 	resp, err := client.Register(ctx, &pb.RegisterRequest{
 		Hostname:           hostname,
 		Os:                 runtime.GOOS,
+		OsVersion:          osVersion,
 		Arch:               runtime.GOARCH,
 		AgentVersion:       a.cfg.Version,
 		Capabilities:       caps,

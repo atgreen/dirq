@@ -315,9 +315,17 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, agents)
 }
 
+// resolveAgent looks up an agent by ID, falling back to hostname.
+func (s *Server) resolveAgent(ctx context.Context, idOrHostname string) (db.Agent, error) {
+	agent, err := s.db.GetAgent(ctx, idOrHostname)
+	if err == nil {
+		return agent, nil
+	}
+	return s.db.GetAgentByHostname(ctx, idOrHostname)
+}
+
 func (s *Server) handleGetHost(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	agent, err := s.db.GetAgent(r.Context(), id)
+	agent, err := s.resolveAgent(r.Context(), r.PathValue("id"))
 	if err != nil {
 		httpError(w, http.StatusNotFound, "host not found")
 		return
@@ -326,8 +334,12 @@ func (s *Server) handleGetHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetHostFacts(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	facts, err := s.db.GetFacts(r.Context(), id)
+	agent, err := s.resolveAgent(r.Context(), r.PathValue("id"))
+	if err != nil {
+		httpError(w, http.StatusNotFound, "host not found")
+		return
+	}
+	facts, err := s.db.GetFacts(r.Context(), agent.ID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -341,55 +353,57 @@ func (s *Server) handleGetHostFacts(w http.ResponseWriter, r *http.Request) {
 
 // PUT /api/v1/hosts/{id}/tags — replace all tags
 func (s *Server) handleSetTags(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	agent, err := s.resolveAgent(r.Context(), r.PathValue("id"))
+	if err != nil {
+		httpError(w, http.StatusNotFound, "host not found")
+		return
+	}
 	var tags map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&tags); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid JSON: expected {\"key\": \"value\", ...}")
 		return
 	}
-	if err := s.db.UpdateAgentTags(r.Context(), id, tags); err != nil {
-		httpError(w, http.StatusNotFound, "host not found")
+	if err := s.db.UpdateAgentTags(r.Context(), agent.ID, tags); err != nil {
+		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	agent, _ := s.db.GetAgent(r.Context(), id)
+	agent, _ = s.db.GetAgent(r.Context(), agent.ID)
 	jsonResponse(w, http.StatusOK, agent)
 }
 
 // PATCH /api/v1/hosts/{id}/tags — merge tags (add/update without removing existing)
 func (s *Server) handleMergeTags(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	agent, err := s.resolveAgent(r.Context(), r.PathValue("id"))
+	if err != nil {
+		httpError(w, http.StatusNotFound, "host not found")
+		return
+	}
 	var newTags map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&newTags); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid JSON: expected {\"key\": \"value\", ...}")
 		return
 	}
-	agent, err := s.db.GetAgent(r.Context(), id)
-	if err != nil {
-		httpError(w, http.StatusNotFound, "host not found")
-		return
-	}
 	for k, v := range newTags {
 		agent.Tags[k] = v
 	}
-	if err := s.db.UpdateAgentTags(r.Context(), id, agent.Tags); err != nil {
+	if err := s.db.UpdateAgentTags(r.Context(), agent.ID, agent.Tags); err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	agent, _ = s.db.GetAgent(r.Context(), id)
+	agent, _ = s.db.GetAgent(r.Context(), agent.ID)
 	jsonResponse(w, http.StatusOK, agent)
 }
 
 // DELETE /api/v1/hosts/{id}/tags/{key} — remove a single tag
 func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	key := r.PathValue("key")
-	agent, err := s.db.GetAgent(r.Context(), id)
+	agent, err := s.resolveAgent(r.Context(), r.PathValue("id"))
 	if err != nil {
 		httpError(w, http.StatusNotFound, "host not found")
 		return
 	}
+	key := r.PathValue("key")
 	delete(agent.Tags, key)
-	if err := s.db.UpdateAgentTags(r.Context(), id, agent.Tags); err != nil {
+	if err := s.db.UpdateAgentTags(r.Context(), agent.ID, agent.Tags); err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

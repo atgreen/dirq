@@ -108,7 +108,6 @@ func main() {
 	root.AddCommand(cveCmd())
 	root.AddCommand(errataCmd())
 	root.AddCommand(kbCmd())
-	root.AddCommand(graphCmd())
 	root.AddCommand(mcpCmd())
 
 	if err := root.Execute(); err != nil {
@@ -213,15 +212,15 @@ Examples:
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "HOSTNAME\tOS\tVERSION\tARCH\tROLE\tONLINE\tLAST SEEN")
+			fmt.Fprintln(w, "HOSTNAME\tOS\tVERSION\tARCH\tONLINE\tLAST SEEN")
 			for _, h := range hosts {
 				status := "yes"
 				if !h.Online {
 					status = "no"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					h.Hostname, h.OS, h.OSVersion, h.Arch, h.Role, status,
-					h.LastSeenAt.Format("2006-01-02 15:04:05"))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					h.Hostname, h.OS, h.OSVersion, h.Arch, status,
+					h.LastSeenAt.Local().Format("2006-01-02 15:04:05"))
 			}
 			w.Flush()
 			return nil
@@ -229,7 +228,7 @@ Examples:
 	}
 
 	showCmd := &cobra.Command{
-		Use:   "show [id]",
+		Use:   "show [host]",
 		Short: "Show details for a host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -245,7 +244,7 @@ Examples:
 	}
 
 	factsCmd := &cobra.Command{
-		Use:   "facts [id]",
+		Use:   "facts [host]",
 		Short: "Show cached facts for a host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -381,7 +380,7 @@ Examples:
 		},
 	}
 
-	cmd.AddCommand(listCmd, showCmd, factsCmd, tagCmd, untagCmd)
+	cmd.AddCommand(listCmd, showCmd, factsCmd, tagCmd, untagCmd, graphCmd())
 	return cmd
 }
 
@@ -462,11 +461,7 @@ func graphCmd() *cobra.Command {
 					if !n.online {
 						color = "#d3d3d3" // grey for offline
 					}
-					label := n.hostname
-					if n.role == "zone_leader" {
-						label += "\\n[ZL]"
-					}
-					fmt.Printf("  %q [label=%q, fillcolor=%q];\n", id, label, color)
+					fmt.Printf("  %q [label=%q, fillcolor=%q];\n", id, n.hostname, color)
 				}
 				for _, id := range roots {
 					fmt.Printf("  \"dirq-server\" -> %q;\n", id)
@@ -498,12 +493,7 @@ func graphCmd() *cobra.Command {
 						status = "○"
 					}
 
-					label := n.hostname
-					if n.role == "zone_leader" {
-						label += " [ZL]"
-					}
-
-					fmt.Printf("%s%s%s %s\n", prefix, connector, status, label)
+					fmt.Printf("%s%s%s %s\n", prefix, connector, status, n.hostname)
 
 					childPrefix := prefix + "│   "
 					if last {
