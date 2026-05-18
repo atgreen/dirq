@@ -903,6 +903,10 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 	// Collect data from requested modules.
 	collected := modules.CollectModules(qr.Modules, hints)
 
+	// Inject top-level "hostname" so WHERE hostname = 'foo' works
+	// without requiring the os_info. prefix.
+	collected["hostname"] = hostname
+
 	// Apply agent-side filtering (array-aware: filters into packages, services, etc.)
 	if len(qr.Filters) > 0 {
 		conds := protoFiltersToConditions(qr.Filters)

@@ -440,9 +440,9 @@ WINEOF
     echo "  Test with:"
     echo "    dirq doctor"
     echo "    dirq hosts list"
-    echo "    dirq graph"
+    echo "    dirq hosts graph"
     echo "    dirq select hostname, os_info.distro, os_info.distro_version"
-    echo "    dirq exec uptime WHERE os_info.os = linux"
+    echo "    dirq exec WHERE os_info.os = linux -- uptime"
     echo "    dirq cve CVE-2026-31431"
     echo
     echo "  Agents install automatically via UserData (2-5 minutes)."

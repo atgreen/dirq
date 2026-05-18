@@ -91,7 +91,7 @@ demo: demo-down build  ## Start local demo (server + 10 agents)
 	@echo "Try:"
 	@echo "  ./bin/dirq hosts list"
 	@echo "  ./bin/dirq select hostname, os_info.os, cpu.logical_cores"
-	@echo "  ./bin/dirq exec \"uptime\""
+	@echo "  ./bin/dirq exec -- uptime"
 	@echo "  ./bin/dirq doctor"
 	@echo
 	@echo "Stop with: make demo-down"
