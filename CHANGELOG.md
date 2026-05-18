@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.15.1] - 2026-05-18
+
+### Changed
+
+- **`dirq hosts list` shows LAST SEEN in local timezone** — timestamps are now converted from UTC to the user's local timezone
+- **`dirq hosts list` shows OS version** — agents now report their OS version at registration (requires agent restart to populate)
+- **`dirq hosts list` no longer shows ROLE column** — use `dirq hosts graph` for topology
+- **`dirq graph` moved to `dirq hosts graph`** — topology is now a hosts subcommand; `[ZL]` indicator removed (layout makes it obvious)
+- **Host endpoints accept hostname or ID** — `dirq hosts show fedora`, `dirq hosts facts fedora`, and tag operations now resolve by hostname, not just agent ID
+
 ## [0.15.0] - 2026-05-18
 
 ### Added
@@ -390,6 +400,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.15.1]: https://github.com/atgreen/dirq/releases/tag/v0.15.1
 [0.15.0]: https://github.com/atgreen/dirq/releases/tag/v0.15.0
 [0.14.1]: https://github.com/atgreen/dirq/releases/tag/v0.14.1
 [0.14.0]: https://github.com/atgreen/dirq/releases/tag/v0.14.0
