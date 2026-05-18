@@ -5,6 +5,19 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.15.0] - 2026-05-18
+
+### Added
+
+- **Agentic `dirq ask`** — rewritten as an autonomous tool-use loop; the LLM calls fleet management tools (`dirq_query`, `dirq_hosts_list`, `dirq_hosts_facts`, `dirq_cve_scan`, `dirq_graph`) iteratively until it has enough data to answer; tool calls are shown on stdout; supports both Anthropic native and OpenAI-compatible APIs
+- **Bare aggregate queries** — `SELECT COUNT(hostname)` without `GROUP BY` now returns a single row with the aggregate result instead of dumping all host data
+- **Prompt injection hardening for `dirq ask`** — LLM is restricted to fleet-related questions only; all tool output is treated as untrusted data, ignoring instructions embedded in hostnames, tags, or query results
+- **`dirq doctor` config validation** — checks `client.conf` for unknown keys to catch typos
+
+### Changed
+
+- **`dirq ask` suggests but does not execute mutations** — only read-only tools are exposed; the LLM suggests correct `dirq exec` commands with OS-aware examples when changes are needed
+
 ## [0.14.1] - 2026-05-18
 
 ### Fixed
@@ -377,6 +390,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.15.0]: https://github.com/atgreen/dirq/releases/tag/v0.15.0
 [0.14.1]: https://github.com/atgreen/dirq/releases/tag/v0.14.1
 [0.14.0]: https://github.com/atgreen/dirq/releases/tag/v0.14.0
 [0.13.0]: https://github.com/atgreen/dirq/releases/tag/v0.13.0
