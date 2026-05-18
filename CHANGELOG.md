@@ -5,6 +5,22 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] - 2026-05-18
+
+### Added
+
+- **Certificate rotation** — `dirq cert rotate agent_cert` triggers fleet-wide mTLS cert renewal through the mesh; `signing_key` and `ca` rotation types also supported; `--stagger` flag spreads renewals over time to avoid thundering herd on large fleets
+- **Automatic cert renewal** — agents renew their mTLS certificate via `RenewCert` RPC when within 30 days of expiry, without re-registering or resetting topology; checked every 12 hours
+- **CA rotation** — configure `tls_ca_old` to trust both old and new CAs during a transition window; agents receive the full CA bundle on renewal
+- **Signing key rotation** — configure `signing_key_old` / `signing_pub_old` to trust both old and new Ed25519 keys during transition; agents accept signatures from either key
+- **Server TLS hot reload** — server reloads its TLS certificate from disk every 60 seconds; send `SIGHUP` for immediate reload; no restart required
+- **`dirq cert generate --ca / --ca-key`** — generate server and agent certs signed by your own CA instead of a self-signed one
+- **SECURITY.md** — comprehensive security model documentation covering TLS, mTLS, authentication, authorization, message signing, replay protection, exec security, rate limiting, LLM hardening, and rotation procedures
+
+### Changed
+
+- **`dirq tls` renamed to `dirq cert`** — subcommands: `generate` and `rotate`
+
 ## [0.15.1] - 2026-05-18
 
 ### Changed
@@ -400,6 +416,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.16.0]: https://github.com/atgreen/dirq/releases/tag/v0.16.0
 [0.15.1]: https://github.com/atgreen/dirq/releases/tag/v0.15.1
 [0.15.0]: https://github.com/atgreen/dirq/releases/tag/v0.15.0
 [0.14.1]: https://github.com/atgreen/dirq/releases/tag/v0.14.1
