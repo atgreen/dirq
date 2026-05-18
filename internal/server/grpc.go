@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/atgreen/dirq/internal/db"
+	"github.com/atgreen/dirq/internal/signutil"
 	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
@@ -130,14 +131,15 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 	s.sessionMu.Unlock()
 
 	resp := &pb.RegisterResponse{
-		AgentId:                  agent.ID,
-		Role:                     a.Role,
-		ZoneLeaderAddr:           a.ParentAddr,
-		HeartbeatIntervalSeconds: 30,
-		ServerSigningPublicKey:   s.signer.PublicKey(),
-		ServerSigningKeyId:       s.signer.KeyID(),
-		FallbackAddrs:            a.FallbackAddrs,
-		SessionToken:             token,
+		AgentId:                    agent.ID,
+		Role:                       a.Role,
+		ZoneLeaderAddr:             a.ParentAddr,
+		HeartbeatIntervalSeconds:   30,
+		ServerSigningPublicKey:     s.signer.PublicKey(),
+		ServerSigningKeyId:         s.signer.KeyID(),
+		ServerSigningPublicKeysOld: s.oldSignerPubKeys,
+		FallbackAddrs:              a.FallbackAddrs,
+		SessionToken:               token,
 	}
 
 	// Issue a per-agent mTLS client certificate if the CA is available.
@@ -152,6 +154,42 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 			resp.TlsCaCert = caCertPEM
 			s.log.Info("issued mTLS client cert", "agent_id", agent.ID)
 		}
+	}
+
+	return resp, nil
+}
+
+// RenewCert issues a new mTLS client certificate for an agent whose current
+// cert is near expiry. The agent must present its existing (still-valid) cert
+// to authenticate. This avoids a full re-registration which would reset topology.
+func (s *Server) RenewCert(ctx context.Context, req *pb.RenewCertRequest) (*pb.RenewCertResponse, error) {
+	// Verify mTLS CN matches the claimed agent ID.
+	cn, ok := TLSCNFromContext(ctx)
+	if !ok || cn != req.AgentId {
+		s.log.Warn("RenewCert rejected: cert CN mismatch",
+			"cert_cn", cn, "claimed_agent_id", req.AgentId)
+		return nil, fmt.Errorf("cert CN %q does not match agent_id %q", cn, req.AgentId)
+	}
+
+	if s.caCert == nil || s.caKey == nil {
+		return nil, fmt.Errorf("CA not configured, cannot issue certificates")
+	}
+
+	certPEM, keyPEM, caCertPEM, err := tlsutil.IssueCert(s.caCert, s.caKey, req.AgentId)
+	if err != nil {
+		s.log.Error("failed to renew mTLS cert", "agent_id", req.AgentId, "error", err)
+		return nil, fmt.Errorf("issue cert: %w", err)
+	}
+
+	s.log.Info("renewed mTLS client cert", "agent_id", req.AgentId)
+
+	resp := &pb.RenewCertResponse{
+		TlsClientCert:              certPEM,
+		TlsClientKey:               keyPEM,
+		TlsCaCert:                  caCertPEM,
+		ServerSigningPublicKey:     s.signer.PublicKey(),
+		ServerSigningKeyId:         s.signer.KeyID(),
+		ServerSigningPublicKeysOld: s.oldSignerPubKeys,
 	}
 
 	return resp, nil
@@ -198,6 +236,19 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 	} else {
 		// Verify cryptographically — the token is a signature over the agent ID.
 		tokenValid = s.signer.VerifyToken(agentID, hello.SessionToken)
+		// If the primary key doesn't accept it, try old keys (key rotation window).
+		if !tokenValid && len(s.oldSignerPubKeys) > 0 {
+			for _, oldKey := range s.oldSignerPubKeys {
+				v, err := signutil.NewVerifier(oldKey, "")
+				if err != nil {
+					continue
+				}
+				if v.VerifyToken(agentID, hello.SessionToken) {
+					tokenValid = true
+					break
+				}
+			}
+		}
 	}
 
 	if !tokenValid {

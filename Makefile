@@ -68,7 +68,7 @@ DEMO_CERTS := $(CURDIR)/.demo-certs
 
 demo: demo-down build  ## Start local demo (server + 10 agents)
 	@# Generate TLS certs for the demo.
-	$(BINDIR)/dirq tls generate --dir $(DEMO_CERTS)
+	$(BINDIR)/dirq cert generate --dir $(DEMO_CERTS)
 	@# Build container images.
 	podman build --target server -t localhost/dirq-server:dev .
 	podman build --target agent  -t localhost/dirq-agent:dev .

@@ -24,6 +24,10 @@ service DirQServer {
 
   // Agent calls this when it loses all peers and needs reassignment.
   rpc RequestPeers(PeerRequest) returns (PeerResponse);
+
+  // Agent calls this to renew its mTLS certificate before expiry.
+  // Requires a valid mTLS connection (CN must match agent_id).
+  rpc RenewCert(RenewCertRequest) returns (RenewCertResponse);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -75,6 +79,27 @@ message RegisterResponse {
   bytes tls_client_cert = 10;
   bytes tls_client_key = 11;
   bytes tls_ca_cert = 12;
+
+  // Previous signing keys still trusted during key rotation.
+  repeated bytes server_signing_public_keys_old = 13;
+}
+
+// ─────────────────────────────────────────────────────────
+// Messages: Certificate renewal
+// ─────────────────────────────────────────────────────────
+
+message RenewCertRequest {
+  string agent_id = 1;
+}
+
+message RenewCertResponse {
+  bytes tls_client_cert = 1;  // new PEM cert
+  bytes tls_client_key  = 2;  // new PEM key
+  bytes tls_ca_cert     = 3;  // current CA bundle (may include new CA if rotated)
+  // Updated signing keys (included if signing key was rotated since last renewal).
+  bytes server_signing_public_key = 4;
+  string server_signing_key_id = 5;
+  repeated bytes server_signing_public_keys_old = 6;
 }
 
 enum AgentRole {
@@ -133,11 +158,34 @@ message ServerMessage {
     PutFileRequest put_file       = 5; // Phase 2: write file to agent
     FetchFileRequest fetch_file   = 6; // Phase 2: read file from agent
     DeployRequest deploy_request  = 11; // broadcast package deploy
+    RotateCommand rotate_command  = 12; // certificate/key rotation push
   }
   string signer_key_id = 7;
   int64 signed_at_unix = 8;
   int64 expires_at_unix = 9;
   bytes signature = 10;
+}
+
+// RotateCommand is pushed through the mesh to trigger certificate or key
+// rotation on all agents. Signed by the server (with the CURRENT key)
+// so agents can verify it before acting.
+message RotateCommand {
+  enum RotationType {
+    ROTATION_TYPE_UNSPECIFIED = 0;
+    ROTATION_TYPE_AGENT_CERT = 1;    // renew your mTLS cert via RenewCert RPC
+    ROTATION_TYPE_SIGNING_KEY = 2;   // update signing key verifier
+    ROTATION_TYPE_CA = 3;            // fetch new CA bundle via RenewCert RPC
+  }
+  RotationType type = 1;
+  string reason = 2;  // human-readable reason for audit log
+  // For SIGNING_KEY rotation: new keys so agents can update without re-registering.
+  bytes new_signing_public_key = 3;
+  string new_signing_key_id = 4;
+  repeated bytes old_signing_public_keys = 5;
+  // Stagger window: each agent waits a random delay in [0, stagger_seconds)
+  // before acting. Prevents thundering herd on RenewCert RPCs.
+  // Default 0 means act immediately.
+  int32 stagger_seconds = 6;
 }
 
 // Agent identifies itself when opening a stream.

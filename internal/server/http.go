@@ -50,6 +50,7 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.handlePutFile)))
 	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
 	mux.HandleFunc("POST /api/v1/deploy", s.authMiddleware(requireScope("admin", s.handleBroadcastDeploy)))
+	mux.HandleFunc("POST /api/v1/rotate", s.authMiddleware(requireScope("admin", s.handleRotate)))
 
 	// Status endpoint (authenticated, readonly)
 	mux.HandleFunc("GET /api/v1/status", s.authMiddleware(requireScope("readonly", s.handleStatus)))
@@ -717,6 +718,52 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, status)
+}
+
+// ─────────────────────────────────────────────────────────
+// Rotation endpoint
+// ─────────────────────────────────────────────────────────
+
+type rotateRequest struct {
+	Type           string `json:"type"`            // "agent_cert", "signing_key", or "ca"
+	Reason         string `json:"reason"`           // optional human-readable reason
+	StaggerSeconds int32  `json:"stagger_seconds"`  // agents wait random [0, N) seconds before acting
+}
+
+// handleRotate handles POST /api/v1/rotate.
+// It broadcasts a RotateCommand to all connected zone leaders which relay it
+// down through the mesh so every agent performs the requested rotation.
+func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
+	var req rotateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	var rotationType pb.RotateCommand_RotationType
+	switch strings.ToLower(req.Type) {
+	case "agent_cert":
+		rotationType = pb.RotateCommand_ROTATION_TYPE_AGENT_CERT
+	case "signing_key":
+		rotationType = pb.RotateCommand_ROTATION_TYPE_SIGNING_KEY
+	case "ca":
+		rotationType = pb.RotateCommand_ROTATION_TYPE_CA
+	default:
+		httpError(w, http.StatusBadRequest, `type must be one of: "agent_cert", "signing_key", "ca"`)
+		return
+	}
+
+	sent, err := s.broadcastRotation(rotationType, req.Reason, req.StaggerSeconds)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "broadcast failed: "+err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"status":       "ok",
+		"type":         req.Type,
+		"zone_leaders": sent,
+	})
 }
 
 // sanitizeGroupName replaces characters that aren't valid in Ansible group

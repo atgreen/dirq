@@ -13,7 +13,15 @@ import (
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
-func (a *Agent) setServerVerifier(publicKey []byte, keyID string) error {
+// serverMessageVerifier is the interface satisfied by both *signutil.Verifier
+// and *signutil.MultiVerifier. Keeping this interface lets the agent swap in
+// a MultiVerifier during key rotation without changing all call sites.
+type serverMessageVerifier interface {
+	VerifyServerMessage(msg *pb.ServerMessage, now time.Time) error
+	VerifyToken(agentID, token string) bool
+}
+
+func (a *Agent) setServerVerifier(publicKey []byte, keyID string, oldPublicKeys [][]byte) error {
 	// If a signing public key is pinned in the config, verify the server's
 	// key matches before trusting it. This prevents MITM at registration.
 	if a.cfg.FileCfg != nil {
@@ -29,11 +37,28 @@ func (a *Agent) setServerVerifier(publicKey []byte, keyID string) error {
 		}
 	}
 
-	verifier, err := signutil.NewVerifier(publicKey, keyID)
+	primary, err := signutil.NewVerifier(publicKey, keyID)
 	if err != nil {
 		return err
 	}
-	a.serverVerifier = verifier
+
+	if len(oldPublicKeys) == 0 {
+		a.serverVerifier = primary
+		return nil
+	}
+
+	// Build a MultiVerifier so messages signed by old keys are also accepted
+	// during a key rotation window.
+	verifiers := []*signutil.Verifier{primary}
+	for _, oldKey := range oldPublicKeys {
+		v, err := signutil.NewVerifier(oldKey, "")
+		if err != nil {
+			a.log.Warn("skipping invalid old signing public key", "error", err)
+			continue
+		}
+		verifiers = append(verifiers, v)
+	}
+	a.serverVerifier = signutil.NewMultiVerifier(verifiers...)
 	return nil
 }
 

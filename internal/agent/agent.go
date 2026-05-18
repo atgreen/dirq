@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
@@ -63,7 +64,12 @@ type Agent struct {
 	// Upstream connection (to server or parent peer)
 	upstreamConn   *grpc.ClientConn
 	upstreamStream pb.DirQServer_AgentStreamClient
-	serverVerifier *signutil.Verifier
+	serverVerifier serverMessageVerifier
+
+	// needsCertRenewal is set when a loaded mTLS cert is within 30 days of
+	// expiry.  The agent still uses the cert (it's still valid) but will call
+	// RenewCert shortly after the upstream stream is established.
+	needsCertRenewal bool
 
 	// Connected downstream peers
 	mu          sync.RWMutex
@@ -297,6 +303,15 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 
 		a.log.Info("upstream connected", "target", a.parentAddr)
 
+		// If the cert was near expiry at load time, renew it now that we have
+		// a live connection.  Failure is non-fatal: the existing cert is still
+		// valid, and the next connect cycle will retry.
+		if a.needsCertRenewal {
+			if err := a.renewCert(ctx); err != nil {
+				a.log.Warn("cert renewal failed, will retry later", "error", err)
+			}
+		}
+
 		// Run the main loop until the stream breaks.
 		err = a.mainLoop(ctx)
 
@@ -365,7 +380,7 @@ func (a *Agent) register(ctx context.Context) error {
 	a.agentID = resp.AgentId
 	a.role = resp.Role
 	a.sessionToken = resp.SessionToken
-	if err := a.setServerVerifier(resp.GetServerSigningPublicKey(), resp.GetServerSigningKeyId()); err != nil {
+	if err := a.setServerVerifier(resp.GetServerSigningPublicKey(), resp.GetServerSigningKeyId(), resp.GetServerSigningPublicKeysOld()); err != nil {
 		return fmt.Errorf("load server signing key: %w", err)
 	}
 
@@ -528,6 +543,35 @@ func (a *Agent) persistMTLSCert(certPEM, keyPEM, caCertPEM []byte) error {
 	return nil
 }
 
+// renewCert calls the server's RenewCert RPC to obtain a fresh mTLS client
+// certificate without a full re-registration.  It persists the new cert to
+// disk and updates cachedTLSConfig.
+func (a *Agent) renewCert(ctx context.Context) error {
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, grpcDialOpts()...)
+	if err != nil {
+		return fmt.Errorf("connect to server for cert renewal: %w", err)
+	}
+	defer conn.Close()
+
+	client := pb.NewDirQServerClient(conn)
+	resp, err := client.RenewCert(ctx, &pb.RenewCertRequest{AgentId: a.agentID})
+	if err != nil {
+		return fmt.Errorf("RenewCert RPC: %w", err)
+	}
+
+	if len(resp.TlsClientCert) == 0 || len(resp.TlsClientKey) == 0 {
+		return fmt.Errorf("RenewCert returned empty cert or key")
+	}
+
+	if err := a.persistMTLSCert(resp.TlsClientCert, resp.TlsClientKey, resp.TlsCaCert); err != nil {
+		return fmt.Errorf("persist renewed mTLS cert: %w", err)
+	}
+
+	a.needsCertRenewal = false
+	a.log.Info("mTLS client cert renewed successfully", "agent_id", a.agentID)
+	return nil
+}
+
 // loadExistingMTLSCert checks for a previously-issued mTLS cert and loads
 // it into the TLS config if valid.
 func (a *Agent) loadExistingMTLSCert() {
@@ -543,10 +587,12 @@ func (a *Agent) loadExistingMTLSCert() {
 		return // no key
 	}
 
-	// Check expiry.
+	// Check expiry.  If the cert is within 30 days of expiry, still load it
+	// (it remains valid) but schedule a renewal via RenewCert after connecting.
 	if tlsutil.CertExpiresWithin(certPEM, 30*24*time.Hour) {
-		a.log.Info("existing mTLS cert expires soon, will re-register for a new one")
-		return
+		a.log.Info("existing mTLS cert expires soon, will renew after connecting")
+		a.needsCertRenewal = true
+		// Fall through — continue loading the cert so we can use it right now.
 	}
 
 	// Verify the CN matches our expected agent ID (if we have one from
@@ -620,6 +666,10 @@ func (a *Agent) mainLoop(ctx context.Context) error {
 		}
 	}()
 
+	// Periodic cert check — every 12 hours while the stream is live.
+	certCheckTicker := time.NewTicker(12 * time.Hour)
+	defer certCheckTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -630,6 +680,17 @@ func (a *Agent) mainLoop(ctx context.Context) error {
 
 		case msg := <-msgCh:
 			a.handleServerMessage(ctx, msg)
+
+		case <-certCheckTicker.C:
+			// Re-read the cert from disk to check its current expiry.
+			dir := mtlsCertDir()
+			certPEM, err := os.ReadFile(filepath.Join(dir, "mtls-client.crt"))
+			if err == nil && tlsutil.CertExpiresWithin(certPEM, 30*24*time.Hour) {
+				a.log.Info("periodic cert check: cert expires soon, renewing")
+				if err := a.renewCert(ctx); err != nil {
+					a.log.Warn("periodic cert renewal failed", "error", err)
+				}
+			}
 		}
 	}
 }
@@ -736,6 +797,69 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 		if a.isTargeted(p.DeployRequest.TargetAgentIds) {
 			go a.handleDeploy(ctx, p.DeployRequest)
 		}
+	case *pb.ServerMessage_RotateCommand:
+		rc := p.RotateCommand
+		a.log.Info("rotation command received",
+			"type", rc.GetType().String(),
+			"reason", rc.GetReason(),
+		)
+		// Relay to downstream peers first so the rotation propagates through
+		// the mesh before we act on it locally.
+		a.relayToDownstreams(msg)
+		go a.handleRotateCommand(ctx, rc)
+	}
+}
+
+func (a *Agent) handleRotateCommand(ctx context.Context, rc *pb.RotateCommand) {
+	// Stagger: wait a random delay to avoid thundering herd on RenewCert.
+	if s := rc.GetStaggerSeconds(); s > 0 {
+		delay := time.Duration(rand.IntN(int(s))) * time.Second
+		a.log.Info("staggering rotation", "delay", delay, "type", rc.GetType().String())
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	switch rc.GetType() {
+	case pb.RotateCommand_ROTATION_TYPE_AGENT_CERT:
+		a.log.Info("rotating agent cert via RenewCert")
+		if err := a.renewCert(ctx); err != nil {
+			a.log.Error("cert rotation failed", "error", err)
+		}
+	case pb.RotateCommand_ROTATION_TYPE_SIGNING_KEY:
+		newKey := rc.GetNewSigningPublicKey()
+		newKeyID := rc.GetNewSigningKeyId()
+		if len(newKey) == 0 {
+			a.log.Error("signing key rotation: no new public key provided")
+			return
+		}
+		newVerifier, err := signutil.NewVerifier(newKey, newKeyID)
+		if err != nil {
+			a.log.Error("signing key rotation: failed to build new verifier", "error", err)
+			return
+		}
+		// Build a MultiVerifier that trusts both the new key and the current
+		// verifier (for in-flight messages signed with the old key).
+		var allVerifiers []*signutil.Verifier
+		allVerifiers = append(allVerifiers, newVerifier)
+		if cur, ok := a.serverVerifier.(*signutil.Verifier); ok {
+			allVerifiers = append(allVerifiers, cur)
+		} else if curMulti, ok := a.serverVerifier.(*signutil.MultiVerifier); ok {
+			// Already a multi-verifier — keep all existing trusted keys.
+			allVerifiers = append(allVerifiers, curMulti.Verifiers()...)
+		}
+		multi := signutil.NewMultiVerifier(allVerifiers...)
+		a.serverVerifier = multi
+		a.log.Info("signing key rotated", "new_key_id", newKeyID)
+	case pb.RotateCommand_ROTATION_TYPE_CA:
+		a.log.Info("rotating CA bundle via RenewCert")
+		if err := a.renewCert(ctx); err != nil {
+			a.log.Error("CA rotation failed", "error", err)
+		}
+	default:
+		a.log.Warn("unknown rotation type, ignoring", "type", rc.GetType())
 	}
 }
 

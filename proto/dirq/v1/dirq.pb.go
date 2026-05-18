@@ -78,6 +78,58 @@ func (AgentRole) EnumDescriptor() ([]byte, []int) {
 	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{0}
 }
 
+type RotateCommand_RotationType int32
+
+const (
+	RotateCommand_ROTATION_TYPE_UNSPECIFIED RotateCommand_RotationType = 0
+	RotateCommand_ROTATION_TYPE_AGENT_CERT  RotateCommand_RotationType = 1 // renew your mTLS cert via RenewCert RPC
+	RotateCommand_ROTATION_TYPE_SIGNING_KEY RotateCommand_RotationType = 2 // update signing key verifier
+	RotateCommand_ROTATION_TYPE_CA          RotateCommand_RotationType = 3 // fetch new CA bundle via RenewCert RPC
+)
+
+// Enum value maps for RotateCommand_RotationType.
+var (
+	RotateCommand_RotationType_name = map[int32]string{
+		0: "ROTATION_TYPE_UNSPECIFIED",
+		1: "ROTATION_TYPE_AGENT_CERT",
+		2: "ROTATION_TYPE_SIGNING_KEY",
+		3: "ROTATION_TYPE_CA",
+	}
+	RotateCommand_RotationType_value = map[string]int32{
+		"ROTATION_TYPE_UNSPECIFIED": 0,
+		"ROTATION_TYPE_AGENT_CERT":  1,
+		"ROTATION_TYPE_SIGNING_KEY": 2,
+		"ROTATION_TYPE_CA":          3,
+	}
+)
+
+func (x RotateCommand_RotationType) Enum() *RotateCommand_RotationType {
+	p := new(RotateCommand_RotationType)
+	*p = x
+	return p
+}
+
+func (x RotateCommand_RotationType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RotateCommand_RotationType) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_dirq_v1_dirq_proto_enumTypes[1].Descriptor()
+}
+
+func (RotateCommand_RotationType) Type() protoreflect.EnumType {
+	return &file_proto_dirq_v1_dirq_proto_enumTypes[1]
+}
+
+func (x RotateCommand_RotationType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RotateCommand_RotationType.Descriptor instead.
+func (RotateCommand_RotationType) EnumDescriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{10, 0}
+}
+
 type RegisterRequest struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	Hostname     string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`
@@ -216,8 +268,10 @@ type RegisterResponse struct {
 	TlsClientCert []byte `protobuf:"bytes,10,opt,name=tls_client_cert,json=tlsClientCert,proto3" json:"tls_client_cert,omitempty"`
 	TlsClientKey  []byte `protobuf:"bytes,11,opt,name=tls_client_key,json=tlsClientKey,proto3" json:"tls_client_key,omitempty"`
 	TlsCaCert     []byte `protobuf:"bytes,12,opt,name=tls_ca_cert,json=tlsCaCert,proto3" json:"tls_ca_cert,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Previous signing keys still trusted during key rotation.
+	ServerSigningPublicKeysOld [][]byte `protobuf:"bytes,13,rep,name=server_signing_public_keys_old,json=serverSigningPublicKeysOld,proto3" json:"server_signing_public_keys_old,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *RegisterResponse) Reset() {
@@ -334,6 +388,142 @@ func (x *RegisterResponse) GetTlsCaCert() []byte {
 	return nil
 }
 
+func (x *RegisterResponse) GetServerSigningPublicKeysOld() [][]byte {
+	if x != nil {
+		return x.ServerSigningPublicKeysOld
+	}
+	return nil
+}
+
+type RenewCertRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewCertRequest) Reset() {
+	*x = RenewCertRequest{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewCertRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewCertRequest) ProtoMessage() {}
+
+func (x *RenewCertRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewCertRequest.ProtoReflect.Descriptor instead.
+func (*RenewCertRequest) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *RenewCertRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+type RenewCertResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TlsClientCert []byte                 `protobuf:"bytes,1,opt,name=tls_client_cert,json=tlsClientCert,proto3" json:"tls_client_cert,omitempty"` // new PEM cert
+	TlsClientKey  []byte                 `protobuf:"bytes,2,opt,name=tls_client_key,json=tlsClientKey,proto3" json:"tls_client_key,omitempty"`    // new PEM key
+	TlsCaCert     []byte                 `protobuf:"bytes,3,opt,name=tls_ca_cert,json=tlsCaCert,proto3" json:"tls_ca_cert,omitempty"`             // current CA bundle (may include new CA if rotated)
+	// Updated signing keys (included if signing key was rotated since last renewal).
+	ServerSigningPublicKey     []byte   `protobuf:"bytes,4,opt,name=server_signing_public_key,json=serverSigningPublicKey,proto3" json:"server_signing_public_key,omitempty"`
+	ServerSigningKeyId         string   `protobuf:"bytes,5,opt,name=server_signing_key_id,json=serverSigningKeyId,proto3" json:"server_signing_key_id,omitempty"`
+	ServerSigningPublicKeysOld [][]byte `protobuf:"bytes,6,rep,name=server_signing_public_keys_old,json=serverSigningPublicKeysOld,proto3" json:"server_signing_public_keys_old,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *RenewCertResponse) Reset() {
+	*x = RenewCertResponse{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewCertResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewCertResponse) ProtoMessage() {}
+
+func (x *RenewCertResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewCertResponse.ProtoReflect.Descriptor instead.
+func (*RenewCertResponse) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RenewCertResponse) GetTlsClientCert() []byte {
+	if x != nil {
+		return x.TlsClientCert
+	}
+	return nil
+}
+
+func (x *RenewCertResponse) GetTlsClientKey() []byte {
+	if x != nil {
+		return x.TlsClientKey
+	}
+	return nil
+}
+
+func (x *RenewCertResponse) GetTlsCaCert() []byte {
+	if x != nil {
+		return x.TlsCaCert
+	}
+	return nil
+}
+
+func (x *RenewCertResponse) GetServerSigningPublicKey() []byte {
+	if x != nil {
+		return x.ServerSigningPublicKey
+	}
+	return nil
+}
+
+func (x *RenewCertResponse) GetServerSigningKeyId() string {
+	if x != nil {
+		return x.ServerSigningKeyId
+	}
+	return ""
+}
+
+func (x *RenewCertResponse) GetServerSigningPublicKeysOld() [][]byte {
+	if x != nil {
+		return x.ServerSigningPublicKeysOld
+	}
+	return nil
+}
+
 type PeerInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -344,7 +534,7 @@ type PeerInfo struct {
 
 func (x *PeerInfo) Reset() {
 	*x = PeerInfo{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[2]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -356,7 +546,7 @@ func (x *PeerInfo) String() string {
 func (*PeerInfo) ProtoMessage() {}
 
 func (x *PeerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[2]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -369,7 +559,7 @@ func (x *PeerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerInfo.ProtoReflect.Descriptor instead.
 func (*PeerInfo) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{2}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *PeerInfo) GetAgentId() string {
@@ -395,7 +585,7 @@ type PeerRequest struct {
 
 func (x *PeerRequest) Reset() {
 	*x = PeerRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[3]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -407,7 +597,7 @@ func (x *PeerRequest) String() string {
 func (*PeerRequest) ProtoMessage() {}
 
 func (x *PeerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[3]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -420,7 +610,7 @@ func (x *PeerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerRequest.ProtoReflect.Descriptor instead.
 func (*PeerRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{3}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PeerRequest) GetAgentId() string {
@@ -441,7 +631,7 @@ type PeerResponse struct {
 
 func (x *PeerResponse) Reset() {
 	*x = PeerResponse{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[4]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -453,7 +643,7 @@ func (x *PeerResponse) String() string {
 func (*PeerResponse) ProtoMessage() {}
 
 func (x *PeerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[4]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -466,7 +656,7 @@ func (x *PeerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerResponse.ProtoReflect.Descriptor instead.
 func (*PeerResponse) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{4}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PeerResponse) GetPeers() []*PeerInfo {
@@ -510,7 +700,7 @@ type AgentMessage struct {
 
 func (x *AgentMessage) Reset() {
 	*x = AgentMessage{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[5]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -522,7 +712,7 @@ func (x *AgentMessage) String() string {
 func (*AgentMessage) ProtoMessage() {}
 
 func (x *AgentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[5]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -535,7 +725,7 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
 func (*AgentMessage) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{5}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AgentMessage) GetPayload() isAgentMessage_Payload {
@@ -696,7 +886,7 @@ type PeerDisconnected struct {
 
 func (x *PeerDisconnected) Reset() {
 	*x = PeerDisconnected{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[6]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -708,7 +898,7 @@ func (x *PeerDisconnected) String() string {
 func (*PeerDisconnected) ProtoMessage() {}
 
 func (x *PeerDisconnected) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[6]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -721,7 +911,7 @@ func (x *PeerDisconnected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerDisconnected.ProtoReflect.Descriptor instead.
 func (*PeerDisconnected) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{6}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *PeerDisconnected) GetAgentId() string {
@@ -742,6 +932,7 @@ type ServerMessage struct {
 	//	*ServerMessage_PutFile
 	//	*ServerMessage_FetchFile
 	//	*ServerMessage_DeployRequest
+	//	*ServerMessage_RotateCommand
 	Payload       isServerMessage_Payload `protobuf_oneof:"payload"`
 	SignerKeyId   string                  `protobuf:"bytes,7,opt,name=signer_key_id,json=signerKeyId,proto3" json:"signer_key_id,omitempty"`
 	SignedAtUnix  int64                   `protobuf:"varint,8,opt,name=signed_at_unix,json=signedAtUnix,proto3" json:"signed_at_unix,omitempty"`
@@ -753,7 +944,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[7]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -765,7 +956,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[7]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -778,7 +969,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{7}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ServerMessage) GetPayload() isServerMessage_Payload {
@@ -851,6 +1042,15 @@ func (x *ServerMessage) GetDeployRequest() *DeployRequest {
 	return nil
 }
 
+func (x *ServerMessage) GetRotateCommand() *RotateCommand {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_RotateCommand); ok {
+			return x.RotateCommand
+		}
+	}
+	return nil
+}
+
 func (x *ServerMessage) GetSignerKeyId() string {
 	if x != nil {
 		return x.SignerKeyId
@@ -911,6 +1111,10 @@ type ServerMessage_DeployRequest struct {
 	DeployRequest *DeployRequest `protobuf:"bytes,11,opt,name=deploy_request,json=deployRequest,proto3,oneof"` // broadcast package deploy
 }
 
+type ServerMessage_RotateCommand struct {
+	RotateCommand *RotateCommand `protobuf:"bytes,12,opt,name=rotate_command,json=rotateCommand,proto3,oneof"` // certificate/key rotation push
+}
+
 func (*ServerMessage_QueryRequest) isServerMessage_Payload() {}
 
 func (*ServerMessage_PeerUpdate) isServerMessage_Payload() {}
@@ -924,6 +1128,99 @@ func (*ServerMessage_PutFile) isServerMessage_Payload() {}
 func (*ServerMessage_FetchFile) isServerMessage_Payload() {}
 
 func (*ServerMessage_DeployRequest) isServerMessage_Payload() {}
+
+func (*ServerMessage_RotateCommand) isServerMessage_Payload() {}
+
+// RotateCommand is pushed through the mesh to trigger certificate or key
+// rotation on all agents. Signed by the server (with the CURRENT key)
+// so agents can verify it before acting.
+type RotateCommand struct {
+	state  protoimpl.MessageState     `protogen:"open.v1"`
+	Type   RotateCommand_RotationType `protobuf:"varint,1,opt,name=type,proto3,enum=dirq.v1.RotateCommand_RotationType" json:"type,omitempty"`
+	Reason string                     `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"` // human-readable reason for audit log
+	// For SIGNING_KEY rotation: new keys so agents can update without re-registering.
+	NewSigningPublicKey  []byte   `protobuf:"bytes,3,opt,name=new_signing_public_key,json=newSigningPublicKey,proto3" json:"new_signing_public_key,omitempty"`
+	NewSigningKeyId      string   `protobuf:"bytes,4,opt,name=new_signing_key_id,json=newSigningKeyId,proto3" json:"new_signing_key_id,omitempty"`
+	OldSigningPublicKeys [][]byte `protobuf:"bytes,5,rep,name=old_signing_public_keys,json=oldSigningPublicKeys,proto3" json:"old_signing_public_keys,omitempty"`
+	// Stagger window: each agent waits a random delay in [0, stagger_seconds)
+	// before acting. Prevents thundering herd on RenewCert RPCs.
+	// Default 0 means act immediately.
+	StaggerSeconds int32 `protobuf:"varint,6,opt,name=stagger_seconds,json=staggerSeconds,proto3" json:"stagger_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RotateCommand) Reset() {
+	*x = RotateCommand{}
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RotateCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RotateCommand) ProtoMessage() {}
+
+func (x *RotateCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RotateCommand.ProtoReflect.Descriptor instead.
+func (*RotateCommand) Descriptor() ([]byte, []int) {
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RotateCommand) GetType() RotateCommand_RotationType {
+	if x != nil {
+		return x.Type
+	}
+	return RotateCommand_ROTATION_TYPE_UNSPECIFIED
+}
+
+func (x *RotateCommand) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *RotateCommand) GetNewSigningPublicKey() []byte {
+	if x != nil {
+		return x.NewSigningPublicKey
+	}
+	return nil
+}
+
+func (x *RotateCommand) GetNewSigningKeyId() string {
+	if x != nil {
+		return x.NewSigningKeyId
+	}
+	return ""
+}
+
+func (x *RotateCommand) GetOldSigningPublicKeys() [][]byte {
+	if x != nil {
+		return x.OldSigningPublicKeys
+	}
+	return nil
+}
+
+func (x *RotateCommand) GetStaggerSeconds() int32 {
+	if x != nil {
+		return x.StaggerSeconds
+	}
+	return 0
+}
 
 // Agent identifies itself when opening a stream.
 type AgentHello struct {
@@ -940,7 +1237,7 @@ type AgentHello struct {
 
 func (x *AgentHello) Reset() {
 	*x = AgentHello{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[8]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -952,7 +1249,7 @@ func (x *AgentHello) String() string {
 func (*AgentHello) ProtoMessage() {}
 
 func (x *AgentHello) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[8]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -965,7 +1262,7 @@ func (x *AgentHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentHello.ProtoReflect.Descriptor instead.
 func (*AgentHello) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{8}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *AgentHello) GetAgentId() string {
@@ -1007,7 +1304,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[9]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1019,7 +1316,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[9]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1032,7 +1329,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{9}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Heartbeat) GetAgentId() string {
@@ -1074,7 +1371,7 @@ type QueryRequest struct {
 
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[10]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1086,7 +1383,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[10]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1099,7 +1396,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{10}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *QueryRequest) GetQueryId() string {
@@ -1162,7 +1459,7 @@ type Filter struct {
 
 func (x *Filter) Reset() {
 	*x = Filter{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[11]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1174,7 +1471,7 @@ func (x *Filter) String() string {
 func (*Filter) ProtoMessage() {}
 
 func (x *Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[11]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1187,7 +1484,7 @@ func (x *Filter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Filter.ProtoReflect.Descriptor instead.
 func (*Filter) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{11}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Filter) GetField() string {
@@ -1226,7 +1523,7 @@ type QueryResult struct {
 
 func (x *QueryResult) Reset() {
 	*x = QueryResult{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[12]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1238,7 +1535,7 @@ func (x *QueryResult) String() string {
 func (*QueryResult) ProtoMessage() {}
 
 func (x *QueryResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[12]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1251,7 +1548,7 @@ func (x *QueryResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryResult.ProtoReflect.Descriptor instead.
 func (*QueryResult) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{12}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *QueryResult) GetQueryId() string {
@@ -1317,7 +1614,7 @@ type AggregatedQueryResult struct {
 
 func (x *AggregatedQueryResult) Reset() {
 	*x = AggregatedQueryResult{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[13]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1329,7 +1626,7 @@ func (x *AggregatedQueryResult) String() string {
 func (*AggregatedQueryResult) ProtoMessage() {}
 
 func (x *AggregatedQueryResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[13]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1342,7 +1639,7 @@ func (x *AggregatedQueryResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AggregatedQueryResult.ProtoReflect.Descriptor instead.
 func (*AggregatedQueryResult) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{13}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AggregatedQueryResult) GetQueryId() string {
@@ -1377,7 +1674,7 @@ type PeerUpdate struct {
 
 func (x *PeerUpdate) Reset() {
 	*x = PeerUpdate{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1389,7 +1686,7 @@ func (x *PeerUpdate) String() string {
 func (*PeerUpdate) ProtoMessage() {}
 
 func (x *PeerUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[14]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1402,7 +1699,7 @@ func (x *PeerUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerUpdate.ProtoReflect.Descriptor instead.
 func (*PeerUpdate) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{14}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *PeerUpdate) GetNewPeers() []*PeerInfo {
@@ -1453,7 +1750,7 @@ type AgentUpdatePush struct {
 
 func (x *AgentUpdatePush) Reset() {
 	*x = AgentUpdatePush{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1465,7 +1762,7 @@ func (x *AgentUpdatePush) String() string {
 func (*AgentUpdatePush) ProtoMessage() {}
 
 func (x *AgentUpdatePush) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[15]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1478,7 +1775,7 @@ func (x *AgentUpdatePush) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentUpdatePush.ProtoReflect.Descriptor instead.
 func (*AgentUpdatePush) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{15}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *AgentUpdatePush) GetVersion() string {
@@ -1555,7 +1852,7 @@ type ExecRequest struct {
 
 func (x *ExecRequest) Reset() {
 	*x = ExecRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1567,7 +1864,7 @@ func (x *ExecRequest) String() string {
 func (*ExecRequest) ProtoMessage() {}
 
 func (x *ExecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[16]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1580,7 +1877,7 @@ func (x *ExecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecRequest.ProtoReflect.Descriptor instead.
 func (*ExecRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{16}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ExecRequest) GetRequestId() string {
@@ -1707,7 +2004,7 @@ type ExecResponse struct {
 
 func (x *ExecResponse) Reset() {
 	*x = ExecResponse{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1719,7 +2016,7 @@ func (x *ExecResponse) String() string {
 func (*ExecResponse) ProtoMessage() {}
 
 func (x *ExecResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[17]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1732,7 +2029,7 @@ func (x *ExecResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecResponse.ProtoReflect.Descriptor instead.
 func (*ExecResponse) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{17}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ExecResponse) GetRequestId() string {
@@ -1825,7 +2122,7 @@ type PutFileRequest struct {
 
 func (x *PutFileRequest) Reset() {
 	*x = PutFileRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1837,7 +2134,7 @@ func (x *PutFileRequest) String() string {
 func (*PutFileRequest) ProtoMessage() {}
 
 func (x *PutFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[18]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1850,7 +2147,7 @@ func (x *PutFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutFileRequest.ProtoReflect.Descriptor instead.
 func (*PutFileRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{18}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *PutFileRequest) GetRequestId() string {
@@ -1941,7 +2238,7 @@ type FetchFileRequest struct {
 
 func (x *FetchFileRequest) Reset() {
 	*x = FetchFileRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1953,7 +2250,7 @@ func (x *FetchFileRequest) String() string {
 func (*FetchFileRequest) ProtoMessage() {}
 
 func (x *FetchFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[19]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1966,7 +2263,7 @@ func (x *FetchFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchFileRequest.ProtoReflect.Descriptor instead.
 func (*FetchFileRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{19}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *FetchFileRequest) GetRequestId() string {
@@ -2042,7 +2339,7 @@ type FetchFileResponse struct {
 
 func (x *FetchFileResponse) Reset() {
 	*x = FetchFileResponse{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[20]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2054,7 +2351,7 @@ func (x *FetchFileResponse) String() string {
 func (*FetchFileResponse) ProtoMessage() {}
 
 func (x *FetchFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[20]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2067,7 +2364,7 @@ func (x *FetchFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchFileResponse.ProtoReflect.Descriptor instead.
 func (*FetchFileResponse) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{20}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *FetchFileResponse) GetRequestId() string {
@@ -2140,7 +2437,7 @@ type FileChunk struct {
 
 func (x *FileChunk) Reset() {
 	*x = FileChunk{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[21]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2152,7 +2449,7 @@ func (x *FileChunk) String() string {
 func (*FileChunk) ProtoMessage() {}
 
 func (x *FileChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[21]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2165,7 +2462,7 @@ func (x *FileChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileChunk.ProtoReflect.Descriptor instead.
 func (*FileChunk) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{21}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *FileChunk) GetRequestId() string {
@@ -2223,7 +2520,7 @@ type DeployRequest struct {
 
 func (x *DeployRequest) Reset() {
 	*x = DeployRequest{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2235,7 +2532,7 @@ func (x *DeployRequest) String() string {
 func (*DeployRequest) ProtoMessage() {}
 
 func (x *DeployRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[22]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2248,7 +2545,7 @@ func (x *DeployRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeployRequest.ProtoReflect.Descriptor instead.
 func (*DeployRequest) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{22}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DeployRequest) GetRequestId() string {
@@ -2332,7 +2629,7 @@ type DeployResponse struct {
 
 func (x *DeployResponse) Reset() {
 	*x = DeployResponse{}
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2344,7 +2641,7 @@ func (x *DeployResponse) String() string {
 func (*DeployResponse) ProtoMessage() {}
 
 func (x *DeployResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[23]
+	mi := &file_proto_dirq_v1_dirq_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2357,7 +2654,7 @@ func (x *DeployResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeployResponse.ProtoReflect.Descriptor instead.
 func (*DeployResponse) Descriptor() ([]byte, []int) {
-	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{23}
+	return file_proto_dirq_v1_dirq_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DeployResponse) GetRequestId() string {
@@ -2444,7 +2741,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	" \x01(\tR\x12registrationSecret\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x04\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd2\x04\n" +
 	"\x10RegisterResponse\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12&\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x12.dirq.v1.AgentRoleR\x04role\x12'\n" +
@@ -2458,7 +2755,17 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x0ftls_client_cert\x18\n" +
 	" \x01(\fR\rtlsClientCert\x12$\n" +
 	"\x0etls_client_key\x18\v \x01(\fR\ftlsClientKey\x12\x1e\n" +
-	"\vtls_ca_cert\x18\f \x01(\fR\ttlsCaCert\"9\n" +
+	"\vtls_ca_cert\x18\f \x01(\fR\ttlsCaCert\x12B\n" +
+	"\x1eserver_signing_public_keys_old\x18\r \x03(\fR\x1aserverSigningPublicKeysOld\"-\n" +
+	"\x10RenewCertRequest\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\xb3\x02\n" +
+	"\x11RenewCertResponse\x12&\n" +
+	"\x0ftls_client_cert\x18\x01 \x01(\fR\rtlsClientCert\x12$\n" +
+	"\x0etls_client_key\x18\x02 \x01(\fR\ftlsClientKey\x12\x1e\n" +
+	"\vtls_ca_cert\x18\x03 \x01(\fR\ttlsCaCert\x129\n" +
+	"\x19server_signing_public_key\x18\x04 \x01(\fR\x16serverSigningPublicKey\x121\n" +
+	"\x15server_signing_key_id\x18\x05 \x01(\tR\x12serverSigningKeyId\x12B\n" +
+	"\x1eserver_signing_public_keys_old\x18\x06 \x03(\fR\x1aserverSigningPublicKeysOld\"9\n" +
 	"\bPeerInfo\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\"(\n" +
@@ -2481,7 +2788,7 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x0fdeploy_response\x18\t \x01(\v2\x17.dirq.v1.DeployResponseH\x00R\x0edeployResponseB\t\n" +
 	"\apayload\"-\n" +
 	"\x10PeerDisconnected\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\xcb\x04\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x8c\x05\n" +
 	"\rServerMessage\x12<\n" +
 	"\rquery_request\x18\x01 \x01(\v2\x15.dirq.v1.QueryRequestH\x00R\fqueryRequest\x126\n" +
 	"\vpeer_update\x18\x02 \x01(\v2\x13.dirq.v1.PeerUpdateH\x00R\n" +
@@ -2492,13 +2799,26 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\bput_file\x18\x05 \x01(\v2\x17.dirq.v1.PutFileRequestH\x00R\aputFile\x12:\n" +
 	"\n" +
 	"fetch_file\x18\x06 \x01(\v2\x19.dirq.v1.FetchFileRequestH\x00R\tfetchFile\x12?\n" +
-	"\x0edeploy_request\x18\v \x01(\v2\x16.dirq.v1.DeployRequestH\x00R\rdeployRequest\x12\"\n" +
+	"\x0edeploy_request\x18\v \x01(\v2\x16.dirq.v1.DeployRequestH\x00R\rdeployRequest\x12?\n" +
+	"\x0erotate_command\x18\f \x01(\v2\x16.dirq.v1.RotateCommandH\x00R\rrotateCommand\x12\"\n" +
 	"\rsigner_key_id\x18\a \x01(\tR\vsignerKeyId\x12$\n" +
 	"\x0esigned_at_unix\x18\b \x01(\x03R\fsignedAtUnix\x12&\n" +
 	"\x0fexpires_at_unix\x18\t \x01(\x03R\rexpiresAtUnix\x12\x1c\n" +
 	"\tsignature\x18\n" +
 	" \x01(\fR\tsignatureB\t\n" +
-	"\apayload\"\x93\x01\n" +
+	"\apayload\"\xa5\x03\n" +
+	"\rRotateCommand\x127\n" +
+	"\x04type\x18\x01 \x01(\x0e2#.dirq.v1.RotateCommand.RotationTypeR\x04type\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x123\n" +
+	"\x16new_signing_public_key\x18\x03 \x01(\fR\x13newSigningPublicKey\x12+\n" +
+	"\x12new_signing_key_id\x18\x04 \x01(\tR\x0fnewSigningKeyId\x125\n" +
+	"\x17old_signing_public_keys\x18\x05 \x03(\fR\x14oldSigningPublicKeys\x12'\n" +
+	"\x0fstagger_seconds\x18\x06 \x01(\x05R\x0estaggerSeconds\"\x80\x01\n" +
+	"\fRotationType\x12\x1d\n" +
+	"\x19ROTATION_TYPE_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18ROTATION_TYPE_AGENT_CERT\x10\x01\x12\x1d\n" +
+	"\x19ROTATION_TYPE_SIGNING_KEY\x10\x02\x12\x14\n" +
+	"\x10ROTATION_TYPE_CA\x10\x03\"\x93\x01\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\"\n" +
@@ -2655,12 +2975,13 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\x16AGENT_ROLE_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fAGENT_ROLE_LEAF\x10\x01\x12\x14\n" +
 	"\x10AGENT_ROLE_RELAY\x10\x02\x12\x1a\n" +
-	"\x16AGENT_ROLE_ZONE_LEADER\x10\x032\xcc\x01\n" +
+	"\x16AGENT_ROLE_ZONE_LEADER\x10\x032\x90\x02\n" +
 	"\n" +
 	"DirQServer\x12?\n" +
 	"\bRegister\x12\x18.dirq.v1.RegisterRequest\x1a\x19.dirq.v1.RegisterResponse\x12@\n" +
 	"\vAgentStream\x12\x15.dirq.v1.AgentMessage\x1a\x16.dirq.v1.ServerMessage(\x010\x01\x12;\n" +
-	"\fRequestPeers\x12\x14.dirq.v1.PeerRequest\x1a\x15.dirq.v1.PeerResponse2M\n" +
+	"\fRequestPeers\x12\x14.dirq.v1.PeerRequest\x1a\x15.dirq.v1.PeerResponse\x12B\n" +
+	"\tRenewCert\x12\x19.dirq.v1.RenewCertRequest\x1a\x1a.dirq.v1.RenewCertResponse2M\n" +
 	"\tDirQRelay\x12@\n" +
 	"\vRelayStream\x12\x15.dirq.v1.AgentMessage\x1a\x16.dirq.v1.ServerMessage(\x010\x01B.Z,github.com/atgreen/dirq/proto/dirq/v1;dirqv1b\x06proto3"
 
@@ -2676,83 +2997,91 @@ func file_proto_dirq_v1_dirq_proto_rawDescGZIP() []byte {
 	return file_proto_dirq_v1_dirq_proto_rawDescData
 }
 
-var file_proto_dirq_v1_dirq_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_proto_dirq_v1_dirq_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_proto_dirq_v1_dirq_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_proto_dirq_v1_dirq_proto_goTypes = []any{
-	(AgentRole)(0),                // 0: dirq.v1.AgentRole
-	(*RegisterRequest)(nil),       // 1: dirq.v1.RegisterRequest
-	(*RegisterResponse)(nil),      // 2: dirq.v1.RegisterResponse
-	(*PeerInfo)(nil),              // 3: dirq.v1.PeerInfo
-	(*PeerRequest)(nil),           // 4: dirq.v1.PeerRequest
-	(*PeerResponse)(nil),          // 5: dirq.v1.PeerResponse
-	(*AgentMessage)(nil),          // 6: dirq.v1.AgentMessage
-	(*PeerDisconnected)(nil),      // 7: dirq.v1.PeerDisconnected
-	(*ServerMessage)(nil),         // 8: dirq.v1.ServerMessage
-	(*AgentHello)(nil),            // 9: dirq.v1.AgentHello
-	(*Heartbeat)(nil),             // 10: dirq.v1.Heartbeat
-	(*QueryRequest)(nil),          // 11: dirq.v1.QueryRequest
-	(*Filter)(nil),                // 12: dirq.v1.Filter
-	(*QueryResult)(nil),           // 13: dirq.v1.QueryResult
-	(*AggregatedQueryResult)(nil), // 14: dirq.v1.AggregatedQueryResult
-	(*PeerUpdate)(nil),            // 15: dirq.v1.PeerUpdate
-	(*AgentUpdatePush)(nil),       // 16: dirq.v1.AgentUpdatePush
-	(*ExecRequest)(nil),           // 17: dirq.v1.ExecRequest
-	(*ExecResponse)(nil),          // 18: dirq.v1.ExecResponse
-	(*PutFileRequest)(nil),        // 19: dirq.v1.PutFileRequest
-	(*FetchFileRequest)(nil),      // 20: dirq.v1.FetchFileRequest
-	(*FetchFileResponse)(nil),     // 21: dirq.v1.FetchFileResponse
-	(*FileChunk)(nil),             // 22: dirq.v1.FileChunk
-	(*DeployRequest)(nil),         // 23: dirq.v1.DeployRequest
-	(*DeployResponse)(nil),        // 24: dirq.v1.DeployResponse
-	nil,                           // 25: dirq.v1.RegisterRequest.TagsEntry
-	nil,                           // 26: dirq.v1.ExecRequest.EnvironmentEntry
-	(*timestamppb.Timestamp)(nil), // 27: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 28: google.protobuf.Struct
+	(AgentRole)(0),                  // 0: dirq.v1.AgentRole
+	(RotateCommand_RotationType)(0), // 1: dirq.v1.RotateCommand.RotationType
+	(*RegisterRequest)(nil),         // 2: dirq.v1.RegisterRequest
+	(*RegisterResponse)(nil),        // 3: dirq.v1.RegisterResponse
+	(*RenewCertRequest)(nil),        // 4: dirq.v1.RenewCertRequest
+	(*RenewCertResponse)(nil),       // 5: dirq.v1.RenewCertResponse
+	(*PeerInfo)(nil),                // 6: dirq.v1.PeerInfo
+	(*PeerRequest)(nil),             // 7: dirq.v1.PeerRequest
+	(*PeerResponse)(nil),            // 8: dirq.v1.PeerResponse
+	(*AgentMessage)(nil),            // 9: dirq.v1.AgentMessage
+	(*PeerDisconnected)(nil),        // 10: dirq.v1.PeerDisconnected
+	(*ServerMessage)(nil),           // 11: dirq.v1.ServerMessage
+	(*RotateCommand)(nil),           // 12: dirq.v1.RotateCommand
+	(*AgentHello)(nil),              // 13: dirq.v1.AgentHello
+	(*Heartbeat)(nil),               // 14: dirq.v1.Heartbeat
+	(*QueryRequest)(nil),            // 15: dirq.v1.QueryRequest
+	(*Filter)(nil),                  // 16: dirq.v1.Filter
+	(*QueryResult)(nil),             // 17: dirq.v1.QueryResult
+	(*AggregatedQueryResult)(nil),   // 18: dirq.v1.AggregatedQueryResult
+	(*PeerUpdate)(nil),              // 19: dirq.v1.PeerUpdate
+	(*AgentUpdatePush)(nil),         // 20: dirq.v1.AgentUpdatePush
+	(*ExecRequest)(nil),             // 21: dirq.v1.ExecRequest
+	(*ExecResponse)(nil),            // 22: dirq.v1.ExecResponse
+	(*PutFileRequest)(nil),          // 23: dirq.v1.PutFileRequest
+	(*FetchFileRequest)(nil),        // 24: dirq.v1.FetchFileRequest
+	(*FetchFileResponse)(nil),       // 25: dirq.v1.FetchFileResponse
+	(*FileChunk)(nil),               // 26: dirq.v1.FileChunk
+	(*DeployRequest)(nil),           // 27: dirq.v1.DeployRequest
+	(*DeployResponse)(nil),          // 28: dirq.v1.DeployResponse
+	nil,                             // 29: dirq.v1.RegisterRequest.TagsEntry
+	nil,                             // 30: dirq.v1.ExecRequest.EnvironmentEntry
+	(*timestamppb.Timestamp)(nil),   // 31: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),         // 32: google.protobuf.Struct
 }
 var file_proto_dirq_v1_dirq_proto_depIdxs = []int32{
-	25, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
+	29, // 0: dirq.v1.RegisterRequest.tags:type_name -> dirq.v1.RegisterRequest.TagsEntry
 	0,  // 1: dirq.v1.RegisterResponse.role:type_name -> dirq.v1.AgentRole
-	3,  // 2: dirq.v1.RegisterResponse.peers:type_name -> dirq.v1.PeerInfo
-	3,  // 3: dirq.v1.PeerResponse.peers:type_name -> dirq.v1.PeerInfo
-	10, // 4: dirq.v1.AgentMessage.heartbeat:type_name -> dirq.v1.Heartbeat
-	13, // 5: dirq.v1.AgentMessage.query_result:type_name -> dirq.v1.QueryResult
-	9,  // 6: dirq.v1.AgentMessage.hello:type_name -> dirq.v1.AgentHello
-	18, // 7: dirq.v1.AgentMessage.exec_response:type_name -> dirq.v1.ExecResponse
-	22, // 8: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
-	21, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
-	14, // 10: dirq.v1.AgentMessage.aggregated_result:type_name -> dirq.v1.AggregatedQueryResult
-	7,  // 11: dirq.v1.AgentMessage.peer_disconnected:type_name -> dirq.v1.PeerDisconnected
-	24, // 12: dirq.v1.AgentMessage.deploy_response:type_name -> dirq.v1.DeployResponse
-	11, // 13: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
-	15, // 14: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
-	16, // 15: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
-	17, // 16: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
-	19, // 17: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
-	20, // 18: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
-	23, // 19: dirq.v1.ServerMessage.deploy_request:type_name -> dirq.v1.DeployRequest
-	27, // 20: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
-	12, // 21: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
-	28, // 22: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
-	27, // 23: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
-	13, // 24: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
-	3,  // 25: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
-	0,  // 26: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
-	26, // 27: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
-	27, // 28: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
-	27, // 29: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
-	1,  // 30: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
-	6,  // 31: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
-	4,  // 32: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
-	6,  // 33: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
-	2,  // 34: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
-	8,  // 35: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
-	5,  // 36: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
-	8,  // 37: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
-	34, // [34:38] is the sub-list for method output_type
-	30, // [30:34] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	6,  // 2: dirq.v1.RegisterResponse.peers:type_name -> dirq.v1.PeerInfo
+	6,  // 3: dirq.v1.PeerResponse.peers:type_name -> dirq.v1.PeerInfo
+	14, // 4: dirq.v1.AgentMessage.heartbeat:type_name -> dirq.v1.Heartbeat
+	17, // 5: dirq.v1.AgentMessage.query_result:type_name -> dirq.v1.QueryResult
+	13, // 6: dirq.v1.AgentMessage.hello:type_name -> dirq.v1.AgentHello
+	22, // 7: dirq.v1.AgentMessage.exec_response:type_name -> dirq.v1.ExecResponse
+	26, // 8: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
+	25, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
+	18, // 10: dirq.v1.AgentMessage.aggregated_result:type_name -> dirq.v1.AggregatedQueryResult
+	10, // 11: dirq.v1.AgentMessage.peer_disconnected:type_name -> dirq.v1.PeerDisconnected
+	28, // 12: dirq.v1.AgentMessage.deploy_response:type_name -> dirq.v1.DeployResponse
+	15, // 13: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
+	19, // 14: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
+	20, // 15: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
+	21, // 16: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
+	23, // 17: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
+	24, // 18: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
+	27, // 19: dirq.v1.ServerMessage.deploy_request:type_name -> dirq.v1.DeployRequest
+	12, // 20: dirq.v1.ServerMessage.rotate_command:type_name -> dirq.v1.RotateCommand
+	1,  // 21: dirq.v1.RotateCommand.type:type_name -> dirq.v1.RotateCommand.RotationType
+	31, // 22: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
+	16, // 23: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
+	32, // 24: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
+	31, // 25: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
+	17, // 26: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
+	6,  // 27: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
+	0,  // 28: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
+	30, // 29: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
+	31, // 30: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
+	31, // 31: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
+	2,  // 32: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
+	9,  // 33: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
+	7,  // 34: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
+	4,  // 35: dirq.v1.DirQServer.RenewCert:input_type -> dirq.v1.RenewCertRequest
+	9,  // 36: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
+	3,  // 37: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
+	11, // 38: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
+	8,  // 39: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
+	5,  // 40: dirq.v1.DirQServer.RenewCert:output_type -> dirq.v1.RenewCertResponse
+	11, // 41: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
+	37, // [37:42] is the sub-list for method output_type
+	32, // [32:37] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_proto_dirq_v1_dirq_proto_init() }
@@ -2760,7 +3089,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 	if File_proto_dirq_v1_dirq_proto != nil {
 		return
 	}
-	file_proto_dirq_v1_dirq_proto_msgTypes[5].OneofWrappers = []any{
+	file_proto_dirq_v1_dirq_proto_msgTypes[7].OneofWrappers = []any{
 		(*AgentMessage_Heartbeat)(nil),
 		(*AgentMessage_QueryResult)(nil),
 		(*AgentMessage_Hello)(nil),
@@ -2771,7 +3100,7 @@ func file_proto_dirq_v1_dirq_proto_init() {
 		(*AgentMessage_PeerDisconnected)(nil),
 		(*AgentMessage_DeployResponse)(nil),
 	}
-	file_proto_dirq_v1_dirq_proto_msgTypes[7].OneofWrappers = []any{
+	file_proto_dirq_v1_dirq_proto_msgTypes[9].OneofWrappers = []any{
 		(*ServerMessage_QueryRequest)(nil),
 		(*ServerMessage_PeerUpdate)(nil),
 		(*ServerMessage_UpdatePush)(nil),
@@ -2779,14 +3108,15 @@ func file_proto_dirq_v1_dirq_proto_init() {
 		(*ServerMessage_PutFile)(nil),
 		(*ServerMessage_FetchFile)(nil),
 		(*ServerMessage_DeployRequest)(nil),
+		(*ServerMessage_RotateCommand)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_dirq_v1_dirq_proto_rawDesc), len(file_proto_dirq_v1_dirq_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   26,
+			NumEnums:      2,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

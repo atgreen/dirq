@@ -105,7 +105,7 @@ All links are **gRPC over TLS**. Agents connect outbound — no inbound ports re
 |-----------|----------|-------------|
 | `dirq-server` | Go | Central server: gRPC, REST API, query engine, Ansible inventory. SQLite by default; PostgreSQL optional. |
 | `dirq-agent` | Go | Endpoint agent: collects data, relays queries, optionally executes commands. Single static binary. |
-| `dirq` | Go | CLI: submit queries, manage hosts/tags/tokens, run ad-hoc commands, generate TLS certs. |
+| `dirq` | Go | CLI: submit queries, manage hosts/tags/tokens, run ad-hoc commands, generate and rotate certificates. |
 | `atgreen.dirq` | Python | Ansible collection: inventory plugin + connection plugin for AAP. |
 
 ### Scaling the Mesh
@@ -824,13 +824,18 @@ After registration:
 
 This activates automatically when the CA key is available. On auto-generated certs, it's always on. For user-supplied certs, set `DIRQ_TLS_CA_KEY`.
 
-Agents persist their issued cert to disk and reuse it across restarts. Certs are valid for 1 year; agents re-register automatically when their cert is within 30 days of expiry.
+Agents persist their issued cert to disk and reuse it across restarts. Certs are valid for 1 year; agents renew automatically when within 30 days of expiry (no restart needed).
 
-**Generate self-signed certs manually:**
+**Generate certs:**
 ```bash
-./bin/dirq tls generate --dir ./certs
-# Creates: ca.crt, ca.key, server.crt, server.key, agent.crt, agent.key
+# Self-signed CA (quick start)
+dirq cert generate --dir ./certs
+
+# Use your own CA
+dirq cert generate --ca ./my-ca.crt --ca-key ./my-ca.key --dir ./certs
 ```
+
+Both generate `server.crt`, `server.key`, `agent.crt`, `agent.key`, and a copy of `ca.crt` in the output directory.
 
 **Full mTLS with user-supplied CA:**
 ```bash
@@ -841,6 +846,18 @@ DIRQ_TLS_CERT=./certs/server.crt DIRQ_TLS_KEY=./certs/server.key dirq-server
 # Agent (only needs CA cert — gets its own cert during registration)
 DIRQ_TLS_CA=./certs/ca.crt dirq-agent
 ```
+
+#### Certificate rotation
+
+Rotate certificates across the fleet without downtime:
+
+```bash
+dirq cert rotate agent_cert --stagger 3600   # renew all agent certs over 1 hour
+dirq cert rotate ca --stagger 3600           # distribute a new CA
+dirq cert rotate signing_key                 # roll the message signing key
+```
+
+The `--stagger` flag spreads renewals over time to avoid overloading the server. See [SECURITY.md](SECURITY.md) for the full rotation procedure including CA and signing key rotation.
 
 ### Authentication
 

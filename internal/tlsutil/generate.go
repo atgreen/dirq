@@ -181,6 +181,122 @@ func GenerateSelfSigned(dir string) (*GenerateResult, error) {
 	return result, nil
 }
 
+// GenerateWithCA generates server and agent certificates signed by the
+// provided CA. The CA cert is copied into the output directory for convenience.
+func GenerateWithCA(dir string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, caFile string) (*GenerateResult, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("create dir: %w", err)
+	}
+
+	result := &GenerateResult{
+		CAFile:         filepath.Join(dir, "ca.crt"),
+		CAKeyFile:      caFile, // point to the original, don't copy the private key
+		ServerCertFile: filepath.Join(dir, "server.crt"),
+		ServerKeyFile:  filepath.Join(dir, "server.key"),
+		AgentCertFile:  filepath.Join(dir, "agent.crt"),
+		AgentKeyFile:   filepath.Join(dir, "agent.key"),
+	}
+
+	// Copy CA cert to output dir so all files are co-located.
+	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
+	if err := os.WriteFile(result.CAFile, caCertPEM, 0644); err != nil {
+		return nil, fmt.Errorf("write CA cert: %w", err)
+	}
+
+	// Generate server cert.
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate server key: %w", err)
+	}
+
+	serverIPs := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+	serverDNS := []string{"localhost", "dirq-server", "*.dirq-server"}
+	if hostname, err := os.Hostname(); err == nil {
+		serverDNS = append(serverDNS, hostname)
+	}
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, _ := iface.Addrs()
+			for _, addr := range addrs {
+				if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP.To4() != nil {
+					serverIPs = append(serverIPs, ipNet.IP)
+				}
+			}
+		}
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, fmt.Errorf("generate serial: %w", err)
+	}
+
+	serverTemplate := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"DirQ"},
+			CommonName:   "DirQ Server",
+		},
+		DNSNames:    serverDNS,
+		IPAddresses: serverIPs,
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+
+	serverCertDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCert, &serverKey.PublicKey, caKey)
+	if err != nil {
+		return nil, fmt.Errorf("create server cert: %w", err)
+	}
+	if err := writePEM(result.ServerCertFile, "CERTIFICATE", serverCertDER); err != nil {
+		return nil, err
+	}
+	if err := writeKeyPEM(result.ServerKeyFile, serverKey); err != nil {
+		return nil, err
+	}
+
+	// Generate agent cert.
+	agentKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate agent key: %w", err)
+	}
+
+	serialNumber2, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, fmt.Errorf("generate serial: %w", err)
+	}
+
+	agentTemplate := &x509.Certificate{
+		SerialNumber: serialNumber2,
+		Subject: pkix.Name{
+			Organization: []string{"DirQ"},
+			CommonName:   "DirQ Agent",
+		},
+		DNSNames:    []string{"localhost", "*"},
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+
+	agentCertDER, err := x509.CreateCertificate(rand.Reader, agentTemplate, caCert, &agentKey.PublicKey, caKey)
+	if err != nil {
+		return nil, fmt.Errorf("create agent cert: %w", err)
+	}
+	if err := writePEM(result.AgentCertFile, "CERTIFICATE", agentCertDER); err != nil {
+		return nil, err
+	}
+	if err := writeKeyPEM(result.AgentKeyFile, agentKey); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // LoadCA loads a CA certificate and private key from PEM files.
 func LoadCA(caFile, caKeyFile string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	certPEM, err := os.ReadFile(caFile)

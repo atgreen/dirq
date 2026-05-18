@@ -25,6 +25,7 @@ const (
 	DirQServer_Register_FullMethodName     = "/dirq.v1.DirQServer/Register"
 	DirQServer_AgentStream_FullMethodName  = "/dirq.v1.DirQServer/AgentStream"
 	DirQServer_RequestPeers_FullMethodName = "/dirq.v1.DirQServer/RequestPeers"
+	DirQServer_RenewCert_FullMethodName    = "/dirq.v1.DirQServer/RenewCert"
 )
 
 // DirQServerClient is the client API for DirQServer service.
@@ -38,6 +39,9 @@ type DirQServerClient interface {
 	AgentStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentMessage, ServerMessage], error)
 	// Agent calls this when it loses all peers and needs reassignment.
 	RequestPeers(ctx context.Context, in *PeerRequest, opts ...grpc.CallOption) (*PeerResponse, error)
+	// Agent calls this to renew its mTLS certificate before expiry.
+	// Requires a valid mTLS connection (CN must match agent_id).
+	RenewCert(ctx context.Context, in *RenewCertRequest, opts ...grpc.CallOption) (*RenewCertResponse, error)
 }
 
 type dirQServerClient struct {
@@ -81,6 +85,16 @@ func (c *dirQServerClient) RequestPeers(ctx context.Context, in *PeerRequest, op
 	return out, nil
 }
 
+func (c *dirQServerClient) RenewCert(ctx context.Context, in *RenewCertRequest, opts ...grpc.CallOption) (*RenewCertResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewCertResponse)
+	err := c.cc.Invoke(ctx, DirQServer_RenewCert_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DirQServerServer is the server API for DirQServer service.
 // All implementations must embed UnimplementedDirQServerServer
 // for forward compatibility.
@@ -92,6 +106,9 @@ type DirQServerServer interface {
 	AgentStream(grpc.BidiStreamingServer[AgentMessage, ServerMessage]) error
 	// Agent calls this when it loses all peers and needs reassignment.
 	RequestPeers(context.Context, *PeerRequest) (*PeerResponse, error)
+	// Agent calls this to renew its mTLS certificate before expiry.
+	// Requires a valid mTLS connection (CN must match agent_id).
+	RenewCert(context.Context, *RenewCertRequest) (*RenewCertResponse, error)
 	mustEmbedUnimplementedDirQServerServer()
 }
 
@@ -110,6 +127,9 @@ func (UnimplementedDirQServerServer) AgentStream(grpc.BidiStreamingServer[AgentM
 }
 func (UnimplementedDirQServerServer) RequestPeers(context.Context, *PeerRequest) (*PeerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RequestPeers not implemented")
+}
+func (UnimplementedDirQServerServer) RenewCert(context.Context, *RenewCertRequest) (*RenewCertResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewCert not implemented")
 }
 func (UnimplementedDirQServerServer) mustEmbedUnimplementedDirQServerServer() {}
 func (UnimplementedDirQServerServer) testEmbeddedByValue()                    {}
@@ -175,6 +195,24 @@ func _DirQServer_RequestPeers_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DirQServer_RenewCert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewCertRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DirQServerServer).RenewCert(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DirQServer_RenewCert_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DirQServerServer).RenewCert(ctx, req.(*RenewCertRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DirQServer_ServiceDesc is the grpc.ServiceDesc for DirQServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -189,6 +227,10 @@ var DirQServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RequestPeers",
 			Handler:    _DirQServer_RequestPeers_Handler,
+		},
+		{
+			MethodName: "RenewCert",
+			Handler:    _DirQServer_RenewCert_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

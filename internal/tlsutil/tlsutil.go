@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/atgreen/dirq/internal/config"
 	"google.golang.org/grpc/credentials"
@@ -24,6 +25,7 @@ import (
 // Config holds TLS file paths loaded from environment variables.
 type Config struct {
 	CAFile     string // path to CA certificate
+	CAFileOld  string // path to old CA certificate (for CA rotation)
 	CAKeyFile  string // path to CA private key (needed for mTLS cert issuance)
 	CertFile   string // path to this process's certificate
 	KeyFile    string // path to this process's private key
@@ -57,6 +59,7 @@ func ConfigFromEnv(fileCfg ...*config.File) Config {
 	}
 	cfg := Config{
 		CAFile:    config.EnvOr("DIRQ_TLS_CA", fc, "tls_ca", ""),
+		CAFileOld: config.EnvOr("DIRQ_TLS_CA_OLD", fc, "tls_ca_old", ""),
 		CAKeyFile: config.EnvOr("DIRQ_TLS_CA_KEY", fc, "tls_ca_key", ""),
 		CertFile:  config.EnvOr("DIRQ_TLS_CERT", fc, "tls_cert", ""),
 		KeyFile:   config.EnvOr("DIRQ_TLS_KEY", fc, "tls_key", ""),
@@ -146,7 +149,7 @@ func EnsureCerts(cfg Config, role string, log *slog.Logger) (Config, error) {
 		"Set DIRQ_TLS_CERT and DIRQ_TLS_KEY for production use.")
 	log.Warn("SECURITY: auto-generated certs protect against passive sniffing but are " +
 		"vulnerable to MITM if an attacker is on-path during agent registration. " +
-		"For production, use dirq tls generate and distribute the CA cert to all agents.")
+		"For production, use dirq cert generate and distribute the CA cert to all agents.")
 
 	result, err := GenerateSelfSigned(autoGenDir())
 	if err != nil {
@@ -195,7 +198,7 @@ func ServerCredentials(cfg Config) (credentials.TransportCredentials, error) {
 
 	// If CA is provided and not in insecure mode, require mTLS.
 	if cfg.CAFile != "" && !cfg.Insecure {
-		caPool, err := loadCAPool(cfg.CAFile)
+		caPool, err := loadCAPool(cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -223,7 +226,27 @@ func ServerCredentialsMixedAuth(cfg Config) (credentials.TransportCredentials, e
 	}
 
 	if cfg.CAFile != "" && !cfg.Insecure {
-		caPool, err := loadCAPool(cfg.CAFile)
+		caPool, err := loadCAPool(cfg)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
+		tlsCfg.ClientCAs = caPool
+	}
+
+	return credentials.NewTLS(tlsCfg), nil
+}
+
+// ServerCredentialsMixedAuthWithReloader returns gRPC transport credentials
+// that dynamically reload the server certificate from disk via a CertReloader.
+func ServerCredentialsMixedAuthWithReloader(cfg Config, reloader *CertReloader) (credentials.TransportCredentials, error) {
+	tlsCfg := &tls.Config{
+		GetCertificate: reloader.GetCertificate,
+		MinVersion:     tls.VersionTLS12,
+	}
+
+	if cfg.CAFile != "" && !cfg.Insecure {
+		caPool, err := loadCAPool(cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -252,7 +275,7 @@ func ClientCredentials(cfg Config) (credentials.TransportCredentials, error) {
 
 	// Load CA for server verification.
 	if cfg.CAFile != "" && !cfg.Insecure {
-		caPool, err := loadCAPool(cfg.CAFile)
+		caPool, err := loadCAPool(cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -270,14 +293,70 @@ func ClientCredentials(cfg Config) (credentials.TransportCredentials, error) {
 	return credentials.NewTLS(tlsCfg), nil
 }
 
-func loadCAPool(caFile string) (*x509.CertPool, error) {
-	caPEM, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read CA cert: %w", err)
+func loadCAPool(cfg Config) (*x509.CertPool, error) {
+	files := []string{cfg.CAFile}
+	if cfg.CAFileOld != "" {
+		files = append(files, cfg.CAFileOld)
 	}
+	return loadCAPoolFromFiles(files...)
+}
+
+// loadCAPoolFromFiles loads CA certificates from multiple files into a single pool.
+func loadCAPoolFromFiles(caFiles ...string) (*x509.CertPool, error) {
 	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("failed to parse CA cert from %s", caFile)
+	for _, f := range caFiles {
+		caPEM, err := os.ReadFile(f)
+		if err != nil {
+			return nil, fmt.Errorf("read CA cert %s: %w", f, err)
+		}
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("failed to parse CA cert from %s", f)
+		}
 	}
 	return pool, nil
+}
+
+// CertReloader holds a TLS certificate that can be reloaded from disk
+// without restarting. Use GetCertificate for server-side TLS and
+// GetClientCertificate for client-side mTLS.
+type CertReloader struct {
+	mu       sync.RWMutex
+	certFile string
+	keyFile  string
+	cert     *tls.Certificate
+}
+
+// NewCertReloader creates a CertReloader and loads the initial certificate.
+func NewCertReloader(certFile, keyFile string) (*CertReloader, error) {
+	r := &CertReloader{certFile: certFile, keyFile: keyFile}
+	if err := r.Reload(); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// Reload re-reads the certificate and key from disk.
+func (r *CertReloader) Reload() error {
+	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
+	if err != nil {
+		return fmt.Errorf("reload cert: %w", err)
+	}
+	r.mu.Lock()
+	r.cert = &cert
+	r.mu.Unlock()
+	return nil
+}
+
+// GetCertificate implements the tls.Config.GetCertificate callback.
+func (r *CertReloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cert, nil
+}
+
+// GetClientCertificate implements the tls.Config.GetClientCertificate callback.
+func (r *CertReloader) GetClientCertificate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cert, nil
 }

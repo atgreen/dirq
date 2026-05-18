@@ -14,9 +14,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
@@ -54,6 +56,12 @@ type Server struct {
 	httpSv  *http.Server
 	signer  *signutil.Signer
 
+	// oldSignerPubKeys holds raw Ed25519 public keys from previous signing keys.
+	// Populated when DIRQ_SIGNING_PUB_OLD / signing_pub_old is configured.
+	// Included in RegisterResponse and RenewCertResponse so agents can verify
+	// messages during a key rotation.
+	oldSignerPubKeys [][]byte
+
 	// Connected zone leaders: agentID -> stream
 	mu      sync.RWMutex
 	streams map[string]*agentStream
@@ -77,9 +85,10 @@ type Server struct {
 	mtlsEnabled bool
 
 	// CA for issuing per-agent client certificates during registration.
-	tlsCfg tlsutil.Config
-	caCert *x509.Certificate
-	caKey  *ecdsa.PrivateKey
+	tlsCfg      tlsutil.Config
+	caCert      *x509.Certificate
+	caKey       *ecdsa.PrivateKey
+	certReloader *tlsutil.CertReloader
 
 	// Dampening: tracks agents that were demoted but bounced back to
 	// a direct server connection.  Prevents the rebalancer from
@@ -207,10 +216,17 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.tlsCfg = tlsCfg
 	if tlsCfg.Enabled() {
+		// Create a CertReloader for hot-reload support.
+		reloader, err := tlsutil.NewCertReloader(tlsCfg.CertFile, tlsCfg.KeyFile)
+		if err != nil {
+			return fmt.Errorf("TLS cert reloader: %w", err)
+		}
+		s.certReloader = reloader
+
 		// Use mixed-auth TLS: verify client certs if given, but don't
 		// require them at the TLS layer. The mTLS interceptor enforces
 		// per-method requirements (Register is exempt).
-		creds, err := tlsutil.ServerCredentialsMixedAuth(tlsCfg)
+		creds, err := tlsutil.ServerCredentialsMixedAuthWithReloader(tlsCfg, reloader)
 		if err != nil {
 			return fmt.Errorf("TLS credentials: %w", err)
 		}
@@ -243,6 +259,23 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.signer = signer
 
+	// Load old signing key for rotation support.
+	signCfg := signutil.ConfigFromEnv(s.cfg.FileCfg)
+	if signCfg.OldPublicKeyFile != "" {
+		oldPubData, err := os.ReadFile(signCfg.OldPublicKeyFile)
+		if err != nil {
+			s.log.Warn("failed to read old signing public key", "error", err)
+		} else {
+			decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(oldPubData)))
+			if err != nil {
+				s.log.Warn("failed to decode old signing public key", "error", err)
+			} else {
+				s.oldSignerPubKeys = append(s.oldSignerPubKeys, decoded)
+				s.log.Info("loaded old signing public key for rotation")
+			}
+		}
+	}
+
 	// Write a ready-to-deploy agent config file with inline TLS certs
 	// and the server's signing public key.
 	s.writeAgentConfig(tlsCfg)
@@ -264,13 +297,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Use HTTPS when TLS certs are available.
 	if tlsCfg.Enabled() && tlsCfg.CertFile != "" {
-		httpTLS, err := tls.LoadX509KeyPair(tlsCfg.CertFile, tlsCfg.KeyFile)
-		if err != nil {
-			return fmt.Errorf("HTTP TLS setup: %w", err)
-		}
 		s.httpSv.TLSConfig = &tls.Config{
-			Certificates: []tls.Certificate{httpTLS},
-			MinVersion:   tls.VersionTLS12,
+			GetCertificate: s.certReloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
 		}
 		s.log.Info("HTTPS enabled for REST API", "addr", s.cfg.HTTPAddr)
 	} else {
@@ -311,6 +340,41 @@ func (s *Server) Start(ctx context.Context) error {
 			errCh <- s.httpSv.Serve(httpLis)
 		}
 	}()
+
+	// Periodic TLS cert reload.
+	if s.certReloader != nil {
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := s.certReloader.Reload(); err != nil {
+						s.log.Warn("TLS cert reload failed", "error", err)
+					}
+				}
+			}
+		}()
+
+		// SIGHUP triggers immediate cert reload.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGHUP)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-sigCh:
+					s.log.Info("SIGHUP received, reloading TLS certificates")
+					if err := s.certReloader.Reload(); err != nil {
+						s.log.Error("TLS cert reload failed after SIGHUP", "error", err)
+					}
+				}
+			}
+		}()
+	}
 
 	select {
 	case err := <-errCh:

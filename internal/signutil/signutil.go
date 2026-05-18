@@ -32,8 +32,10 @@ const (
 )
 
 type Config struct {
-	PrivateKeyFile string
-	PublicKeyFile  string
+	PrivateKeyFile    string
+	PublicKeyFile     string
+	OldPrivateKeyFile string // previous signing key (trusted during rotation)
+	OldPublicKeyFile  string // previous signing public key
 }
 
 type Signer struct {
@@ -53,8 +55,10 @@ func ConfigFromEnv(fileCfg ...*config.File) Config {
 		fc = fileCfg[0]
 	}
 	return Config{
-		PrivateKeyFile: config.EnvOr("DIRQ_SIGNING_KEY", fc, "signing_key", ""),
-		PublicKeyFile:  config.EnvOr("DIRQ_SIGNING_PUB", fc, "signing_pub", ""),
+		PrivateKeyFile:    config.EnvOr("DIRQ_SIGNING_KEY", fc, "signing_key", ""),
+		PublicKeyFile:     config.EnvOr("DIRQ_SIGNING_PUB", fc, "signing_pub", ""),
+		OldPrivateKeyFile: config.EnvOr("DIRQ_SIGNING_KEY_OLD", fc, "signing_key_old", ""),
+		OldPublicKeyFile:  config.EnvOr("DIRQ_SIGNING_PUB_OLD", fc, "signing_pub_old", ""),
 	}
 }
 
@@ -207,6 +211,52 @@ func (s *Signer) VerifyToken(agentID, token string) bool {
 // given agent ID and has not expired. Returns true if valid.
 func (v *Verifier) VerifyToken(agentID, token string) bool {
 	return verifyTokenWith(v.publicKey, agentID, token)
+}
+
+// MultiVerifier tries multiple verifiers in order. A signature is valid
+// if any verifier accepts it. Used during key rotation when both old
+// and new signing keys should be trusted.
+type MultiVerifier struct {
+	verifiers []*Verifier
+}
+
+// NewMultiVerifier creates a verifier that accepts signatures from any
+// of the provided verifiers.
+func NewMultiVerifier(verifiers ...*Verifier) *MultiVerifier {
+	return &MultiVerifier{verifiers: verifiers}
+}
+
+// VerifyServerMessage returns nil if any verifier accepts the message signature.
+func (mv *MultiVerifier) VerifyServerMessage(msg *pb.ServerMessage, now time.Time) error {
+	var lastErr error
+	for _, v := range mv.verifiers {
+		if err := v.VerifyServerMessage(msg, now); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no verifiers configured")
+}
+
+// VerifyToken returns true if any verifier accepts the token.
+func (mv *MultiVerifier) VerifyToken(agentID, token string) bool {
+	for _, v := range mv.verifiers {
+		if v.VerifyToken(agentID, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// Verifiers returns the individual verifiers in this MultiVerifier.
+// Used when constructing a new MultiVerifier that should include all
+// existing verifiers (e.g., during a signing key rotation).
+func (mv *MultiVerifier) Verifiers() []*Verifier {
+	return append([]*Verifier(nil), mv.verifiers...)
 }
 
 // verifyTokenWith validates a session token against a public key.
