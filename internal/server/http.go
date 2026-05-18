@@ -251,7 +251,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Project fields: flatten module data and expand array modules into rows.
 	// SELECT * skips projection (returns raw module data as before).
 	isSelectStar := len(parsed.Select) == 1 && parsed.Select[0].Star
-	if !isSelectStar && parsed.GroupBy == nil {
+	if !isSelectStar && parsed.GroupBy == nil && !parsed.HasAggregates() {
 		fields := make([]string, 0, len(parsed.Select))
 		for _, s := range parsed.Select {
 			if s.Field != "" {
@@ -263,9 +263,9 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply server-side aggregation if the query has GROUP BY.
+	// Apply server-side aggregation if the query has GROUP BY or bare aggregates.
 	aggregated := out
-	if parsed.GroupBy != nil {
+	if parsed.GroupBy != nil || parsed.HasAggregates() {
 		rows := make([]query.Row, len(out))
 		for i, r := range out {
 			row := query.Row{}

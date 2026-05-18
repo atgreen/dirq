@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/atgreen/dirq/internal/config"
 	"github.com/atgreen/dirq/internal/tlsutil"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/spf13/cobra"
 )
 
@@ -1182,11 +1184,22 @@ agents receive the query.
 
 Combine with AND, OR, NOT, and parentheses. AND binds tighter than OR.
 
+IMPORTANT: Comparison operators (>, <, >=, <=) use string comparison, NOT
+numeric or version comparison. They are useful for numeric fields like
+cpu.logical_cores or disk.pct_used, but NOT for version strings like
+packages.version. To find packages by version, use = or LIKE instead:
+
+    WHERE packages.name = 'openssl' AND packages.version LIKE '1.1%'
+
+Do NOT use: packages.version > '1.0' — this does lexicographic comparison
+and will produce incorrect results for version strings.
+
 ## Aggregation
 
   COUNT(field)  SUM(field)  AVG(field)  MIN(field)  MAX(field)
 
-Used with GROUP BY for fleet-wide summaries.
+Use with GROUP BY for per-group summaries, or without GROUP BY for a
+fleet-wide total (e.g. SELECT COUNT(hostname) WHERE os_info.os = 'linux').
 
 ## CLI commands
 
@@ -1310,245 +1323,432 @@ fleet for installed versions, and reports which hosts are vulnerable.
 // ─────────────────────────────────────────────────────────
 
 func askCmd() *cobra.Command {
-	var dryRun bool
-	var timeout int
 	var model string
-	var provider string
 
 	cmd := &cobra.Command{
 		Use:   "ask [natural language question]",
 		Short: "Ask a question in plain English and query the fleet",
-		Long: `Translates a natural language question into a DirQ query using an LLM,
-then executes it against the fleet.
+		Long: `Ask a natural language question about your fleet. An LLM uses DirQ's
+fleet management tools to gather data and compose an answer.
 
-Requires ANTHROPIC_API_KEY or OPENAI_API_KEY to be set.
+Uses the same LLM config as change review (DIRQ_LLM_URL, DIRQ_LLM_API_KEY,
+DIRQ_LLM_MODEL), or falls back to ANTHROPIC_API_KEY. Supports both
+Anthropic's native API and OpenAI-compatible endpoints.
 
 Examples:
   dirq ask "which prod hosts have full disks?"
-  dirq ask "show me all windows servers"
-  dirq ask "how many hosts are running linux?" --dry-run
-  dirq ask "find hosts with openssl installed" --provider openai`,
+  dirq ask "how many hosts are running linux?"
+  dirq ask "what versions of openssl are installed?"
+  dirq ask "are any hosts vulnerable to CVE-2024-6345?"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			question := args[0]
 
-			// Auto-detect provider from available API keys.
-			if provider == "" {
-				if os.Getenv("ANTHROPIC_API_KEY") != "" {
-					provider = "anthropic"
-				} else if os.Getenv("OPENAI_API_KEY") != "" {
-					provider = "openai"
-				} else {
-					return fmt.Errorf("set ANTHROPIC_API_KEY or OPENAI_API_KEY, or use --provider")
-				}
-			}
-
-			// Call LLM to translate question to DirQ query.
-			query, err := llmTranslate(provider, model, question)
-			if err != nil {
-				return fmt.Errorf("LLM translation failed: %w", err)
-			}
-
-			fmt.Fprintf(os.Stderr, "Query: %s\n\n", query)
-
-			if dryRun {
-				return nil
-			}
-
 			if serverURL == "" {
-				return fmt.Errorf("DIRQ_SERVER_URL is not set — use --dry-run to see the generated query without executing")
+				return fmt.Errorf("DIRQ_SERVER_URL is not set")
 			}
 
-			// Execute the query.
-			body, _ := json.Marshal(map[string]any{
-				"query":   query,
-				"timeout": timeout,
-			})
+			// Use review config if available, else fall back to ANTHROPIC_API_KEY.
+			askURL := reviewConfig.url
+			askKey := reviewConfig.key
+			askModel := reviewConfig.model
 
-			resp, err := apiRequest("POST", "/api/v1/query", bytes.NewReader(body))
-			if err != nil {
-				return err
-			}
-
-			if jsonOut {
-				fmt.Println(string(resp))
-				return nil
-			}
-
-			var result struct {
-				QueryID      string `json:"query_id"`
-				Status       string `json:"status"`
-				TotalTargets int    `json:"total_targets"`
-				Received     int    `json:"received"`
-				Results      []struct {
-					Hostname string         `json:"hostname"`
-					Success  bool           `json:"success"`
-					Error    string         `json:"error"`
-					Data     map[string]any `json:"data"`
-				} `json:"results"`
-			}
-			if err := json.Unmarshal(resp, &result); err != nil {
-				return err
-			}
-
-			fmt.Printf("Status: %s | Targets: %d | Received: %d\n\n", result.Status, result.TotalTargets, result.Received)
-
-			for _, r := range result.Results {
-				if !r.Success {
-					fmt.Printf("  %s: ERROR: %s\n", r.Hostname, r.Error)
-					continue
+			if askURL == "" || askKey == "" {
+				if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
+					askURL = "https://api.anthropic.com"
+					askKey = k
+					if askModel == "" {
+						askModel = "claude-sonnet-4-20250514"
+					}
+				} else {
+					return fmt.Errorf("set DIRQ_LLM_URL + DIRQ_LLM_API_KEY, or ANTHROPIC_API_KEY")
 				}
-				formatted, _ := json.MarshalIndent(r.Data, "  ", "  ")
-				fmt.Printf("  %s:\n  %s\n\n", r.Hostname, string(formatted))
 			}
 
-			return nil
+			if model != "" {
+				askModel = model
+			}
+
+			return askWithTools(askURL, askKey, askModel, question)
 		},
 	}
 
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the generated query without executing it")
-	cmd.Flags().IntVar(&timeout, "timeout", 60, "query timeout in seconds")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model (default: claude-sonnet-4-20250514 or gpt-4o)")
-	cmd.Flags().StringVar(&provider, "provider", "", "LLM provider: anthropic or openai (auto-detected from API key)")
+	cmd.Flags().StringVar(&model, "model", "", "LLM model override")
 
 	return cmd
 }
 
 const askSystemPrompt = skillText + `
-You are a DirQ query generator. Given a natural language question about a
-fleet of servers, output ONLY the DirQ query — no explanation, no markdown
-fences, no commentary. Just the raw query on a single line.
+You are a fleet management assistant. Answer the user's question by calling
+the tools available to you. You can call multiple tools and iterate until
+you have enough information to give a clear answer.
 
-If the question is ambiguous, make reasonable assumptions and generate the
-most useful query. If the question cannot be answered with a DirQ query,
-respond with just: SELECT *
+Rules:
+- Use the tools to gather data. Do not guess or make up information.
+- Answer concisely. Lead with the answer, not the method.
+- If a query returns no results, say so and suggest why.
+- Keep answers short — a few sentences for simple questions, a brief list for enumerations.
+- For version comparisons, select the versions and compare them yourself rather than
+  using > or < operators on version strings (they do string comparison, not version comparison).
+- Only answer based on data the tools actually return. If the available fields
+  don't contain what's needed to answer (e.g., NIC speed is not collected),
+  say so clearly rather than using an unrelated field as a proxy. Then suggest
+  a dirq exec command the user could run to get that information.
+- You are READ-ONLY. You cannot execute commands, modify hosts, or change tags.
+  If the user asks to make changes, give them the exact dirq command to run.
+  Keep the suggested command simple and correct:
+    - dirq exec "echo 5 > /hello.txt"           (inline command, NOT --script)
+    - dirq exec --script ./myscript.sh WHERE ... (--script takes a LOCAL FILENAME, not inline code)
+    - dirq exec --become "systemctl restart foo"  (privilege escalation)
+    - dirq hosts tag <agent-id> key=value         (tagging)
+  Do NOT invent flags or syntax that doesn't exist.
+  IMPORTANT: dirq exec runs the command string on remote agents. Shell
+  subshell expansions like $(...) or backticks expand LOCALLY, not on the
+  remote host. Keep commands simple and self-contained. Prefer hardcoded
+  device names or simple pipelines. For example:
+    GOOD: dirq exec "ethtool eth0 | grep Speed"
+    BAD:  dirq exec "ethtool $(ip route | awk '{print $5}')"  (expands locally!)
+- The fleet is mixed Linux and Windows. When suggesting commands, always
+  consider both platforms. If a command is OS-specific, add a WHERE clause:
+    - dirq exec "cat /etc/os-release" WHERE os_info.os = 'linux'
+    - dirq exec "powershell Get-Content C:\hello.txt" WHERE os_info.os = 'windows'
+  If the user's request applies to both, give separate commands for each OS.
+  Linux commands run via sh, Windows commands run via cmd (or PowerShell if
+  the command starts with "powershell").
 `
 
-func llmTranslate(provider, model, question string) (string, error) {
-	switch provider {
-	case "anthropic":
-		return llmAnthropic(model, question)
-	case "openai":
-		return llmOpenAI(model, question)
+// askTools returns tool definitions for the Anthropic API matching the MCP tools.
+func askTools() []map[string]any {
+	return []map[string]any{
+		{
+			"name":        "dirq_query",
+			"description": "Query the fleet using DirQ query language. Returns structured data from matching hosts.\n\nExamples:\n  SELECT hostname, os_info.os WHERE tag.env = 'prod'\n  SELECT hostname, packages.name, packages.version WHERE packages.name = 'openssl'\n  SELECT COUNT(hostname) WHERE os_info.os = 'linux'\n  SELECT os_info.os, COUNT(hostname) GROUP BY os_info.os",
+			"input_schema": map[string]any{
+				"type":     "object",
+				"required": []string{"query"},
+				"properties": map[string]any{
+					"query":   map[string]any{"type": "string", "description": "DirQ SELECT query string"},
+					"timeout": map[string]any{"type": "integer", "description": "Timeout in seconds (default 60)"},
+				},
+			},
+		},
+		{
+			"name":        "dirq_hosts_list",
+			"description": "List all registered hosts. Returns hostname, OS, online status, tags, and agent ID.",
+			"input_schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"where": map[string]any{"type": "string", "description": "Optional WHERE clause to filter hosts"},
+				},
+			},
+		},
+		{
+			"name":        "dirq_hosts_facts",
+			"description": "Get real-time system facts for a specific host: CPU, memory, disk, network, OS, packages, etc.",
+			"input_schema": map[string]any{
+				"type":     "object",
+				"required": []string{"host_id"},
+				"properties": map[string]any{
+					"host_id": map[string]any{"type": "string", "description": "Agent ID or hostname"},
+				},
+			},
+		},
+		{
+			"name":        "dirq_cve_scan",
+			"description": "Scan RHEL hosts for a specific CVE vulnerability.",
+			"input_schema": map[string]any{
+				"type":     "object",
+				"required": []string{"cve_id"},
+				"properties": map[string]any{
+					"cve_id":  map[string]any{"type": "string", "description": "CVE identifier, e.g. CVE-2024-6345"},
+					"where":   map[string]any{"type": "string", "description": "WHERE clause to limit scope"},
+					"timeout": map[string]any{"type": "integer", "description": "Timeout in seconds (default 60)"},
+				},
+			},
+		},
+		{
+			"name":        "dirq_graph",
+			"description": "Show the fleet topology tree: server -> zone leaders -> relay agents -> leaf agents.",
+			"input_schema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	}
+}
+
+// askExecuteTool runs a tool call locally using the existing MCP handlers.
+func askExecuteTool(name string, input map[string]any) string {
+	// Build a fake MCP CallToolRequest.
+	req := mcp.CallToolRequest{}
+	req.Params.Name = name
+	req.Params.Arguments = input
+
+	var handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	switch name {
+	case "dirq_query":
+		handler = handleMCPQuery
+	case "dirq_hosts_list":
+		handler = handleMCPHostsList
+	case "dirq_exec":
+		handler = handleMCPExec
+	case "dirq_hosts_facts":
+		handler = handleMCPHostsFacts
+	case "dirq_hosts_show":
+		handler = handleMCPHostsShow
+	case "dirq_hosts_tag":
+		handler = handleMCPHostsTag
+	case "dirq_cve_scan":
+		handler = handleMCPCVE
+	case "dirq_errata_check":
+		handler = handleMCPErrata
+	case "dirq_kb_check":
+		handler = handleMCPKB
+	case "dirq_graph":
+		handler = handleMCPGraph
 	default:
-		return "", fmt.Errorf("unknown provider %q (use anthropic or openai)", provider)
-	}
-}
-
-func llmAnthropic(model, question string) (string, error) {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		return "", fmt.Errorf("ANTHROPIC_API_KEY is not set")
-	}
-	if model == "" {
-		model = "claude-sonnet-4-20250514"
+		return fmt.Sprintf("unknown tool: %s", name)
 	}
 
-	reqBody, _ := json.Marshal(map[string]any{
-		"model":      model,
-		"max_tokens": 256,
-		"system":     askSystemPrompt,
-		"messages": []map[string]string{
-			{"role": "user", "content": question},
-		},
-	})
-
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := http.DefaultClient.Do(req)
+	result, err := handler(context.Background(), req)
 	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Anthropic API error %d: %s", resp.StatusCode, string(data))
+		return fmt.Sprintf("tool error: %v", err)
 	}
 
-	var result struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return "", err
-	}
-	if len(result.Content) == 0 {
-		return "", fmt.Errorf("empty response from Anthropic")
-	}
-
-	return cleanQuery(result.Content[0].Text), nil
-}
-
-func llmOpenAI(model, question string) (string, error) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		return "", fmt.Errorf("OPENAI_API_KEY is not set")
-	}
-	if model == "" {
-		model = "gpt-4o"
-	}
-
-	reqBody, _ := json.Marshal(map[string]any{
-		"model":      model,
-		"max_tokens": 256,
-		"messages": []map[string]string{
-			{"role": "system", "content": askSystemPrompt},
-			{"role": "user", "content": question},
-		},
-	})
-
-	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("OpenAI API error %d: %s", resp.StatusCode, string(data))
-	}
-
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return "", err
-	}
-	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("empty response from OpenAI")
-	}
-
-	return cleanQuery(result.Choices[0].Message.Content), nil
-}
-
-// cleanQuery strips markdown fences and whitespace from LLM output.
-func cleanQuery(s string) string {
-	s = strings.TrimSpace(s)
-	// Strip ```sql ... ``` or ``` ... ```
-	if strings.HasPrefix(s, "```") {
-		lines := strings.Split(s, "\n")
-		// Remove first and last lines (fences).
-		if len(lines) >= 3 {
-			lines = lines[1 : len(lines)-1]
+	// Extract text from the result.
+	if result != nil && len(result.Content) > 0 {
+		for _, c := range result.Content {
+			if tc, ok := c.(mcp.TextContent); ok {
+				return tc.Text
+			}
 		}
-		s = strings.Join(lines, " ")
 	}
-	// Collapse multi-line queries to single line.
-	s = strings.Join(strings.Fields(s), " ")
-	return s
+	return "no result"
+}
+
+// askFormatInput formats tool input for display.
+func askFormatInput(input map[string]any) string {
+	// Show the most interesting field: query, command, cve_id, host_id, or where.
+	for _, key := range []string{"query", "command", "cve_id", "host_id", "where", "kb_ids", "advisory_id"} {
+		if v, ok := input[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// askWithTools runs an agentic loop: sends the question to the LLM with tools,
+// executes tool calls, and iterates until the LLM produces a final text answer.
+// Supports both Anthropic's native API and OpenAI-compatible endpoints.
+func askWithTools(apiURL, apiKey, model, question string) error {
+	isAnthropic := strings.Contains(apiURL, "anthropic.com")
+
+	if isAnthropic {
+		return askWithToolsAnthropic(apiURL, apiKey, model, question)
+	}
+	return askWithToolsOpenAI(apiURL, apiKey, model, question)
+}
+
+func askWithToolsAnthropic(apiURL, apiKey, model, question string) error {
+	messages := []map[string]any{
+		{"role": "user", "content": question},
+	}
+
+	for range 10 {
+		reqBody, _ := json.Marshal(map[string]any{
+			"model":      model,
+			"max_tokens": 4096,
+			"system":     askSystemPrompt,
+			"tools":      askTools(),
+			"messages":   messages,
+		})
+
+		url := strings.TrimRight(apiURL, "/") + "/v1/messages"
+		req, _ := http.NewRequest("POST", url, bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("API error: %w", err)
+		}
+
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+		}
+
+		var result struct {
+			Content    []json.RawMessage `json:"content"`
+			StopReason string            `json:"stop_reason"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return fmt.Errorf("parse response: %w", err)
+		}
+
+		messages = append(messages, map[string]any{
+			"role":    "assistant",
+			"content": result.Content,
+		})
+
+		if result.StopReason != "tool_use" {
+			for _, block := range result.Content {
+				var tb struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				}
+				if json.Unmarshal(block, &tb) == nil && tb.Type == "text" && tb.Text != "" {
+					fmt.Println(tb.Text)
+				}
+			}
+			return nil
+		}
+
+		var toolResults []map[string]any
+		for _, block := range result.Content {
+			var tc struct {
+				Type  string         `json:"type"`
+				ID    string         `json:"id"`
+				Name  string         `json:"name"`
+				Input map[string]any `json:"input"`
+			}
+			if json.Unmarshal(block, &tc) != nil || tc.Type != "tool_use" {
+				continue
+			}
+
+			fmt.Printf("  [%s] %s\n", tc.Name, askFormatInput(tc.Input))
+			output := askExecuteTool(tc.Name, tc.Input)
+			if len(output) > 50000 {
+				output = output[:50000] + "\n... (truncated)"
+			}
+
+			toolResults = append(toolResults, map[string]any{
+				"type":        "tool_result",
+				"tool_use_id": tc.ID,
+				"content":     output,
+			})
+		}
+
+		messages = append(messages, map[string]any{
+			"role":    "user",
+			"content": toolResults,
+		})
+	}
+
+	return fmt.Errorf("too many iterations without a final answer")
+}
+
+// askOpenAITools converts askTools() to OpenAI function-calling format.
+func askOpenAITools() []map[string]any {
+	var tools []map[string]any
+	for _, t := range askTools() {
+		tools = append(tools, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        t["name"],
+				"description": t["description"],
+				"parameters":  t["input_schema"],
+			},
+		})
+	}
+	return tools
+}
+
+func askWithToolsOpenAI(apiURL, apiKey, model, question string) error {
+	messages := []map[string]any{
+		{"role": "system", "content": askSystemPrompt},
+		{"role": "user", "content": question},
+	}
+
+	for range 10 {
+		reqBody, _ := json.Marshal(map[string]any{
+			"model":      model,
+			"max_tokens": 4096,
+			"tools":      askOpenAITools(),
+			"messages":   messages,
+		})
+
+		url := strings.TrimRight(apiURL, "/") + "/chat/completions"
+		req, _ := http.NewRequest("POST", url, bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("API error: %w", err)
+		}
+
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+		}
+
+		var result struct {
+			Choices []struct {
+				Message struct {
+					Content   *string `json:"content"`
+					ToolCalls []struct {
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"message"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return fmt.Errorf("parse response: %w", err)
+		}
+		if len(result.Choices) == 0 {
+			return fmt.Errorf("empty response from LLM")
+		}
+
+		choice := result.Choices[0]
+
+		// Append the assistant message to history.
+		assistantMsg := map[string]any{"role": "assistant"}
+		if choice.Message.Content != nil {
+			assistantMsg["content"] = *choice.Message.Content
+		}
+		if len(choice.Message.ToolCalls) > 0 {
+			assistantMsg["tool_calls"] = choice.Message.ToolCalls
+		}
+		messages = append(messages, assistantMsg)
+
+		if choice.FinishReason != "tool_calls" {
+			if choice.Message.Content != nil && *choice.Message.Content != "" {
+				fmt.Println(*choice.Message.Content)
+			}
+			return nil
+		}
+
+		for _, tc := range choice.Message.ToolCalls {
+			var input map[string]any
+			json.Unmarshal([]byte(tc.Function.Arguments), &input)
+
+			fmt.Printf("  [%s] %s\n", tc.Function.Name, askFormatInput(input))
+			output := askExecuteTool(tc.Function.Name, input)
+			if len(output) > 50000 {
+				output = output[:50000] + "\n... (truncated)"
+			}
+
+			messages = append(messages, map[string]any{
+				"role":         "tool",
+				"tool_call_id": tc.ID,
+				"content":      output,
+			})
+		}
+	}
+
+	return fmt.Errorf("too many iterations without a final answer")
 }
 
 // ─────────────────────────────────────────────────────────

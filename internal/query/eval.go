@@ -741,10 +741,13 @@ type AggregatedRow struct {
 	Values  map[string]any
 }
 
-// Aggregate applies GROUP BY and aggregation functions to a set of rows.
+// Aggregate applies aggregation functions to a set of rows. If a GROUP BY
+// clause is present, rows are grouped first. If no GROUP BY is present
+// (bare aggregate, e.g. SELECT COUNT(hostname)), all rows are treated as
+// a single group.
 func Aggregate(q *Query, rows []Row) ([]AggregatedRow, error) {
 	if q.GroupBy == nil {
-		return nil, fmt.Errorf("query has no GROUP BY clause")
+		return aggregateAll(q, rows)
 	}
 
 	type group struct {
@@ -795,6 +798,26 @@ func Aggregate(q *Query, rows []Row) ([]AggregatedRow, error) {
 	}
 
 	return result, nil
+}
+
+// aggregateAll computes aggregate functions over all rows as a single group
+// (bare aggregate without GROUP BY).
+func aggregateAll(q *Query, rows []Row) ([]AggregatedRow, error) {
+	ar := AggregatedRow{
+		Values: make(map[string]any),
+	}
+	for _, sel := range q.Select {
+		if sel.AggFunc == nil {
+			continue
+		}
+		displayName := sel.AggFunc.Name + "(" + sel.AggFunc.Arg + ")"
+		val, err := computeAgg(sel.AggFunc, rows)
+		if err != nil {
+			return nil, fmt.Errorf("aggregation %s: %w", displayName, err)
+		}
+		ar.Values[displayName] = val
+	}
+	return []AggregatedRow{ar}, nil
 }
 
 func computeAgg(fn *AggFunc, rows []Row) (any, error) {

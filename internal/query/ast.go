@@ -89,6 +89,16 @@ type Value struct {
 	String *string
 }
 
+// HasAggregates returns true if any SELECT expression uses an aggregate function.
+func (q *Query) HasAggregates() bool {
+	for _, s := range q.Select {
+		if s.AggFunc != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // GroupByClause lists the fields to group by.
 type GroupByClause struct {
 	Fields []string
