@@ -5,6 +5,18 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] - 2026-05-17
+
+### Added
+
+- **mTLS for gRPC** — server issues a unique TLS client certificate per agent during registration (CN = agent ID); all subsequent gRPC connections require a valid client cert signed by the server's CA; the registration secret becomes a one-time bootstrap token rather than a persistent credential; activates automatically when the CA key is available (auto-generated or via `DIRQ_TLS_CA_KEY`)
+- **Agent identity binding** — server, zone leaders, and relay agents verify that the TLS certificate CN matches the claimed agent ID, preventing agent impersonation even with a stolen session token
+- **`dirq hosts list` output capped at 10** — large fleets now show the first 10 hosts with a count summary instead of flooding the terminal; use `--all` to see every host
+
+### Changed
+
+- **Generated `agent.conf` no longer includes shared agent cert/key** — each agent receives its own mTLS cert during registration; only the CA cert is embedded for server verification
+
 ## [0.13.0] - 2026-05-17
 
 ### Added
@@ -359,6 +371,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.14.0]: https://github.com/atgreen/dirq/releases/tag/v0.14.0
 [0.13.0]: https://github.com/atgreen/dirq/releases/tag/v0.13.0
 [0.12.2]: https://github.com/atgreen/dirq/releases/tag/v0.12.2
 [0.12.1]: https://github.com/atgreen/dirq/releases/tag/v0.12.1
