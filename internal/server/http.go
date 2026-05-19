@@ -5,11 +5,8 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,7 +51,6 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
 	mux.HandleFunc("POST /api/v1/deploy", s.authMiddleware(requireScope("admin", s.handleBroadcastDeploy)))
 	mux.HandleFunc("POST /api/v1/rotate", s.authMiddleware(requireScope("admin", s.handleRotate)))
-	mux.HandleFunc("POST /api/v1/content", s.authMiddleware(requireScope("admin", s.handleBroadcastContent)))
 
 	// Status endpoint (authenticated, readonly)
 	mux.HandleFunc("GET /api/v1/status", s.authMiddleware(requireScope("readonly", s.handleStatus)))
@@ -770,57 +766,6 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ─────────────────────────────────────────────────────────
-// Content broadcast endpoint
-// ─────────────────────────────────────────────────────────
-
-func (s *Server) handleBroadcastContent(w http.ResponseWriter, r *http.Request) {
-	content, err := io.ReadAll(io.LimitReader(r.Body, 100*1024*1024)) // 100MB max
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "failed to read body: "+err.Error())
-		return
-	}
-	if len(content) == 0 {
-		httpError(w, http.StatusBadRequest, "empty content")
-		return
-	}
-
-	hash := sha256.Sum256(content)
-	hashHex := hex.EncodeToString(hash[:])
-
-	msg := &pb.ServerMessage{
-		Payload: &pb.ServerMessage_BroadcastContent{
-			BroadcastContent: &pb.BroadcastContent{
-				ContentHash: hashHex,
-				Content:     content,
-			},
-		},
-	}
-	if err := s.signServerMessage(msg); err != nil {
-		httpError(w, http.StatusInternalServerError, "sign failed: "+err.Error())
-		return
-	}
-
-	sent := 0
-	s.mu.RLock()
-	for _, as := range s.streams {
-		select {
-		case as.send <- msg:
-			sent++
-		default:
-			s.log.Warn("zone leader send buffer full during content broadcast", "agent_id", as.agentID)
-		}
-	}
-	s.mu.RUnlock()
-
-	s.log.Info("content broadcast", "hash", hashHex, "size", len(content), "zone_leaders", sent)
-
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"hash":         hashHex,
-		"size":         len(content),
-		"zone_leaders": sent,
-	})
-}
 
 // sanitizeGroupName replaces characters that aren't valid in Ansible group
 // names with underscores.

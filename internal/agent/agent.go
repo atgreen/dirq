@@ -71,9 +71,6 @@ type Agent struct {
 	// RenewCert shortly after the upstream stream is established.
 	needsCertRenewal bool
 
-	// Content-addressable cache for pre-distributed file content.
-	contentCache *contentCache
-
 	// Connected downstream peers
 	mu          sync.RWMutex
 	downstreams map[string]*downstreamPeer
@@ -174,7 +171,6 @@ func New(cfg Config, log *slog.Logger) *Agent {
 		cfg:          cfg,
 		log:          log,
 		downstreams:  make(map[string]*downstreamPeer),
-		contentCache: newContentCache(),
 	}
 }
 
@@ -809,11 +805,6 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 		if a.isTargeted(p.DeployRequest.TargetAgentIds) {
 			go a.handleDeploy(ctx, p.DeployRequest)
 		}
-	case *pb.ServerMessage_BroadcastContent:
-		bc := p.BroadcastContent
-		a.contentCache.Put(bc.Content)
-		a.log.Info("cached broadcast content", "hash", bc.ContentHash, "size", len(bc.Content))
-		a.relayToDownstreams(msg)
 	case *pb.ServerMessage_RotateCommand:
 		rc := p.RotateCommand
 		a.log.Info("rotation command received",

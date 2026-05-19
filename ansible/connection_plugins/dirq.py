@@ -17,7 +17,6 @@ timeouts, AAP integration), install the collection:
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import ssl
@@ -81,11 +80,6 @@ class Connection(ConnectionBase):
 
     transport = "dirq"
     has_pipelining = False
-
-    # Class-level: tracks content hashes already broadcast through the mesh.
-    # Shared across all Connection instances in the same Ansible process so
-    # each unique file is broadcast exactly once per playbook run.
-    _broadcast_cache: set[str] = set()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -193,40 +187,11 @@ class Connection(ConnectionBase):
         return rc, stdout, stderr
 
     def _broadcast_content(self, raw_content):
-        """Broadcast content through the mesh so all agents cache it.
-
-        Returns the SHA256 hex hash. Only broadcasts once per hash per
-        playbook run (tracked in the class-level _broadcast_cache).
-        """
-        content_hash = hashlib.sha256(raw_content).hexdigest()
-        if content_hash in Connection._broadcast_cache:
-            return content_hash
-
-        url = self._server_url.rstrip("/") + "/api/v1/content"
-        req = Request(url, data=raw_content, method="POST")
-        req.add_header("Content-Type", "application/octet-stream")
-        if self._token:
-            req.add_header("Authorization", f"Bearer {self._token}")
-
-        try:
-            resp = urlopen(req, timeout=600, context=self._ssl_context)
-            resp.read()  # drain response
-            Connection._broadcast_cache.add(content_hash)
-            self._display.vvv(
-                f"DIRQ: broadcast content {content_hash[:12]}... ({len(raw_content)} bytes)",
-                host=self._play_context.remote_addr,
-            )
-        except URLError:
-            # Broadcast failed — fall back to inline transfer.
-            return None
-
-        return content_hash
-
     def put_file(self, in_path, out_path):
         self._connect()
 
         with open(in_path, "rb") as f:
-            raw_content = f.read()
+            content = base64.b64encode(f.read()).decode("ascii")
 
         try:
             mode = os.stat(in_path).st_mode & 0o7777
@@ -235,25 +200,15 @@ class Connection(ConnectionBase):
 
         timeout = self.get_option("dirq_file_timeout") or 300
 
-        # Try to use the content cache: broadcast once, then send
-        # hash-only put_file requests to each host.
-        content_hash = self._broadcast_content(raw_content)
-
         payload = {
             "agent_id": self._agent_id,
             "dest_path": out_path,
+            "content": content,
             "mode": mode,
             "become": self._play_context.become,
             "become_user": self._play_context.become_user or "root",
             "timeout": timeout,
         }
-
-        if content_hash:
-            # Content is already cached on every agent — just send the hash.
-            payload["content_hash"] = content_hash
-        else:
-            # Broadcast failed or not supported — send content inline.
-            payload["content"] = base64.b64encode(raw_content).decode("ascii")
 
         job_id = os.environ.get("AWX_JOB_ID", os.environ.get("AAP_JOB_ID", ""))
         if job_id:

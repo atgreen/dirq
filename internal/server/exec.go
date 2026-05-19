@@ -302,14 +302,13 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 // ─────────────────────────────────────────────────────────
 
 type putFileRequest struct {
-	AgentID     string `json:"agent_id"`
-	DestPath    string `json:"dest_path"`
-	Content     string `json:"content"`      // base64-encoded file content
-	ContentHash string `json:"content_hash"` // SHA256 hex; if set, agent resolves from cache
-	Mode        int    `json:"mode"`         // unix file mode
-	Become      bool   `json:"become"`
-	BecomeUser  string `json:"become_user"`
-	Timeout     int    `json:"timeout"`
+	AgentID    string `json:"agent_id"`
+	DestPath   string `json:"dest_path"`
+	Content    string `json:"content"` // base64-encoded file content
+	Mode       int    `json:"mode"`    // unix file mode
+	Become     bool   `json:"become"`
+	BecomeUser string `json:"become_user"`
+	Timeout    int    `json:"timeout"`
 	// AAP attribution
 	AAPJobID       string `json:"aap_job_id"`
 	AAPJobTemplate string `json:"aap_job_template"`
@@ -345,18 +344,11 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 
 	requestID := fmt.Sprintf("put-%d", time.Now().UnixNano())
 
-	// Decode base64 content, or use content_hash for cache-based transfer.
-	var content []byte
-	if req.ContentHash != "" && req.Content == "" {
-		// Agent will resolve content from its local cache.
-		content = nil
-	} else {
-		var err error
-		content, err = decodeBase64(req.Content)
-		if err != nil {
-			httpError(w, http.StatusBadRequest, "invalid base64 content: "+err.Error())
-			return
-		}
+	// Decode base64 content.
+	content, err := decodeBase64(req.Content)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "invalid base64 content: "+err.Error())
+		return
 	}
 
 	// Audit log.
@@ -381,7 +373,6 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 				AgentId:        req.AgentID,
 				DestPath:       req.DestPath,
 				Content:        content,
-				ContentHash:    req.ContentHash,
 				Mode:           int32(req.Mode),
 				Become:         req.Become,
 				BecomeUser:     req.BecomeUser,

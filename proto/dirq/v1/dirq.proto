@@ -159,7 +159,6 @@ message ServerMessage {
     FetchFileRequest fetch_file   = 6; // Phase 2: read file from agent
     DeployRequest deploy_request  = 11; // broadcast package deploy
     RotateCommand rotate_command  = 12; // certificate/key rotation push
-    BroadcastContent broadcast_content = 13; // content-addressable cache push
   }
   string signer_key_id = 7;
   int64 signed_at_unix = 8;
@@ -329,9 +328,6 @@ message ExecResponse {
 }
 
 // PutFileRequest asks the agent to write a file to disk.
-// If content_hash is set and content is empty, the agent looks up the
-// content in its local cache (populated by BroadcastContent). This
-// avoids re-transferring the same module/file to every host.
 message PutFileRequest {
   string request_id  = 1;
   string agent_id    = 2;
@@ -344,18 +340,6 @@ message PutFileRequest {
   string aap_job_id       = 8;
   string aap_job_template = 9;
   string aap_user         = 10;
-  // Content-addressable cache: SHA256 hex digest of content. If set
-  // and content is empty, agent resolves from its content cache.
-  string content_hash = 11;
-}
-
-// BroadcastContent pushes content through the mesh so every agent
-// caches it. Subsequent PutFileRequests with the same content_hash
-// skip the transfer. Used by the Ansible connection plugin to
-// pre-distribute modules before a playbook run.
-message BroadcastContent {
-  string content_hash = 1; // SHA256 hex digest
-  bytes  content      = 2; // raw content
 }
 
 // FetchFileRequest asks the agent to read a file from disk and send it back.
