@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: MIT
+#
+# Build and publish the DirQ Ansible Execution Environment image.
+# Triggers on the same tag push as release.yml so the EE always tracks
+# the matching dirq release. The collection is built from this workspace
+# (not pulled from Galaxy) so the bundled atgreen.dirq is byte-identical
+# to the tag.
+
+name: Execution Environment
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-ee:
+    name: Build and push EE to ghcr.io
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/dirq-ee
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ansible-core
+        run: pip install --upgrade pip ansible-core
+
+      - name: Build collection tarball from this workspace
+        working-directory: collection/atgreen/dirq
+        run: ansible-galaxy collection build --force
+
+      - name: Stage Containerfile context
+        run: |
+          mkdir -p ee-context
+          cp collection/atgreen/dirq/atgreen-dirq-*.tar.gz ee-context/atgreen-dirq.tar.gz
+
+          cat > ee-context/Containerfile <<'EOF'
+          # DirQ Ansible Execution Environment.
+          # The atgreen.dirq collection is baked in from this workspace's
+          # tarball — not pulled from Galaxy — so the EE image is pinned
+          # exactly to the dirq release that built it.
+          FROM quay.io/ansible/ansible-runner:latest
+
+          COPY atgreen-dirq.tar.gz /tmp/atgreen-dirq.tar.gz
+          RUN ansible-galaxy collection install /tmp/atgreen-dirq.tar.gz \
+              && rm /tmp/atgreen-dirq.tar.gz
+
+          LABEL org.opencontainers.image.source="https://github.com/${{ github.repository }}"
+          LABEL org.opencontainers.image.description="DirQ Ansible Execution Environment (collection from workspace tag)"
+          LABEL org.opencontainers.image.licenses="MIT"
+          EOF
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build EE image
+        working-directory: ee-context
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          podman build \
+            -f Containerfile \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:latest" \
+            .
+
+      - name: Verify collection is installed in the image
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          podman run --rm "${IMAGE}:${VERSION}" \
+            ansible-galaxy collection list atgreen.dirq
+
+      - name: Push EE image
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          podman push "${IMAGE}:${VERSION}"
+          podman push "${IMAGE}:latest"
