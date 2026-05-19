@@ -5,6 +5,17 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.2] - 2026-05-19
+
+### Fixed
+
+- **Standalone Ansible connection plugin SyntaxError** — `_broadcast_content` was left as an orphaned function header (no body) by the cache removal in 0.17.1, causing every Ansible task to fail at import with "expected an indented block after function definition"
+
+### Changed
+
+- **`dirq run` is faster on repeat invocations** — discovered Python interpreters are now persisted as the `ansible_python_interpreter` tag, so subsequent runs skip the probe entirely
+- **Query coordination timeout shortened** — server idle timeout in `dispatchQuery` reduced from 5s to 1s; trims the wait for stragglers on every query while keeping a safety net for genuinely unreachable agents
+
 ## [0.17.1] - 2026-05-19
 
 ### Fixed
@@ -443,6 +454,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.2]: https://github.com/atgreen/dirq/releases/tag/v0.17.2
 [0.17.1]: https://github.com/atgreen/dirq/releases/tag/v0.17.1
 [0.17.0]: https://github.com/atgreen/dirq/releases/tag/v0.17.0
 [0.16.0]: https://github.com/atgreen/dirq/releases/tag/v0.16.0
