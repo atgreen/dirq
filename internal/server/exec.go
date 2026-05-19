@@ -112,34 +112,39 @@ func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.Serve
 		return nil, fmt.Errorf("sign control message: %w", err)
 	}
 
-	// Find the stream to send through. If the target agent is a zone
-	// leader, send directly. Otherwise, find its zone leader ancestor
-	// and route through that zone leader's stream — the mesh relays it.
+	// Routing: if the agent is directly connected to this server, send to
+	// its stream and we're done. Otherwise fan out the message to every
+	// directly-connected agent — each one relays into its subtree, and the
+	// targeted agent (matched on AgentId in the message) executes while
+	// every other agent just relays. This is the same pattern as
+	// exec_multi and is resilient to a stale parent_id chain in the DB
+	// (which a topology shift between connect events can leave behind).
 	s.mu.RLock()
-	as, ok := s.streams[agentID]
+	as, directlyConnected := s.streams[agentID]
 	s.mu.RUnlock()
 
-	if !ok {
-		// Agent is not directly connected (it's a relay or leaf).
-		// Find its zone leader and route through that stream.
-		zl, err := s.db.FindZoneLeader(ctx, agentID)
-		if err != nil {
-			return nil, fmt.Errorf("agent %s not connected and no zone leader found: %w", agentID, err)
+	if directlyConnected {
+		select {
+		case as.send <- msg:
+		default:
+			return nil, fmt.Errorf("send buffer full for stream handling agent %s", agentID)
 		}
+	} else {
+		sent := 0
 		s.mu.RLock()
-		as, ok = s.streams[zl.ID]
-		s.mu.RUnlock()
-		if !ok {
-			return nil, fmt.Errorf("zone leader %s for agent %s is not connected", zl.ID, agentID)
+		for _, peer := range s.streams {
+			select {
+			case peer.send <- msg:
+				sent++
+			default:
+				s.log.Warn("send buffer full during exec fan-out", "agent_id", peer.agentID)
+			}
 		}
-		s.log.Info("routing exec through zone leader",
-			"target", agentID, "zone_leader", zl.ID, "zone_leader_host", zl.Hostname)
-	}
-
-	select {
-	case as.send <- msg:
-	default:
-		return nil, fmt.Errorf("send buffer full for stream handling agent %s", agentID)
+		s.mu.RUnlock()
+		if sent == 0 {
+			return nil, fmt.Errorf("no connected agents to relay exec to %s", agentID)
+		}
+		s.log.Info("fan-out exec routing", "target", agentID, "relays", sent)
 	}
 
 	// Wait for response.
