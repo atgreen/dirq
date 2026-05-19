@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.7] - 2026-05-19
+
+### Fixed
+
+- **Ansible Windows modules still failed after 0.17.6** — the splitter fix was correct but ran against pre-mangled input. Ansible wraps every command (Windows included) in `/bin/sh -c '…'`, and POSIX-escapes a literal `'` inside that wrapper as `'"'"'`. The agent stripped the outer single quotes but left the `'"'"'` sequences intact, so the splitter produced `""<base64>""` (literal double quotes) and PowerShell still dumped its usage screen. The agent now undoes the `'"'"'` escape after stripping the outer quotes, mimicking what the absent shell would have done.
+
 ## [0.17.6] - 2026-05-19
 
 ### Fixed
@@ -483,6 +489,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.7]: https://github.com/atgreen/dirq/releases/tag/v0.17.7
 [0.17.6]: https://github.com/atgreen/dirq/releases/tag/v0.17.6
 [0.17.5]: https://github.com/atgreen/dirq/releases/tag/v0.17.5
 [0.17.4]: https://github.com/atgreen/dirq/releases/tag/v0.17.4
