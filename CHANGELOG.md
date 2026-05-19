@@ -5,6 +5,13 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.3] - 2026-05-19
+
+### Fixed
+
+- **HTTP 429 from `/api/v1/exec` under Ansible at scale** — single-host exec was sharing the broadcast rate-limit bucket (10/s, burst 20) with `query` and `exec_multi`, so a `--forks 10` run against ~25 hosts would fail most tasks with "Too Many Requests". `/api/v1/exec` now has its own bucket (100/s, burst 500) sized for point-to-point RPC traffic.
+- **Ansible plugins retry HTTP 429 with exponential backoff + jitter** — both the standalone connection plugin and the collection's shared `DirQClient` survive transient rate-limit bursts instead of failing the playbook task.
+
 ## [0.17.2] - 2026-05-19
 
 ### Fixed
@@ -454,6 +461,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.3]: https://github.com/atgreen/dirq/releases/tag/v0.17.3
 [0.17.2]: https://github.com/atgreen/dirq/releases/tag/v0.17.2
 [0.17.1]: https://github.com/atgreen/dirq/releases/tag/v0.17.1
 [0.17.0]: https://github.com/atgreen/dirq/releases/tag/v0.17.0
