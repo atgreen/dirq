@@ -5,6 +5,14 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.9] - 2026-05-19
+
+### Fixed
+
+- **`atgreen.dirq.dirq` cache plugin was non-functional** — three independent contract violations: `fact_caching_connection` was read from a positional arg that Ansible never passes (the URL silently fell back to `DIRQ_SERVER_URL` env or `localhost:8080`); `get()` returned `{}` on miss instead of raising `KeyError`, shadowing real `gather_facts` output with nothing; and `packages`/`services` were nested under `ansible_facts` inside the per-host fact dict, ending up as `ansible_facts.ansible_facts.packages` after Ansible's own wrapping. All three fixed.
+- **`atgreen.dirq.dirq` connection plugin ignored `dirq_agent_id`** — the per-host agent ID set by the inventory plugin was looked up via `_variable_manager` (not a real `ConnectionBase` attribute) and `_play_context.vars` (empty in modern Ansible), so the lookup always returned `{}` and every connection fell back to a hostname round-trip. The plugin now declares `dirq_agent_id` as a standard option with `vars:` so Ansible's option machinery resolves it from inventory hostvars automatically. The hostname-fallback also switched from a full `GET /api/v1/hosts` scan to the single-host `GET /api/v1/hosts/{hostname}` endpoint.
+- **`atgreen.dirq.dirq` inventory plugin: dead `inventory_cache` doc fragment removed; `verify_file` tightened to require a `dirq.yml`/`dirq.yaml` suffix** (matching the standard Ansible inventory-plugin convention); query-filter result handling guards against missing `hostname` fields. README example renamed accordingly to `inventory.dirq.yml`.
+
 ## [0.17.8] - 2026-05-19
 
 ### Added
@@ -499,6 +507,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.9]: https://github.com/atgreen/dirq/releases/tag/v0.17.9
 [0.17.8]: https://github.com/atgreen/dirq/releases/tag/v0.17.8
 [0.17.7]: https://github.com/atgreen/dirq/releases/tag/v0.17.7
 [0.17.6]: https://github.com/atgreen/dirq/releases/tag/v0.17.6
