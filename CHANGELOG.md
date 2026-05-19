@@ -5,6 +5,15 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.1] - 2026-05-19
+
+### Fixed
+
+- **`WHERE hostname = 'foo'` now filters exec targets** — bare `hostname` is resolved server-side from the agent DB for exec targeting, not just queries
+- **Dotted unquoted values in WHERE** — `WHERE hostname = ip-10-0-1-5.ec2.internal` no longer fails with a parse error
+- **Windows agent reported wrong OS** — gopsutil Platform on Windows returned a long string instead of "windows", breaking OS-based filtering and the Python probe
+- **Python probe required 3.7+** — now requires 3.8+; error message tells RHEL 8 users to install `python39`
+
 ## [0.17.0] - 2026-05-18
 
 ### Added
@@ -434,6 +443,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.1]: https://github.com/atgreen/dirq/releases/tag/v0.17.1
 [0.17.0]: https://github.com/atgreen/dirq/releases/tag/v0.17.0
 [0.16.0]: https://github.com/atgreen/dirq/releases/tag/v0.16.0
 [0.15.1]: https://github.com/atgreen/dirq/releases/tag/v0.15.1
