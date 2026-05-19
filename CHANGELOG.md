@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.4] - 2026-05-19
+
+### Fixed
+
+- **Python interpreter cache survives agent reconnect** — `RegisterAgent` was replacing the entire tags map with what the agent reported on every reconnect, wiping server-set tags (notably the `ansible_python_interpreter` cache from 0.17.2). Tags are now merged instead of replaced; the probe truly runs only once per host.
+
+### Changed
+
+- **Tag semantics on agent re-registration** — agent-reported keys still win on conflict, but tags set server-side (via `PATCH /api/v1/hosts/{id}/tags`) now persist across agent reconnects. Removing a tag from agent config no longer drops it from the server; use `DELETE /api/v1/hosts/{id}/tags/{key}` to clear explicitly.
+
 ## [0.17.3] - 2026-05-19
 
 ### Fixed
@@ -461,6 +471,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.4]: https://github.com/atgreen/dirq/releases/tag/v0.17.4
 [0.17.3]: https://github.com/atgreen/dirq/releases/tag/v0.17.3
 [0.17.2]: https://github.com/atgreen/dirq/releases/tag/v0.17.2
 [0.17.1]: https://github.com/atgreen/dirq/releases/tag/v0.17.1
