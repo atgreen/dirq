@@ -163,6 +163,171 @@ func StripTagFields(expr Expr) Expr {
 	return expr
 }
 
+// IsHostnameField returns true if the field is the bare "hostname" field.
+func IsHostnameField(field string) bool {
+	return field == "hostname"
+}
+
+// HasHostnameCondition returns true if the expression contains a bare hostname condition.
+func HasHostnameCondition(expr Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		return HasHostnameCondition(e.Left) || HasHostnameCondition(e.Right)
+	case *NotExpr:
+		return HasHostnameCondition(e.Expr)
+	case *CompareExpr:
+		return IsHostnameField(e.Field)
+	case *LikeExpr:
+		return IsHostnameField(e.Field)
+	case *InExpr:
+		return IsHostnameField(e.Field)
+	case *IsNullExpr:
+		return IsHostnameField(e.Field)
+	}
+	return false
+}
+
+// MatchesAgentRecord evaluates tag.* and hostname conditions against an agent's
+// record. Non-tag, non-hostname conditions are treated as true (conservative).
+func MatchesAgentRecord(expr Expr, tags map[string]string, hostname string) bool {
+	if expr == nil {
+		return true
+	}
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		left := MatchesAgentRecord(e.Left, tags, hostname)
+		right := MatchesAgentRecord(e.Right, tags, hostname)
+		if e.Op == "AND" {
+			return left && right
+		}
+		return left || right
+	case *NotExpr:
+		return !MatchesAgentRecord(e.Expr, tags, hostname)
+	case *CompareExpr:
+		if IsHostnameField(e.Field) {
+			if e.Value.String != nil {
+				switch e.Operator {
+				case "=":
+					return hostname == *e.Value.String
+				case "!=":
+					return hostname != *e.Value.String
+				}
+			}
+			return false
+		}
+		if !IsTagField(e.Field) {
+			return true
+		}
+		return matchTagCompare(e, tags)
+	case *LikeExpr:
+		if IsHostnameField(e.Field) {
+			result := matchLike(hostname, e.Pattern)
+			if e.Negated {
+				return !result
+			}
+			return result
+		}
+		if !IsTagField(e.Field) {
+			return true
+		}
+		return matchTagLike(e, tags)
+	case *InExpr:
+		if IsHostnameField(e.Field) {
+			found := false
+			for _, v := range e.Values {
+				if hostname == v {
+					found = true
+					break
+				}
+			}
+			if e.Negated {
+				return !found
+			}
+			return found
+		}
+		if !IsTagField(e.Field) {
+			return true
+		}
+		return matchTagIn(e, tags)
+	case *IsNullExpr:
+		if IsHostnameField(e.Field) {
+			if e.Negated {
+				return hostname != ""
+			}
+			return hostname == ""
+		}
+		if !IsTagField(e.Field) {
+			return true
+		}
+		return matchTagIsNull(e, tags)
+	}
+	return true
+}
+
+// matchTagCompare, matchTagLike, matchTagIn, matchTagIsNull extract the
+// tag-matching logic from MatchesAgentTags for reuse in MatchesAgentRecord.
+
+func matchTagCompare(e *CompareExpr, tags map[string]string) bool {
+	key := tagKeyFromField(e.Field)
+	actual, exists := tags[key]
+	if !exists {
+		return e.Operator == "!="
+	}
+	if e.Value.String != nil {
+		switch e.Operator {
+		case "=":
+			return actual == *e.Value.String
+		case "!=":
+			return actual != *e.Value.String
+		}
+	}
+	return false
+}
+
+func matchTagLike(e *LikeExpr, tags map[string]string) bool {
+	key := tagKeyFromField(e.Field)
+	actual, exists := tags[key]
+	if !exists {
+		return e.Negated
+	}
+	result := matchLike(actual, e.Pattern)
+	if e.Negated {
+		return !result
+	}
+	return result
+}
+
+func matchTagIn(e *InExpr, tags map[string]string) bool {
+	key := tagKeyFromField(e.Field)
+	actual, exists := tags[key]
+	if !exists {
+		return e.Negated
+	}
+	found := false
+	for _, v := range e.Values {
+		if actual == v {
+			found = true
+			break
+		}
+	}
+	if e.Negated {
+		return !found
+	}
+	return found
+}
+
+func matchTagIsNull(e *IsNullExpr, tags map[string]string) bool {
+	key := tagKeyFromField(e.Field)
+	_, exists := tags[key]
+	if e.Negated {
+		return exists
+	}
+	return !exists
+}
+
 // HasTagConditions returns true if the expression contains any tag.* references.
 func HasTagConditions(expr Expr) bool {
 	if expr == nil {

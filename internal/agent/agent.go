@@ -364,7 +364,11 @@ func (a *Agent) register(ctx context.Context) error {
 	var osVersion string
 	if hi, err := host.Info(); err == nil {
 		osVersion = hi.PlatformVersion
-		if hi.Platform != "" {
+		// On Linux, Platform is the distro name (e.g. "fedora", "rhel").
+		// On Windows, Platform is a long string like "Microsoft Windows Server
+		// 2022 Standard" which breaks os == "windows" checks, so we keep
+		// runtime.GOOS for Windows.
+		if runtime.GOOS != "windows" && hi.Platform != "" {
 			osName = hi.Platform
 		}
 	}

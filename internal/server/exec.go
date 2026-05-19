@@ -675,12 +675,12 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-filter by tag conditions (these can be resolved without querying agents).
+	// Pre-filter by tag and hostname conditions (resolved server-side from DB).
 	agents := allAgents
-	if query.HasTagConditions(parsed.Where) {
+	if query.HasTagConditions(parsed.Where) || query.HasHostnameCondition(parsed.Where) {
 		agents = make([]db.Agent, 0, len(allAgents))
 		for _, a := range allAgents {
-			if query.MatchesAgentTags(parsed.Where, a.Tags) {
+			if query.MatchesAgentRecord(parsed.Where, a.Tags, a.Hostname) {
 				agents = append(agents, a)
 			}
 		}
