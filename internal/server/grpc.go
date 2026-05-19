@@ -505,11 +505,12 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 	// Agents send "no match" responses when they don't match the WHERE clause,
 	// so the server can count completions and stop as soon as all targets
 	// have answered. The idle timeout is a safety net for agents that crash
-	// or are unreachable through the mesh.
+	// or are unreachable through the mesh — kept tight because queries are
+	// fast (data collection only) and stragglers shouldn't gate the response.
 	var results []*pb.QueryResult
 	hardTimeout := time.NewTimer(qs.timeout)
 	defer hardTimeout.Stop()
-	idleTimeout := time.NewTimer(5 * time.Second)
+	idleTimeout := time.NewTimer(1 * time.Second)
 	defer idleTimeout.Stop()
 
 	responded := 0
@@ -529,7 +530,7 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 				default:
 				}
 			}
-			idleTimeout.Reset(5 * time.Second)
+			idleTimeout.Reset(1 * time.Second)
 		case <-idleTimeout.C:
 			return results, nil
 		case <-hardTimeout.C:

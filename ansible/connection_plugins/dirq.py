@@ -186,7 +186,6 @@ class Connection(ConnectionBase):
 
         return rc, stdout, stderr
 
-    def _broadcast_content(self, raw_content):
     def put_file(self, in_path, out_path):
         self._connect()
 

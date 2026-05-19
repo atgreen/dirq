@@ -12,12 +12,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -3985,8 +3987,32 @@ func discoverPythonInterpreters(hosts []queryHost) error {
 			len(noPython), strings.Join(noPython, ", "))
 	}
 
+	persistPythonInterpreterTags(discovered)
+
 	fmt.Fprintln(os.Stderr)
 	return nil
+}
+
+// persistPythonInterpreterTags writes discovered Python interpreter paths back
+// to the server as host tags so subsequent runs skip the probe entirely.
+// Failures are silent: a missed write just means we re-probe next time.
+func persistPythonInterpreterTags(discovered map[string]string) {
+	if len(discovered) == 0 {
+		return
+	}
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for hostname, path := range discovered {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(hostname, path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			body, _ := json.Marshal(map[string]string{"ansible_python_interpreter": path})
+			_, _ = apiRequest("PATCH", "/api/v1/hosts/"+url.PathEscape(hostname)+"/tags", bytes.NewReader(body))
+		}(hostname, path)
+	}
+	wg.Wait()
 }
 
 // writeInventory creates a temporary YAML inventory file for Ansible.
