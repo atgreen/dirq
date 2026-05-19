@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.8] - 2026-05-19
+
+### Added
+
+- **Ansible Execution Environment image published to ghcr.io** — new `.github/workflows/ee.yml` triggers on tag push and builds `ghcr.io/atgreen/dirq-ee:<version>` (and `:latest`). The `atgreen.dirq` collection is built from the workspace tree at the tag (not pulled from Galaxy), so the EE bundles a collection byte-identical to the release.
+
+### Fixed
+
+- **`dirq doctor` mislabeled the database backend** — the check always read "PostgreSQL ok connected" even on SQLite deployments. The row is now labeled "Database" and the detail reflects the actual backend ("sqlite connected" or "postgres connected"). `/api/v1/status` gained a `database_kind` field driving this.
+
 ## [0.17.7] - 2026-05-19
 
 ### Fixed
@@ -489,6 +499,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.8]: https://github.com/atgreen/dirq/releases/tag/v0.17.8
 [0.17.7]: https://github.com/atgreen/dirq/releases/tag/v0.17.7
 [0.17.6]: https://github.com/atgreen/dirq/releases/tag/v0.17.6
 [0.17.5]: https://github.com/atgreen/dirq/releases/tag/v0.17.5
