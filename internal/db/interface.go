@@ -14,6 +14,7 @@ type DB interface {
 	Ping(ctx context.Context) error
 	Close()
 	RunMigrations(ctx context.Context) error
+	Kind() string // "postgres" or "sqlite"
 
 	// Tokens
 	ValidateToken(ctx context.Context, plaintext string) (Token, error)

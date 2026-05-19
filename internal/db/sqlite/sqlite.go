@@ -71,6 +71,11 @@ func (d *DB) Close() {
 	d.db.Close()
 }
 
+// Kind returns the backend name for status reporting.
+func (d *DB) Kind() string {
+	return "sqlite"
+}
+
 // RunMigrations executes the embedded schema.sql against the database.
 func (d *DB) RunMigrations(ctx context.Context) error {
 	_, err := d.db.ExecContext(ctx, schemaSQL)

@@ -713,6 +713,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	status := map[string]any{
 		"database":         dbOK,
+		"database_kind":    s.db.Kind(),
 		"agents_total":     len(allAgents),
 		"agents_online":    len(onlineAgents),
 		"zone_leaders":     zoneLeaders,

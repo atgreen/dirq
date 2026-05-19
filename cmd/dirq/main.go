@@ -2434,19 +2434,24 @@ func doctorCmd() *cobra.Command {
 
 			// ── Server status (requires auth) ──
 
-			check("PostgreSQL", func() (string, string) {
+			check("Database", func() (string, string) {
 				resp, err := apiRequest("GET", "/api/v1/status", nil)
 				if err != nil {
 					return "fail", err.Error()
 				}
 				var status struct {
-					Database bool `json:"database"`
+					Database     bool   `json:"database"`
+					DatabaseKind string `json:"database_kind"`
 				}
 				json.Unmarshal(resp, &status)
-				if !status.Database {
-					return "fail", "connection failed"
+				kind := status.DatabaseKind
+				if kind == "" {
+					kind = "unknown"
 				}
-				return "ok", "connected"
+				if !status.Database {
+					return "fail", kind + " connection failed"
+				}
+				return "ok", kind + " connected"
 			})
 
 			var statusData struct {

@@ -36,6 +36,7 @@ type mockToken struct {
 }
 
 func (m *mockDB) Ping(context.Context) error { return nil }
+func (m *mockDB) Kind() string                { return "mock" }
 
 func (m *mockDB) ValidateToken(_ context.Context, plaintext string) (db.Token, error) {
 	for _, t := range m.tokens {

@@ -41,6 +41,11 @@ func (db *DB) Close() {
 	db.pool.Close()
 }
 
+// Kind returns the backend name for status reporting.
+func (db *DB) Kind() string {
+	return "postgres"
+}
+
 // RunMigrations executes the embedded schema.sql against the database.
 func (db *DB) RunMigrations(ctx context.Context) error {
 	_, err := db.pool.Exec(ctx, schemaSQL)
