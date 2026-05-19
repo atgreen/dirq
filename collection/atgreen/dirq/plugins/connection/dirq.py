@@ -58,6 +58,15 @@ DOCUMENTATION = """
             type: int
             vars:
                 - name: dirq_file_timeout
+        dirq_agent_id:
+            description: >
+                Stable DirQ agent identifier for the target host. Normally
+                injected per-host by the DirQ inventory plugin via hostvars
+                so the connection plugin can route by ID instead of doing a
+                hostname lookup on every connect.
+            type: str
+            vars:
+                - name: dirq_agent_id
 """
 
 
@@ -78,34 +87,26 @@ class Connection(ConnectionBase):
             return self
 
         host = self._play_context.remote_addr
-        hostvars = self._get_hostvars(host)
 
-        server_url = (
-            hostvars.get("dirq_server_url")
-            or os.environ.get("DIRQ_SERVER_URL")
-            or self.get_option("dirq_server_url")
-            or ""
-        )
-        token = (
-            os.environ.get("DIRQ_TOKEN")
-            or self.get_option("dirq_token")
-            or ""
-        )
+        # All three are option-resolved (vars + env), so this picks up the
+        # inventory plugin's per-host values automatically — no ad-hoc
+        # hostvar plumbing needed.
+        server_url = self.get_option("dirq_server_url") or ""
+        token = self.get_option("dirq_token") or ""
 
         if not server_url:
             raise AnsibleConnectionFailure(
-                "DIRQ_SERVER_URL is not set. Set it in the environment, "
+                "dirq_server_url is not set. Set DIRQ_SERVER_URL in the environment, "
                 "or use the DirQ inventory plugin which sets dirq_server_url per host."
             )
 
         from ansible_collections.atgreen.dirq.plugins.module_utils.api import DirQClient
         self._client = DirQClient(server_url, token)
 
-        # Route by stable dirq_agent_id (set by inventory plugin), not hostname.
-        self._agent_id = hostvars.get("dirq_agent_id")
-
+        # Route by stable dirq_agent_id (set by inventory plugin). Fall back
+        # to a single-host lookup by hostname if the var isn't present.
+        self._agent_id = self.get_option("dirq_agent_id")
         if not self._agent_id:
-            # Fallback: resolve by hostname if not using the DirQ inventory plugin.
             self._agent_id = self._resolve_agent_id_by_hostname(host)
 
         if not self._agent_id:
@@ -122,12 +123,11 @@ class Connection(ConnectionBase):
         return self
 
     def _resolve_agent_id_by_hostname(self, hostname):
-        """Fallback: scan hosts API to find agent by hostname."""
+        """Fallback: single-host lookup by hostname when dirq_agent_id is unset."""
         try:
-            hosts = self._client.get("/api/v1/hosts")
-            for host in hosts:
-                if host.get("hostname") == hostname and host.get("online"):
-                    return host.get("id")
+            host = self._client.get(f"/api/v1/hosts/{hostname}")
+            if host.get("online"):
+                return host.get("id")
         except Exception as e:
             raise AnsibleConnectionFailure(
                 f"Failed to look up agent for '{hostname}': {e}"
@@ -267,30 +267,3 @@ class Connection(ConnectionBase):
 
     def close(self):
         self._connected = False
-
-    def _get_hostvars(self, hostname):
-        """Retrieve per-host inventory variables.
-
-        Tries multiple sources in order of reliability:
-        1. Variable manager with Host object (works in AAP/EE and ansible-playbook)
-        2. play_context.vars (fallback for simpler execution paths)
-        3. Empty dict (hostname fallback will be used for agent_id)
-        """
-        # Source 1: variable manager — the authoritative source for inventory hostvars.
-        try:
-            if hasattr(self, "_variable_manager") and self._variable_manager:
-                # Get the Host object from the inventory.
-                host_obj = self._variable_manager._inventory.get_host(hostname)
-                if host_obj:
-                    return self._variable_manager.get_vars(host=host_obj)
-        except Exception:
-            pass
-
-        # Source 2: play_context.vars — available in some execution paths.
-        try:
-            if hasattr(self._play_context, "vars") and self._play_context.vars:
-                return self._play_context.vars
-        except Exception:
-            pass
-
-        return {}

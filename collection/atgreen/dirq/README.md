@@ -23,14 +23,14 @@ ansible-galaxy collection install atgreen-dirq-1.0.0.tar.gz
 The inventory plugin auto-sets `ansible_connection` for exec-enabled hosts, so existing playbooks work without modification:
 
 ```yaml
-# dirq-inventory.yml
+# inventory.dirq.yml
 plugin: atgreen.dirq.dirq
 server_url: http://dirq-server:8080
 ```
 
 ```bash
 export DIRQ_TOKEN=<your-token>
-ansible-playbook -i dirq-inventory.yml site.yml
+ansible-playbook -i inventory.dirq.yml site.yml
 ```
 
 No `connection: dirq` needed in your playbooks — the inventory plugin handles it.
@@ -40,7 +40,7 @@ No `connection: dirq` needed in your playbooks — the inventory plugin handles 
 Create an inventory source file:
 
 ```yaml
-# dirq-inventory.yml
+# inventory.dirq.yml
 plugin: atgreen.dirq.dirq
 server_url: http://dirq-server:8080
 ```

@@ -26,8 +26,6 @@ DOCUMENTATION = """
         - Sets ansible_connection automatically for exec-enabled hosts.
         - Maps DirQ facts to standard Ansible variables (ansible_os_family, etc.).
         - Routes by stable dirq_agent_id, not hostname string matching.
-    extends_documentation_fragment:
-        - inventory_cache
     options:
         plugin:
             description: Must be atgreen.dirq.dirq
@@ -133,8 +131,11 @@ class InventoryModule(BaseInventoryPlugin):
     NAME = "atgreen.dirq.dirq"
 
     def verify_file(self, path):
+        # Follow the standard Ansible inventory-plugin convention: the file
+        # must end in dirq.yml or dirq.yaml (e.g. inventory.dirq.yml). This
+        # keeps the plugin from claiming every YAML in an inventory dir.
         if super().verify_file(path):
-            return path.endswith((".yml", ".yaml"))
+            return path.endswith(("dirq.yml", "dirq.yaml"))
         return False
 
     def parse(self, inventory, loader, path, cache=True):
@@ -165,7 +166,11 @@ class InventoryModule(BaseInventoryPlugin):
         if query_filter:
             try:
                 result = client.post("/api/v1/query", {"query": query_filter, "timeout": 60})
-                matched = {r["hostname"] for r in result.get("results", []) if r.get("success")}
+                matched = {
+                    r["hostname"]
+                    for r in result.get("results", [])
+                    if r.get("success") and r.get("hostname")
+                }
                 hostvars = {h: v for h, v in hostvars.items() if h in matched}
             except Exception as e:
                 raise AnsibleParserError(f"DirQ query filter failed: {e}")

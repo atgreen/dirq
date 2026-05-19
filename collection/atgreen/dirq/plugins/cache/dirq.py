@@ -43,12 +43,14 @@ class CacheModule(BaseCacheModule):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # fact_caching_connection from ansible.cfg is passed as the first
-        # positional arg to BaseCacheModule. Use it as the server URL,
-        # falling back to DIRQ_SERVER_URL env var.
+        # _uri is wired to fact_caching_connection via the options block in
+        # DOCUMENTATION; reading args[0] (which is what some older cache
+        # examples do) doesn't work in modern Ansible.
         configured_url = ""
-        if args:
-            configured_url = args[0] if isinstance(args[0], str) else ""
+        try:
+            configured_url = self.get_option("_uri") or ""
+        except Exception:
+            configured_url = ""
         self._server_url = (
             configured_url
             or os.environ.get("DIRQ_SERVER_URL", "")
@@ -140,7 +142,9 @@ class CacheModule(BaseCacheModule):
                 facts["ansible_default_ipv4"] = {"address": all_addrs[0]}
                 facts["ansible_all_ipv4_addresses"] = all_addrs
 
-        # Packages as ansible_facts.packages (Ansible package_facts format)
+        # Packages — package_facts consumers read ansible_facts.packages,
+        # which means the cached fact key is just "packages" (Ansible wraps
+        # the cached dict in ansible_facts itself).
         pkgs = dv.get("dirq_packages", {})
         if isinstance(pkgs, dict):
             pkg_list = pkgs.get("packages", [])
@@ -155,10 +159,9 @@ class CacheModule(BaseCacheModule):
                             "arch": p.get("arch", ""),
                             "source": p.get("source", ""),
                         })
-            facts["ansible_facts"] = facts.get("ansible_facts", {})
-            facts["ansible_facts"]["packages"] = pkg_facts
+            facts["packages"] = pkg_facts
 
-        # Services as ansible_facts.services (Ansible service_facts format)
+        # Services — same shape rule as packages.
         svcs = dv.get("dirq_services", {})
         if isinstance(svcs, dict):
             svc_list = svcs.get("services", [])
@@ -172,15 +175,17 @@ class CacheModule(BaseCacheModule):
                             "state": s.get("state", "unknown"),
                             "status": s.get("start_type", "unknown"),
                         }
-            if "ansible_facts" not in facts:
-                facts["ansible_facts"] = {}
-            facts["ansible_facts"]["services"] = svc_facts
+            facts["services"] = svc_facts
 
         return facts
 
     def get(self, key):
         self._load()
-        return self._cache.get(key, {})
+        # Ansible's FactCache contract: KeyError on miss. Returning an empty
+        # dict here would shadow real gather_facts output with nothing.
+        if key not in self._cache:
+            raise KeyError(key)
+        return self._cache[key]
 
     def set(self, key, value):
         self._cache[key] = value
