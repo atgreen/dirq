@@ -36,7 +36,7 @@ func (d *DB) RegisterAgent(ctx context.Context, p db.RegisterAgentParams) (db.Ag
 			agent_version = EXCLUDED.agent_version,
 			listen_addr = EXCLUDED.listen_addr,
 			capabilities = EXCLUDED.capabilities,
-			tags = EXCLUDED.tags,
+			tags = agents.tags || EXCLUDED.tags,
 			exec_enabled = EXCLUDED.exec_enabled,
 			online = true,
 			last_seen_at = now()

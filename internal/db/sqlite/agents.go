@@ -43,7 +43,7 @@ func (d *DB) RegisterAgent(ctx context.Context, p db.RegisterAgentParams) (db.Ag
 			agent_version = excluded.agent_version,
 			listen_addr = excluded.listen_addr,
 			capabilities = excluded.capabilities,
-			tags = excluded.tags,
+			tags = json_patch(agents.tags, excluded.tags),
 			exec_enabled = excluded.exec_enabled,
 			online = 1,
 			last_seen_at = ?`,
