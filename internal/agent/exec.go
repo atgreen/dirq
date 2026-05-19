@@ -182,9 +182,17 @@ func buildCommandWindows(ctx context.Context, cmdStr string, become bool, become
 			inner := strings.TrimPrefix(trimmed, "/bin/sh -c ")
 			// Remove surrounding quotes and trailing '; sleep 0'.
 			inner = strings.TrimSpace(inner)
-			if (strings.HasPrefix(inner, "'") && strings.HasSuffix(inner, "'")) ||
-				(strings.HasPrefix(inner, "\"") && strings.HasSuffix(inner, "\"")) {
+			outerSingleQuoted := strings.HasPrefix(inner, "'") && strings.HasSuffix(inner, "'")
+			if outerSingleQuoted || (strings.HasPrefix(inner, "\"") && strings.HasSuffix(inner, "\"")) {
 				inner = inner[1 : len(inner)-1]
+			}
+			// Undo POSIX shell escape of single quotes inside the outer
+			// '...' wrapper. Ansible writes a literal `'` as `'"'"'` so
+			// it survives single-quoted shell expansion; without an actual
+			// shell to interpret it, we have to do it ourselves or every
+			// inner `'<base64>'` becomes `""<base64>""` after splitting.
+			if outerSingleQuoted {
+				inner = strings.ReplaceAll(inner, `'"'"'`, `'`)
 			}
 			// Ansible appends "; sleep 0" — remove it.
 			inner = strings.TrimSuffix(inner, " ; sleep 0")
