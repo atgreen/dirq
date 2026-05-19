@@ -729,9 +729,12 @@ func escapePowerShellArg(s string) string {
 }
 
 // splitPowerShellArgs splits a PowerShell argument string into individual
-// arguments, respecting quoted strings. This allows the agent to pass
-// through Ansible's PowerShell commands (e.g. -EncodedCommand <base64>)
-// without wrapping them in another powershell -Command layer.
+// arguments, respecting quoted strings. Surrounding quotes are stripped:
+// exec.Command passes each element straight to CreateProcess, so quote
+// characters left inside an arg become literal bytes that PowerShell then
+// fails to parse (e.g. -EncodedCommand sees 'AAAA' and rejects it instead
+// of decoding AAAA). This allows the agent to pass through Ansible's
+// PowerShell commands without wrapping them in another -Command layer.
 func splitPowerShellArgs(s string) []string {
 	var args []string
 	var current strings.Builder
@@ -743,10 +746,8 @@ func splitPowerShellArgs(s string) []string {
 		switch {
 		case c == '\'' && !inDouble:
 			inSingle = !inSingle
-			current.WriteByte(c)
 		case c == '"' && !inSingle:
 			inDouble = !inDouble
-			current.WriteByte(c)
 		case c == ' ' && !inSingle && !inDouble:
 			if current.Len() > 0 {
 				args = append(args, current.String())
