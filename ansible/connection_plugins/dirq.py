@@ -19,8 +19,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import random
 import ssl
-from urllib.error import URLError
+import time
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from ansible.errors import AnsibleConnectionFailure, AnsibleError
@@ -268,16 +270,28 @@ class Connection(ConnectionBase):
         if data is not None:
             body = json.dumps(data).encode("utf-8")
 
-        req = Request(url, data=body, method=method)
-        req.add_header("Content-Type", "application/json")
-        if self._token:
-            req.add_header("Authorization", f"Bearer {self._token}")
+        # Retry on 429 with exponential backoff + jitter. Ansible at high
+        # --forks values can briefly exceed the server's per-token rate limit.
+        max_attempts = 6
+        for attempt in range(max_attempts):
+            req = Request(url, data=body, method=method)
+            req.add_header("Content-Type", "application/json")
+            if self._token:
+                req.add_header("Authorization", f"Bearer {self._token}")
 
-        try:
-            resp = urlopen(req, timeout=600, context=self._ssl_context)
-            resp_data = resp.read().decode("utf-8")
-            return json.loads(resp_data) if resp_data else {}
-        except URLError as e:
-            raise AnsibleConnectionFailure(
-                f"DirQ server request failed: {method} {url}: {e}"
-            )
+            try:
+                resp = urlopen(req, timeout=600, context=self._ssl_context)
+                resp_data = resp.read().decode("utf-8")
+                return json.loads(resp_data) if resp_data else {}
+            except HTTPError as e:
+                if e.code == 429 and attempt < max_attempts - 1:
+                    sleep_for = min(2 ** attempt, 8) * (0.5 + random.random())
+                    time.sleep(sleep_for)
+                    continue
+                raise AnsibleConnectionFailure(
+                    f"DirQ server request failed: {method} {url}: {e}"
+                )
+            except URLError as e:
+                raise AnsibleConnectionFailure(
+                    f"DirQ server request failed: {method} {url}: {e}"
+                )

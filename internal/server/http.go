@@ -24,8 +24,16 @@ const tokenScopeKey contextKey = "tokenScope"
 func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// Rate limiter for broadcast endpoints: 10 requests/sec, burst of 20.
+	// Rate limiter for broadcast endpoints (fan out to every agent):
+	// 10 requests/sec, burst of 20. Kept tight because each call multiplies
+	// load across the fleet.
 	broadcastRL := newRateLimiter(10, 20)
+
+	// Rate limiter for single-host exec: 100 requests/sec, burst of 500.
+	// Sized for Ansible at scale — every fork issues its own exec call,
+	// so a 26-host run with --forks 10 needs much more headroom than the
+	// broadcast bucket allows.
+	singleExecRL := newRateLimiter(100, 500)
 
 	// Read-only API routes (readonly or admin scope)
 	mux.HandleFunc("POST /api/v1/query", s.authMiddleware(requireScope("readonly", s.rateLimitMiddleware(broadcastRL, s.handleQuery))))
@@ -45,7 +53,7 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/v1/tokens/{name}", s.authMiddleware(requireScope("admin", s.handleDeleteToken)))
 
 	// Exec endpoints (admin scope only)
-	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(broadcastRL, s.handleExecCommand))))
+	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(singleExecRL, s.handleExecCommand))))
 	mux.HandleFunc("POST /api/v1/exec_multi", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(broadcastRL, s.handleExecMulti))))
 	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.handlePutFile)))
 	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
