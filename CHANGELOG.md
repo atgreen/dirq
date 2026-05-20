@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.10] - 2026-05-19
+
+### Fixed
+
+- **EE image was built on an obsolete base** — the hand-rolled Containerfile from 0.17.8 inherited `quay.io/ansible/ansible-runner:latest`, an old CentOS 8 image with ansible-core 2.12 baked in. Jobs run in the EE failed with `Collection atgreen.dirq does not support Ansible version 2.12.5.post0` and the inventory plugin's groups (e.g. `os_linux`) weren't honored. EE is now built with `ansible-builder` against `quay.io/ansible/awx-ee:latest` (the official AWX/AAP base, shipping modern ansible-core).
+
+### Changed
+
+- **EE build uses ansible-builder** — CI (`.github/workflows/ee.yml`) and local devs share one canonical `execution-environment.yml` at the repo root; no more drift between the file local devs run `ansible-builder` against and what CI ships. Local builds: `make ee`.
+
 ## [0.17.9] - 2026-05-19
 
 ### Fixed
@@ -507,6 +517,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.10]: https://github.com/atgreen/dirq/releases/tag/v0.17.10
 [0.17.9]: https://github.com/atgreen/dirq/releases/tag/v0.17.9
 [0.17.8]: https://github.com/atgreen/dirq/releases/tag/v0.17.8
 [0.17.7]: https://github.com/atgreen/dirq/releases/tag/v0.17.7
