@@ -25,6 +25,13 @@ images:
     name: quay.io/ansible/awx-ee:latest
 
 dependencies:
+  # ansible-builder v3's final-image check_ansible step needs these
+  # declared explicitly even when the base image already has them — the
+  # pip install is a no-op on awx-ee but satisfies the validation.
+  ansible_core:
+    package_pip: ansible-core
+  ansible_runner:
+    package_pip: ansible-runner
   galaxy: requirements.yml
 
 additional_build_files:
