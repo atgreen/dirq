@@ -4,5 +4,14 @@
 # The path /tmp/atgreen-dirq.tar.gz is staged into the image by the
 # prepend_galaxy step in execution-environment.yml.
 collections:
+  # The atgreen.dirq collection — staged into /tmp by the prepend_galaxy
+  # step in execution-environment.yml so it tracks the dirq tag, never
+  # Galaxy.
   - name: /tmp/atgreen-dirq.tar.gz
     type: file
+  # ansible.windows ships the modules Windows playbooks reach for
+  # (win_ping, win_shell, win_command, win_copy, win_service,
+  # ansible.windows.setup, etc.). ansible-core itself only bundles
+  # ansible.builtin, so without this Windows playbooks fail at parse
+  # time with "Cannot resolve 'ansible.windows.*'".
+  - name: ansible.windows
