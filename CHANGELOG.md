@@ -5,6 +5,13 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.14] - 2026-05-19
+
+### Fixed
+
+- **Restored `os_linux` / `os_windows` family groups in `/api/v1/inventory`** — when the agent started reporting the Linux distro as `agent.OS` ("redhat", "fedora", ...) instead of the family in 0.17.0, the server silently switched from emitting `os_linux` / `os_windows` groups to per-distro groups (`os_redhat`, `os_fedora`, ...), breaking `hosts: os_linux` in every playbook that relied on it. The server now exposes a `dirq_os_family` hostvar and emits both an `os_<family>` group (containing all hosts of that family) and the per-distro `os_<distro>` group as a child of the family group — so `hosts: os_linux` works again *and* distro-specific targeting still works.
+- **`atgreen.dirq` inventory and cache plugins set wrong `ansible_system` / `ansible_os_family`** — both assumed `dirq_os` was a family name, so since 0.17.0 they were setting `ansible_system: Win32NT` on RHEL/Fedora/etc. hosts. Both now consume the server's `dirq_os_family` hostvar (with a fallback for older servers). The inventory plugin's `_detect_distro` also consults the agent-reported distro string first, which is authoritative when present.
+
 ## [0.17.13] - 2026-05-19
 
 ### Fixed
@@ -535,6 +542,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.14]: https://github.com/atgreen/dirq/releases/tag/v0.17.14
 [0.17.13]: https://github.com/atgreen/dirq/releases/tag/v0.17.13
 [0.17.12]: https://github.com/atgreen/dirq/releases/tag/v0.17.12
 [0.17.11]: https://github.com/atgreen/dirq/releases/tag/v0.17.11
