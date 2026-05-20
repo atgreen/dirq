@@ -16,19 +16,31 @@
 version: 3
 
 images:
-  # community-ee-minimal is the upstream-equivalent of Red Hat's
-  # ee-minimal-rhel9 (which requires a paid AAP subscription). It's the
-  # canonical base for layering: Python + ansible-core + ansible-runner,
-  # nothing else. Using awx-ee as a base is a known anti-pattern — it's a
-  # kitchen-sink image with many pre-installed collections, and
-  # ansible-builder ends up trying to re-resolve their transitive deps
-  # (some of which need to be built from source). For AAP customers on
-  # paid subscriptions, swap in
+  # Red Hat's Universal Base Image 9 — explicitly published as the base
+  # to build derived images from, no subscription required, pullable
+  # anonymously from Docker Hub. This is the canonical base in the
+  # upstream ansible-builder documentation. Ansible itself is installed
+  # by the dependencies block below; ansible-builder handles the dnf
+  # install of python3.11 first.
+  #
+  # Why not the obvious-sounding awx-ee / community-ee-minimal? Those are
+  # finished EE images meant to be CONSUMED, not built upon — layering
+  # ansible-builder on top of them either re-resolves their pre-installed
+  # collections' transitive deps (which need gcc) or hits the wrong
+  # access controls. AAP subscribers can swap in
   #   registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9
+  # which is the supported Red Hat equivalent.
   base_image:
-    name: quay.io/ansible/community-ee-minimal:latest
+    name: docker.io/redhat/ubi9:latest
 
 dependencies:
+  python_interpreter:
+    package_system: python3.11
+    python_path: /usr/bin/python3.11
+  ansible_core:
+    package_pip: ansible-core
+  ansible_runner:
+    package_pip: ansible-runner
   galaxy: requirements.yml
 
 additional_build_files:
