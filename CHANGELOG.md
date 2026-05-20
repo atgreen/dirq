@@ -5,6 +5,13 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.18.0] - 2026-05-20
+
+### Added
+
+- **Postgres advisory-lock leader election for HA deployments** — set `DIRQ_LEADER_ELECTION=true` and run N pods against a shared PostgreSQL database; exactly one pod holds the lock at any time and the others stay warm. The new `GET /readyz` endpoint returns 200 on the leader and 503 on standbys, so the Kubernetes/OpenShift endpoint controller automatically routes traffic only to the current leader. Failover RTO is typically 15–30s, most of which is the agent reconnect window. Backward-compatible: default is off; existing single-instance and SQLite deployments are unchanged.
+- **`HA.md`** at the repo root walks through the active/standby model, the lock mechanism, failover timeline, OpenShift manifests (Deployment, PDB, Service, gRPC passthrough + HTTP reencrypt Routes), failure modes (split-brain analysis included), and a pre-prod checklist.
+
 ## [0.17.15] - 2026-05-19
 
 ### Added
@@ -548,6 +555,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.18.0]: https://github.com/atgreen/dirq/releases/tag/v0.18.0
 [0.17.15]: https://github.com/atgreen/dirq/releases/tag/v0.17.15
 [0.17.14]: https://github.com/atgreen/dirq/releases/tag/v0.17.14
 [0.17.13]: https://github.com/atgreen/dirq/releases/tag/v0.17.13
