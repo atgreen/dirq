@@ -5,8 +5,17 @@ package db
 
 import (
 	"context"
+	"log/slog"
 	"time"
 )
+
+// Leader is a handle for the active leader-election worker. A process
+// holding the lock reports IsLeader() == true; Run() blocks while it
+// continuously tries to acquire (and hold) the singleton leader lock.
+type Leader interface {
+	IsLeader() bool
+	Run(ctx context.Context)
+}
 
 // DB is the interface that both postgres and sqlite backends implement.
 type DB interface {
@@ -15,6 +24,11 @@ type DB interface {
 	Close()
 	RunMigrations(ctx context.Context) error
 	Kind() string // "postgres" or "sqlite"
+
+	// NewLeader constructs a leader-election worker for this backend.
+	// Postgres uses an advisory lock; SQLite (single-instance) always
+	// reports leadership.
+	NewLeader(log *slog.Logger) Leader
 
 	// Tokens
 	ValidateToken(ctx context.Context, plaintext string) (Token, error)

@@ -35,8 +35,14 @@ type mockToken struct {
 	token     db.Token
 }
 
-func (m *mockDB) Ping(context.Context) error { return nil }
-func (m *mockDB) Kind() string                { return "mock" }
+func (m *mockDB) Ping(context.Context) error      { return nil }
+func (m *mockDB) Kind() string                    { return "mock" }
+func (m *mockDB) NewLeader(*slog.Logger) db.Leader { return mockLeader{} }
+
+type mockLeader struct{}
+
+func (mockLeader) IsLeader() bool          { return true }
+func (mockLeader) Run(context.Context)      {}
 
 func (m *mockDB) ValidateToken(_ context.Context, plaintext string) (db.Token, error) {
 	for _, t := range m.tokens {

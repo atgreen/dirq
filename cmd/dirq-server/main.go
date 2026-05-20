@@ -47,6 +47,7 @@ func main() {
 		MaxChildrenPerNode: cfgInt("DIRQ_MAX_CHILDREN", fileCfg, "max_children", 0),
 		AuthDisabled:       config.EnvOr("DIRQ_AUTH_DISABLED", fileCfg, "auth_disabled", "false") == "true",
 		RegistrationSecret: config.EnvOr("DIRQ_REGISTRATION_SECRET", fileCfg, "registration_secret", ""),
+		LeaderElection:     config.EnvOr("DIRQ_LEADER_ELECTION", fileCfg, "leader_election", "false") == "true",
 		FileCfg:            fileCfg,
 	}
 

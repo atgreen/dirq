@@ -41,6 +41,7 @@ type Config struct {
 	MaxChildrenPerNode  int    // topology: max children per node (default 50)
 	AuthDisabled        bool   // DIRQ_AUTH_DISABLED=true to allow anonymous API access
 	RegistrationSecret  string // pre-shared secret for agent registration
+	LeaderElection      bool   // when true, only the elected leader marks itself ready
 	FileCfg             *config.File // parsed config file (for TLS/signing fallback)
 }
 
@@ -99,6 +100,10 @@ type Server struct {
 	// Bounded worker pool for fact upserts (#7). Prevents unbounded
 	// goroutine creation when thousands of query results arrive at once.
 	factCh chan factUpsert
+
+	// Leader election. When LeaderElection is disabled, this stays nil
+	// and /readyz unconditionally returns 200 (single-instance mode).
+	leader db.Leader
 }
 
 type factUpsert struct {
@@ -314,6 +319,15 @@ func (s *Server) Start(ctx context.Context) error {
 	// Register this pod in the peers table
 	if err := s.db.RegisterServerPeer(ctx, s.cfg.PodID, s.cfg.GRPCAddr); err != nil {
 		s.log.Warn("failed to register server peer", "error", err)
+	}
+
+	// Leader election. When enabled, /readyz only returns 200 on the
+	// pod that currently holds the singleton lock; standbys remain alive
+	// (their /healthz passes) but stay out of the Service's endpoint set.
+	if s.cfg.LeaderElection {
+		s.leader = s.db.NewLeader(s.log)
+		go s.leader.Run(ctx)
+		s.log.Info("leader election enabled", "backend", s.db.Kind())
 	}
 
 	// Start the stale-agent reaper, topology rebalancer, and fact workers.

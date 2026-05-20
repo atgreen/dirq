@@ -63,7 +63,17 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	// Status endpoint (authenticated, readonly)
 	mux.HandleFunc("GET /api/v1/status", s.authMiddleware(requireScope("readonly", s.handleStatus)))
 
-	// Health check (no auth)
+	// Liveness probe (no auth): the process is up and responsive. Distinct
+	// from /readyz so a healthy standby pod isn't restarted just because
+	// it's not currently serving traffic.
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if s.leader != nil && !s.leader.IsLeader() {
+			http.Error(w, `{"ready":false,"reason":"standby"}`, http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ready":true}`))
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
