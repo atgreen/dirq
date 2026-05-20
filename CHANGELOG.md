@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.12] - 2026-05-19
+
+### Fixed
+
+- **EE build failed because `awx-ee` was the wrong base for layering** — `awx-ee` is a kitchen-sink image with many pre-installed collections; `ansible-builder` on top of it re-resolves their transitive Python deps (e.g. `ovirt-imageio`), some of which need to compile from source. The build died with `gcc: No such file or directory` because `awx-ee` doesn't ship a compiler. Switched the base to `quay.io/ansible/community-ee-minimal:latest` — the upstream-equivalent of Red Hat's `ee-minimal-rhel9` (which requires an AAP subscription) and the canonical base for layering: Python, `ansible-core`, `ansible-runner`, nothing else to fight with.
+
 ## [0.17.11] - 2026-05-19
 
 ### Fixed
@@ -523,6 +529,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.12]: https://github.com/atgreen/dirq/releases/tag/v0.17.12
 [0.17.11]: https://github.com/atgreen/dirq/releases/tag/v0.17.11
 [0.17.10]: https://github.com/atgreen/dirq/releases/tag/v0.17.10
 [0.17.9]: https://github.com/atgreen/dirq/releases/tag/v0.17.9
