@@ -113,12 +113,24 @@ _ARCH_MAP = {
 }
 
 
-def _detect_distro(os_type, os_version, hostname):
-    """Best-effort detection of ansible_distribution from DirQ data."""
-    if os_type == "windows":
+def _detect_distro(os_type, os_family, os_version, hostname):
+    """Best-effort detection of ansible_distribution from DirQ data.
+
+    os_type is the agent-reported OS (now the distro name on Linux —
+    "redhat", "fedora", "ubuntu", ... — and literally "windows" on Windows).
+    os_family is the server-derived family ("linux"/"windows").
+    """
+    if os_family == "windows":
         return "Windows", os_version, "Microsoft"
 
-    # Check os_version and hostname for distro hints.
+    # Try to match the agent-reported distro string directly first; it's
+    # authoritative when the agent provides it.
+    if os_type:
+        for pattern, distro in _DISTRO_PATTERNS.items():
+            if pattern in os_type.lower():
+                return distro, os_version, distro
+
+    # Fall back to scraping os_version + hostname for hints.
     search = (os_version + " " + hostname).lower()
     for pattern, distro in _DISTRO_PATTERNS.items():
         if pattern in search:
@@ -197,17 +209,24 @@ class InventoryModule(BaseInventoryPlugin):
 
             # ── Map to standard Ansible facts ──
             os_type = dv.get("dirq_os", "linux")
+            # dirq_os_family is server-derived ("linux"/"windows") so the
+            # Ansible fact mapping doesn't depend on whether dirq_os is a
+            # family name or a distro name. Fall back to deriving it
+            # locally for older servers that don't set it.
+            os_family = dv.get("dirq_os_family") or (
+                "windows" if os_type == "windows" else "linux"
+            )
             os_version = dv.get("dirq_os_version", "")
             arch = dv.get("dirq_arch", "amd64")
 
             # OS family
             self.inventory.set_variable(hostname, "ansible_os_family",
-                                        _OS_FAMILY_MAP.get(os_type, os_type.capitalize()))
+                                        _OS_FAMILY_MAP.get(os_family, os_family.capitalize()))
             self.inventory.set_variable(hostname, "ansible_system",
-                                        "Linux" if os_type == "linux" else "Win32NT")
+                                        "Linux" if os_family == "linux" else "Win32NT")
 
             # Distribution
-            distro, distro_version, distro_release = _detect_distro(os_type, os_version, hostname)
+            distro, distro_version, distro_release = _detect_distro(os_type, os_family, os_version, hostname)
             self.inventory.set_variable(hostname, "ansible_distribution", distro)
             self.inventory.set_variable(hostname, "ansible_distribution_version", distro_version)
             self.inventory.set_variable(hostname, "ansible_distribution_release", distro_release)

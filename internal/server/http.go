@@ -551,11 +551,21 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 
 		hostname := agent.Hostname
 
+		// agent.OS is the distro name on Linux ("redhat", "fedora", "ubuntu",
+		// ...) and the literal "windows" on Windows. Derive the family
+		// ("linux"/"windows") so playbooks can target os_linux generically
+		// while still letting distro-specific work target os_redhat etc.
+		osFamily := "linux"
+		if strings.EqualFold(agent.OS, "windows") {
+			osFamily = "windows"
+		}
+
 		// Collect host vars.
 		facts := factsByAgent[agent.ID]
 		hostFacts := map[string]any{
 			"dirq_agent_id":      agent.ID,
 			"dirq_os":            agent.OS,
+			"dirq_os_family":     osFamily,
 			"dirq_os_version":    agent.OSVersion,
 			"dirq_arch":          agent.Arch,
 			"dirq_agent_version": agent.AgentVersion,
@@ -572,9 +582,31 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		}
 		hostvars[hostname] = hostFacts
 
-		// Group by OS: os_linux, os_windows
-		osGroup := "os_" + agent.OS
-		groups[osGroup] = append(groups[osGroup], hostname)
+		// OS grouping: agent.OS is a distro name on Linux now, so we emit
+		// BOTH the per-distro group (os_redhat, os_fedora, ...) AND the
+		// family group (os_linux, os_windows). The distro group is a
+		// child of the family group so `hosts: os_linux` still reaches
+		// every Linux host the way it always did, while distro-specific
+		// targeting still works.
+		osFamilyGroup := "os_" + osFamily
+		osDistroGroup := "os_" + sanitizeGroupName(agent.OS)
+		if osDistroGroup == osFamilyGroup {
+			// Windows hosts hit this — agent.OS == "windows" == family;
+			// just one group.
+			groups[osFamilyGroup] = append(groups[osFamilyGroup], hostname)
+		} else {
+			groups[osDistroGroup] = append(groups[osDistroGroup], hostname)
+			found := false
+			for _, existing := range parentGroups[osFamilyGroup] {
+				if existing == osDistroGroup {
+					found = true
+					break
+				}
+			}
+			if !found {
+				parentGroups[osFamilyGroup] = append(parentGroups[osFamilyGroup], osDistroGroup)
+			}
+		}
 
 		// Group by arch: arch_amd64, arch_arm64
 		archGroup := "arch_" + agent.Arch

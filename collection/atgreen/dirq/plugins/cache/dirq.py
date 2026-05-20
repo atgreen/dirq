@@ -84,6 +84,12 @@ class CacheModule(BaseCacheModule):
     def _map_facts(self, hostname, dv):
         """Map DirQ data to standard Ansible facts."""
         os_type = dv.get("dirq_os", "linux")
+        # dirq_os is now a distro name on Linux ("redhat", "fedora", ...);
+        # use the server-provided family for ansible_system / os_family,
+        # falling back to the legacy interpretation for older servers.
+        os_family = dv.get("dirq_os_family") or (
+            "windows" if os_type == "windows" else "linux"
+        )
         arch = dv.get("dirq_arch", "amd64")
 
         arch_map = {"amd64": "x86_64", "arm64": "aarch64", "386": "i386"}
@@ -91,8 +97,8 @@ class CacheModule(BaseCacheModule):
         facts = {
             "ansible_hostname": hostname,
             "ansible_fqdn": hostname,
-            "ansible_system": "Linux" if os_type == "linux" else "Win32NT",
-            "ansible_os_family": "Windows" if os_type == "windows" else "Linux",
+            "ansible_system": "Linux" if os_family == "linux" else "Win32NT",
+            "ansible_os_family": "Windows" if os_family == "windows" else "Linux",
             "ansible_architecture": arch_map.get(arch, arch),
             "ansible_machine": arch_map.get(arch, arch),
         }
