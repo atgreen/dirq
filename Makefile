@@ -48,6 +48,11 @@ proto:  ## Regenerate protobuf Go code
 collection:  ## Build Ansible collection tarball
 	cd collection/atgreen/dirq && ansible-galaxy collection build --force
 
+ee: collection  ## Build the Ansible Execution Environment image (dirq-ee:latest)
+	cp collection/atgreen/dirq/atgreen-dirq-*.tar.gz atgreen-dirq.tar.gz
+	ansible-builder build -t dirq-ee:latest -f execution-environment.yml
+	rm -f atgreen-dirq.tar.gz
+
 cross:  ## Cross-compile for all release platforms
 	@mkdir -p dist
 	@echo "Building dirq-server (linux/amd64 only, requires CGO)..."

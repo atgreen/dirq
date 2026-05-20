@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+# Ansible Galaxy requirements for the dirq Execution Environment.
+# Installed by ansible-builder during the build of execution-environment.yml.
+# The path /tmp/atgreen-dirq.tar.gz is staged into the image by the
+# prepend_galaxy step in execution-environment.yml.
+collections:
+  - name: /tmp/atgreen-dirq.tar.gz
+    type: file

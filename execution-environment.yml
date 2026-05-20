@@ -1,24 +1,44 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Anthony Green <green@moxielogic.com>
 #
-# Build a custom Execution Environment for AAP that includes the DirQ collection.
+# Ansible Execution Environment for AAP.
 #
-# Usage:
-#   ansible-builder build -t dirq-ee:latest -f execution-environment.yml
+# This file is consumed by both CI (.github/workflows/ee.yml) and local
+# devs. The atgreen.dirq collection is installed from a local tarball
+# built from this workspace — not from Galaxy — so the EE always matches
+# the tag that built it.
 #
-# Then push to your container registry and add as an EE in AAP.
+# Build steps:
+#   1. (cd collection/atgreen/dirq && ansible-galaxy collection build --force)
+#   2. cp collection/atgreen/dirq/atgreen-dirq-*.tar.gz ./atgreen-dirq.tar.gz
+#   3. ansible-builder build -t dirq-ee:latest
 
 version: 3
 
-build_arg_defaults:
-  ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: "--pre"
+images:
+  # awx-ee is the official AWX/AAP execution-environment base. It ships
+  # with modern ansible-core (currently 2.16+) and the standard collection
+  # set AAP jobs commonly rely on. The legacy quay.io/ansible/ansible-runner
+  # image is CentOS 8 + ansible-core 2.12 — too old to load modern
+  # collections, so don't use it as a base for new EEs.
+  base_image:
+    name: quay.io/ansible/awx-ee:latest
 
 dependencies:
-  galaxy:
-    collections:
-      - name: atgreen.dirq
-        version: ">=1.0.0"
+  galaxy: requirements.yml
+
+additional_build_files:
+  - src: atgreen-dirq.tar.gz
+    dest: configs
 
 additional_build_steps:
+  prepend_galaxy:
+    # Stage the local tarball where requirements.yml expects to find it,
+    # before ansible-galaxy runs.
+    - COPY _build/configs/atgreen-dirq.tar.gz /tmp/atgreen-dirq.tar.gz
+  append_galaxy:
+    - RUN rm -f /tmp/atgreen-dirq.tar.gz
   append_final:
-    - RUN echo "DirQ Execution Environment ready"
+    - LABEL org.opencontainers.image.source="https://github.com/atgreen/dirq"
+    - LABEL org.opencontainers.image.description="DirQ Ansible Execution Environment"
+    - LABEL org.opencontainers.image.licenses="MIT"
