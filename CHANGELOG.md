@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.13] - 2026-05-19
+
+### Fixed
+
+- **EE base image was wrong (again) — settled on UBI9 per Red Hat guidance** — `community-ee-minimal:latest` isn't pullable anonymously, and both `awx-ee` and `community-ee-minimal` are finished EE images meant to be *consumed*, not built upon. Per the ansible-builder documentation's list of supported bases, switched to `docker.io/redhat/ubi9:latest` (Red Hat's free Universal Base Image, anonymous pull, explicitly published as the base for derived images). `ansible-builder` now installs `python3.11`, `ansible-core`, and `ansible-runner` itself. AAP customers on a paid subscription can swap in `registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9`.
+
 ## [0.17.12] - 2026-05-19
 
 ### Fixed
@@ -529,6 +535,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.13]: https://github.com/atgreen/dirq/releases/tag/v0.17.13
 [0.17.12]: https://github.com/atgreen/dirq/releases/tag/v0.17.12
 [0.17.11]: https://github.com/atgreen/dirq/releases/tag/v0.17.11
 [0.17.10]: https://github.com/atgreen/dirq/releases/tag/v0.17.10
