@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.11] - 2026-05-19
+
+### Fixed
+
+- **EE build failed at ansible-builder's final-image `check_ansible` step** — the validator runs `import ansible` and `import ansible_runner` against `/usr/bin/python3` and aborts the build if either is missing, even when the base image already has them. `execution-environment.yml` now declares both under `dependencies.ansible_core` / `dependencies.ansible_runner`, satisfying the check (pip install is a no-op on `awx-ee` since they're already present).
+
 ## [0.17.10] - 2026-05-19
 
 ### Fixed
@@ -517,6 +523,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.11]: https://github.com/atgreen/dirq/releases/tag/v0.17.11
 [0.17.10]: https://github.com/atgreen/dirq/releases/tag/v0.17.10
 [0.17.9]: https://github.com/atgreen/dirq/releases/tag/v0.17.9
 [0.17.8]: https://github.com/atgreen/dirq/releases/tag/v0.17.8
