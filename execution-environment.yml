@@ -16,22 +16,19 @@
 version: 3
 
 images:
-  # awx-ee is the official AWX/AAP execution-environment base. It ships
-  # with modern ansible-core (currently 2.16+) and the standard collection
-  # set AAP jobs commonly rely on. The legacy quay.io/ansible/ansible-runner
-  # image is CentOS 8 + ansible-core 2.12 — too old to load modern
-  # collections, so don't use it as a base for new EEs.
+  # community-ee-minimal is the upstream-equivalent of Red Hat's
+  # ee-minimal-rhel9 (which requires a paid AAP subscription). It's the
+  # canonical base for layering: Python + ansible-core + ansible-runner,
+  # nothing else. Using awx-ee as a base is a known anti-pattern — it's a
+  # kitchen-sink image with many pre-installed collections, and
+  # ansible-builder ends up trying to re-resolve their transitive deps
+  # (some of which need to be built from source). For AAP customers on
+  # paid subscriptions, swap in
+  #   registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9
   base_image:
-    name: quay.io/ansible/awx-ee:latest
+    name: quay.io/ansible/community-ee-minimal:latest
 
 dependencies:
-  # ansible-builder v3's final-image check_ansible step needs these
-  # declared explicitly even when the base image already has them — the
-  # pip install is a no-op on awx-ee but satisfies the validation.
-  ansible_core:
-    package_pip: ansible-core
-  ansible_runner:
-    package_pip: ansible-runner
   galaxy: requirements.yml
 
 additional_build_files:
