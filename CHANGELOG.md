@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.15] - 2026-05-19
+
+### Added
+
+- **`ansible.windows` is now bundled in the dirq EE** — ansible-core only ships `ansible.builtin`, so Windows playbooks using `ansible.windows.win_ping` / `win_shell` / `ansible.windows.setup` failed at parse time in the EE. Adding the collection to `requirements.yml` means the EE is ready for Windows targets out of the box.
+
 ## [0.17.14] - 2026-05-19
 
 ### Fixed
@@ -542,6 +548,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.17.15]: https://github.com/atgreen/dirq/releases/tag/v0.17.15
 [0.17.14]: https://github.com/atgreen/dirq/releases/tag/v0.17.14
 [0.17.13]: https://github.com/atgreen/dirq/releases/tag/v0.17.13
 [0.17.12]: https://github.com/atgreen/dirq/releases/tag/v0.17.12
