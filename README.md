@@ -55,6 +55,7 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 - [Fleet Exec](#fleet-exec) — ad-hoc parallel command, script, and grep execution
 - [Topology Graph](#topology-graph) — visualize the agent mesh tree
 - [Security](#security) — TLS, authentication, exec safety
+- [High Availability](HA.md) — multi-pod deployment on OpenShift/Kubernetes
 - [Multi-Datacenter Deployment](#multi-datacenter-deployment) — isolated meshes, per-DC routing
 - [AAP Integration](#aap-integration) — collection, EE, credentials, setup checklist
 - [MCP Integration](#mcp-integration) — use dirq as an AI tool via Model Context Protocol
