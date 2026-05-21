@@ -587,6 +587,13 @@ type execBroadcastSession struct {
 	results   chan *pb.ExecResponse
 	startedAt time.Time
 	timeout   time.Duration
+
+	// Target accounting for /api/v1/debug/inflight. targetIDs is the full
+	// list at dispatch; receivedMu guards receivedAgents which is the set
+	// of agent IDs that have answered. Set diff = still-missing agents.
+	targetIDs     []string
+	receivedMu    sync.Mutex
+	receivedAgents map[string]bool
 }
 
 var (
@@ -743,11 +750,15 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 	requestID := fmt.Sprintf("execm-%d", time.Now().UnixNano())
 
 	// Create broadcast session to collect responses.
+	targetIDsCopy := make([]string, len(targetIDs))
+	copy(targetIDsCopy, targetIDs)
 	bs := &execBroadcastSession{
-		requestID: requestID,
-		results:   make(chan *pb.ExecResponse, len(targets)),
-		startedAt: time.Now(),
-		timeout:   time.Duration(timeout) * time.Second,
+		requestID:      requestID,
+		results:        make(chan *pb.ExecResponse, len(targets)),
+		startedAt:      time.Now(),
+		timeout:        time.Duration(timeout) * time.Second,
+		targetIDs:      targetIDsCopy,
+		receivedAgents: make(map[string]bool, len(targets)),
 	}
 
 	execBroadcastSessionsMu.Lock()
@@ -821,6 +832,11 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		select {
 		case resp := <-bs.results:
 			received++
+			// Record which agent answered so /api/v1/debug/inflight can
+			// show the still-missing set while the broadcast is in flight.
+			bs.receivedMu.Lock()
+			bs.receivedAgents[resp.AgentId] = true
+			bs.receivedMu.Unlock()
 			out := execMultiResult{
 				Type:      "result",
 				RequestID: resp.RequestId,

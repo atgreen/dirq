@@ -112,6 +112,7 @@ func main() {
 	root.AddCommand(kbCmd())
 	root.AddCommand(grepCmd())
 	root.AddCommand(mcpCmd())
+	root.AddCommand(debugCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

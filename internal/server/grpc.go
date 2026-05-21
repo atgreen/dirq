@@ -438,6 +438,12 @@ type querySession struct {
 	targetIDs []string
 	startedAt time.Time
 	timeout   time.Duration
+
+	// Tracking for /api/v1/debug/inflight. receivedAgents is the set of
+	// agent IDs that have answered (success or no-match); set-diff with
+	// targetIDs is the still-missing set.
+	receivedMu     sync.Mutex
+	receivedAgents map[string]bool
 }
 
 var (
@@ -451,11 +457,12 @@ var (
 // bubble back up through the mesh.
 func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetIDs []string) ([]*pb.QueryResult, error) {
 	qs := &querySession{
-		queryID:   qr.QueryId,
-		results:   make(chan *pb.QueryResult, len(targetIDs)),
-		targetIDs: targetIDs,
-		startedAt: time.Now(),
-		timeout:   time.Duration(qr.TimeoutSeconds) * time.Second,
+		queryID:        qr.QueryId,
+		results:        make(chan *pb.QueryResult, len(targetIDs)),
+		targetIDs:      targetIDs,
+		startedAt:      time.Now(),
+		timeout:        time.Duration(qr.TimeoutSeconds) * time.Second,
+		receivedAgents: make(map[string]bool, len(targetIDs)),
 	}
 	if qs.timeout == 0 {
 		qs.timeout = 60 * time.Second
@@ -519,6 +526,11 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 		select {
 		case r := <-qs.results:
 			responded++
+			// Record which agent answered (match or no-match) so the
+			// debug/inflight endpoint can compute the still-missing set.
+			qs.receivedMu.Lock()
+			qs.receivedAgents[r.AgentId] = true
+			qs.receivedMu.Unlock()
 			// Only include successful matches in the returned results.
 			// "no match" responses count toward completion but are discarded.
 			if r.Success {

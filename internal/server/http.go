@@ -63,6 +63,11 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	// Status endpoint (authenticated, readonly)
 	mux.HandleFunc("GET /api/v1/status", s.authMiddleware(requireScope("readonly", s.handleStatus)))
 
+	// Debug endpoints (admin scope — exposes in-flight session details).
+	mux.HandleFunc("GET /api/v1/debug/inflight", s.authMiddleware(requireScope("admin", s.handleDebugInflight)))
+	mux.HandleFunc("GET /api/v1/debug/stream/{id}", s.authMiddleware(requireScope("admin", s.handleDebugStream)))
+	mux.HandleFunc("POST /api/v1/debug/ping/{id}", s.authMiddleware(requireScope("admin", s.handleDebugPing)))
+
 	// Liveness probe (no auth): the process is up and responsive. Distinct
 	// from /readyz so a healthy standby pod isn't restarted just because
 	// it's not currently serving traffic.
