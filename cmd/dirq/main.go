@@ -3914,7 +3914,7 @@ func discoverPythonInterpreters(hosts []queryHost) error {
 		hostnames[i] = "'" + hosts[idx].hostname + "'"
 	}
 
-	fmt.Fprintf(os.Stderr, "Detecting Python on %d Linux host(s)...\n", len(needProbe))
+	fmt.Fprintf(os.Stderr, "Detecting Python on %d non-Windows host(s)...\n", len(needProbe))
 
 	// Probe common Python paths. The first one found wins.
 	// Prefer newer versions but accept Python 3.8+ (minimum for modern Ansible).
@@ -3973,8 +3973,11 @@ func discoverPythonInterpreters(hosts []queryHost) error {
 		}
 	}
 
-	// Apply discovered interpreters and collect failures.
+	// Apply discovered interpreters and collect failures. Summarize by
+	// interpreter path so output stays bounded at large fleet sizes — one
+	// line per distinct interpreter, not one per host.
 	var noPython []string
+	pathCounts := map[string]int{}
 	for _, idx := range needProbe {
 		h := &hosts[idx]
 		if path, ok := discovered[h.hostname]; ok {
@@ -3982,10 +3985,23 @@ func discoverPythonInterpreters(hosts []queryHost) error {
 				h.tags = map[string]string{}
 			}
 			h.tags["ansible_python_interpreter"] = path
-			fmt.Fprintf(os.Stderr, "  %s: %s\n", h.hostname, path)
+			pathCounts[path]++
 		} else {
 			noPython = append(noPython, h.hostname)
 		}
+	}
+	paths := make([]string, 0, len(pathCounts))
+	for p := range pathCounts {
+		paths = append(paths, p)
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		if pathCounts[paths[i]] != pathCounts[paths[j]] {
+			return pathCounts[paths[i]] > pathCounts[paths[j]]
+		}
+		return paths[i] < paths[j]
+	})
+	for _, p := range paths {
+		fmt.Fprintf(os.Stderr, "  %s (%d host(s))\n", p, pathCounts[p])
 	}
 
 	if len(noPython) > 0 {
