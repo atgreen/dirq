@@ -5,6 +5,17 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] - 2026-05-21
+
+### Added
+
+- **`dirq debug` diagnostic subcommand tree** for troubleshooting fleet, mesh, and request issues without attaching a debugger. `dirq debug inflight` lists every exec, query, and file-op session the server is currently coordinating, with the still-missing agent set for broadcast operations — so you can answer "what is the server waiting for?" at a glance. `dirq debug path <hostname>` walks an agent's mesh parent chain from the DB and flags broken links. `dirq debug stream <hostname>` reports the server's in-memory view of how it would reach an agent (directly connected vs routed via a zone leader). `dirq debug ping <hostname>` sends a no-op exec through the mesh and reports round-trip timing — the only diagnostic that proves a message actually reaches the agent right now. All three lookup tools form a hierarchy of trust: `path` (fastest, DB-only), `stream` (live process state), `ping` (slowest, but truthful). Endpoints are admin-scoped.
+
+### Changed
+
+- **Fact-cache writes now batch and coalesce instead of single-row upserting per query result.** The previous design queued every successful `QueryResult` onto a 4096-slot channel drained by 8 workers issuing one `INSERT … ON CONFLICT` per agent-module — which silently dropped facts at the channel head under broadcast queries against large fleets, and serialized writers under SQLite's global writer lock. Query results now stage into an in-memory map keyed by `(agent_id, module)` and a single batcher goroutine flushes every 250ms (or when 5000 distinct keys are staged) via a new bulk-upsert path: Postgres uses `unnest()` of typed arrays in one round-trip; SQLite emits chunked multi-row `VALUES` inside a single transaction so the writer lock is taken once per flush. Three new server knobs tune the behavior — `DIRQ_FACT_FLUSH_INTERVAL` (default 250ms), `DIRQ_FACT_FLUSH_SIZE` (5000), `DIRQ_FACT_STAGE_CAP` (20000). The hard cap drops only *new* keys on saturation; existing-key overwrites are always free since coalescing is the same last-write-wins semantic the DB upsert already had. Tested in scope for fleets up to 500k nodes.
+- **`dirq run` Python interpreter probe output is now summarized by interpreter path** instead of printing one line per host — so a 50k-host run reports `/usr/bin/python3.9 (50000 host(s))` rather than 50000 individual lines. Detected paths are still persisted as `ansible_python_interpreter` tags on each host so subsequent runs skip the probe entirely. The status message also now reads "non-Windows host(s)" to match what the gate actually does (Windows is excluded; macOS/BSD would be probed too).
+
 ## [0.18.0] - 2026-05-20
 
 ### Added
@@ -555,6 +566,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.19.0]: https://github.com/atgreen/dirq/releases/tag/v0.19.0
 [0.18.0]: https://github.com/atgreen/dirq/releases/tag/v0.18.0
 [0.17.15]: https://github.com/atgreen/dirq/releases/tag/v0.17.15
 [0.17.14]: https://github.com/atgreen/dirq/releases/tag/v0.17.14
