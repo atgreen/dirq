@@ -8,10 +8,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/atgreen/dirq/internal/db"
 )
+
+// sqliteFactBulkChunk caps the rows per bulk INSERT to stay under
+// SQLite's default 999-parameter ceiling (4 params × 200 = 800).
+const sqliteFactBulkChunk = 200
 
 // UpsertFact inserts or updates a fact for the given agent and module.
 func (d *DB) UpsertFact(ctx context.Context, agentID, module string, data map[string]any) error {
@@ -29,6 +34,44 @@ func (d *DB) UpsertFact(ctx context.Context, agentID, module string, data map[st
 		agentID, module, string(dataJSON), now,
 	)
 	return err
+}
+
+// BulkUpsertFacts writes rows in chunked multi-row INSERTs inside a
+// single transaction, so SQLite acquires the writer lock once per flush
+// instead of once per row.
+func (d *DB) BulkUpsertFacts(ctx context.Context, rows []db.FactRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin fact bulk tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for start := 0; start < len(rows); start += sqliteFactBulkChunk {
+		end := start + sqliteFactBulkChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[start:end]
+
+		placeholders := make([]string, len(chunk))
+		args := make([]any, 0, len(chunk)*4)
+		for i, r := range chunk {
+			placeholders[i] = "(?, ?, ?, ?)"
+			args = append(args, r.AgentID, r.Module, string(r.Data),
+				r.CollectedAt.UTC().Format(time.RFC3339))
+		}
+		stmt := `INSERT INTO facts (agent_id, module, data, collected_at) VALUES ` +
+			strings.Join(placeholders, ", ") +
+			` ON CONFLICT (agent_id, module) DO UPDATE
+			   SET data = excluded.data, collected_at = excluded.collected_at`
+		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+			return fmt.Errorf("bulk fact upsert chunk: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // GetFacts retrieves all facts for a given agent.

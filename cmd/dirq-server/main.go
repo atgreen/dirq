@@ -48,6 +48,9 @@ func main() {
 		AuthDisabled:       config.EnvOr("DIRQ_AUTH_DISABLED", fileCfg, "auth_disabled", "false") == "true",
 		RegistrationSecret: config.EnvOr("DIRQ_REGISTRATION_SECRET", fileCfg, "registration_secret", ""),
 		LeaderElection:     config.EnvOr("DIRQ_LEADER_ELECTION", fileCfg, "leader_election", "false") == "true",
+		FactFlushInterval:  cfgDur("DIRQ_FACT_FLUSH_INTERVAL", fileCfg, "fact_flush_interval", 0),
+		FactFlushSize:      cfgInt("DIRQ_FACT_FLUSH_SIZE", fileCfg, "fact_flush_size", 0),
+		FactStageCap:       cfgInt("DIRQ_FACT_STAGE_CAP", fileCfg, "fact_stage_cap", 0),
 		FileCfg:            fileCfg,
 	}
 
@@ -144,6 +147,17 @@ func cfgInt(env string, fileCfg *config.File, fileKey string, fallback int) int 
 	if s != "" {
 		if n, err := strconv.Atoi(s); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+// cfgDur parses a duration from env, then config file, then fallback.
+func cfgDur(env string, fileCfg *config.File, fileKey string, fallback time.Duration) time.Duration {
+	s := config.EnvOr(env, fileCfg, fileKey, "")
+	if s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			return d
 		}
 	}
 	return fallback

@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -573,37 +574,136 @@ func (s *Server) handleQueryResult(result *pb.QueryResult) {
 		}
 	}
 
-	// Queue fact upsert for the bounded worker pool (#7).
+	// Stage fact upserts. Coalesces by (agent_id, module) so a burst of
+	// updates collapses before reaching the DB. Hot-path: marshal each
+	// module's data once here, then last-write-wins in the stage map.
 	if result.Success && result.Data != nil {
+		s.stageFacts(result.AgentId, result.Data.AsMap())
+	}
+}
+
+// stageFacts inserts one row per module into the bounded staging map.
+// When the map is at its hard cap, NEW keys are dropped (existing keys
+// always update for free since coalescing only overwrites). The
+// producer never blocks the gRPC receive loop — drops are logged with
+// rate limiting.
+func (s *Server) stageFacts(agentID string, data map[string]any) {
+	stageCap := s.cfg.FactStageCap
+	if stageCap <= 0 {
+		stageCap = defaultFactStageCap
+	}
+	flushSize := s.cfg.FactFlushSize
+	if flushSize <= 0 {
+		flushSize = defaultFactFlushSize
+	}
+
+	now := time.Now()
+	s.factStageMu.Lock()
+	dropped := 0
+	for module, raw := range data {
+		md, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		key := factKey{agentID: agentID, module: module}
+		if _, exists := s.factStage[key]; !exists && len(s.factStage) >= stageCap {
+			dropped++
+			continue
+		}
+		blob, err := json.Marshal(md)
+		if err != nil {
+			continue
+		}
+		s.factStage[key] = db.FactRow{
+			AgentID:     agentID,
+			Module:      module,
+			Data:        blob,
+			CollectedAt: now,
+		}
+	}
+	shouldSignal := len(s.factStage) >= flushSize
+	stageLen := len(s.factStage)
+	s.factStageMu.Unlock()
+
+	if dropped > 0 {
+		// Rate-limit to one warning per second so a sustained burst
+		// doesn't drown the log.
+		if time.Since(s.factDropLogged) >= time.Second {
+			s.factDropLogged = now
+			s.log.Warn("fact stage full, dropped new keys", "dropped", dropped, "stage_len", stageLen, "cap", stageCap)
+		}
+	}
+	if shouldSignal {
 		select {
-		case s.factCh <- factUpsert{agentID: result.AgentId, data: result.Data.AsMap()}:
+		case s.factFlushSignal <- struct{}{}:
 		default:
-			s.log.Warn("fact upsert queue full, dropping", "agent_id", result.AgentId)
 		}
 	}
 }
 
-// startFactWorkers launches n goroutines that drain the fact upsert channel.
-func (s *Server) startFactWorkers(ctx context.Context, n int) {
-	for i := 0; i < n; i++ {
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case fu := <-s.factCh:
-					upsertCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-					for module, moduleData := range fu.data {
-						if md, ok := moduleData.(map[string]any); ok {
-							if err := s.db.UpsertFact(upsertCtx, fu.agentID, module, md); err != nil {
-								s.log.Error("failed to cache fact", "agent_id", fu.agentID, "module", module, "error", err)
-							}
-						}
-					}
-					cancel()
-				}
-			}
-		}()
+const (
+	defaultFactFlushInterval = 250 * time.Millisecond
+	defaultFactFlushSize     = 5000
+	defaultFactStageCap      = 20000
+	// Postgres can swallow any reasonable batch in one unnest() call;
+	// SQLite caps itself at sqliteFactBulkChunk in the bulk path. We
+	// chunk here to bound per-statement work and memory peaks.
+	factWriteChunk = 5000
+)
+
+// runFactBatcher flushes the staging map periodically and on size
+// threshold. Snapshots the map under the lock, releases the lock, then
+// performs the bulk write — so a slow DB can't backpressure ingest.
+func (s *Server) runFactBatcher(ctx context.Context) {
+	interval := s.cfg.FactFlushInterval
+	if interval <= 0 {
+		interval = defaultFactFlushInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.flushFactStage(context.Background())
+			return
+		case <-ticker.C:
+			s.flushFactStage(ctx)
+		case <-s.factFlushSignal:
+			s.flushFactStage(ctx)
+		}
+	}
+}
+
+// flushFactStage atomically swaps the staging map for a fresh one and
+// bulk-writes the snapshot in chunks. Errors are logged and dropped —
+// the next query result for the same key will re-stage and retry.
+func (s *Server) flushFactStage(ctx context.Context) {
+	s.factStageMu.Lock()
+	if len(s.factStage) == 0 {
+		s.factStageMu.Unlock()
+		return
+	}
+	snapshot := s.factStage
+	s.factStage = make(map[factKey]db.FactRow, len(snapshot))
+	s.factStageMu.Unlock()
+
+	rows := make([]db.FactRow, 0, len(snapshot))
+	for _, r := range snapshot {
+		rows = append(rows, r)
+	}
+
+	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	for start := 0; start < len(rows); start += factWriteChunk {
+		end := start + factWriteChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		if err := s.db.BulkUpsertFacts(writeCtx, rows[start:end]); err != nil {
+			s.log.Error("bulk fact upsert failed", "error", err, "rows", end-start)
+		}
 	}
 }
 

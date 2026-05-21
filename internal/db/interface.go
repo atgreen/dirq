@@ -56,6 +56,7 @@ type DB interface {
 	GetAllFacts(ctx context.Context) ([]Fact, error)
 	GetFactsByModule(ctx context.Context, module string) ([]Fact, error)
 	UpsertFact(ctx context.Context, agentID, module string, data map[string]any) error
+	BulkUpsertFacts(ctx context.Context, rows []FactRow) error
 	GetFactTTL(ctx context.Context, module string) (int, error)
 
 	// Queries

@@ -58,6 +58,16 @@ type Fact struct {
 	CollectedAt time.Time       `json:"collected_at"`
 }
 
+// FactRow is one row staged for a bulk fact upsert. Data is the
+// already-marshalled JSON blob — the batcher marshals once at staging
+// time so duplicate keys in a flush window overwrite cheaply.
+type FactRow struct {
+	AgentID     string
+	Module      string
+	Data        []byte
+	CollectedAt time.Time
+}
+
 // Token represents an API token.
 type Token struct {
 	ID        string     `json:"id"`

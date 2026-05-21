@@ -135,6 +135,7 @@ func (m *mockDB) MarkStaleAgentsOffline(context.Context, time.Duration) (int64, 
 func (m *mockDB) TouchAgentTree(context.Context, string) error             { return nil }
 func (m *mockDB) MarkAgentTreeOffline(context.Context, string) (int64, error) { return 0, nil }
 func (m *mockDB) UpsertFact(context.Context, string, string, map[string]any) error { return nil }
+func (m *mockDB) BulkUpsertFacts(context.Context, []db.FactRow) error               { return nil }
 func (m *mockDB) CreateQuery(_ context.Context, _ string, _ string, _ int) (db.Query, error) {
 	return db.Query{}, nil
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/atgreen/dirq/internal/db"
 	"github.com/jackc/pgx/v5"
@@ -25,6 +26,33 @@ func (d *DB) UpsertFact(ctx context.Context, agentID, module string, data map[st
 		ON CONFLICT (agent_id, module) DO UPDATE
 		SET data = EXCLUDED.data, collected_at = EXCLUDED.collected_at`,
 		agentID, module, dataJSON,
+	)
+	return err
+}
+
+// BulkUpsertFacts writes a batch of fact rows in one statement using
+// unnest() to expand parallel arrays. Single round-trip, no parameter
+// ceiling — pgx encodes the arrays as one binary blob per column.
+func (d *DB) BulkUpsertFacts(ctx context.Context, rows []db.FactRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	agentIDs := make([]string, len(rows))
+	modules := make([]string, len(rows))
+	datas := make([][]byte, len(rows))
+	times := make([]time.Time, len(rows))
+	for i, r := range rows {
+		agentIDs[i] = r.AgentID
+		modules[i] = r.Module
+		datas[i] = r.Data
+		times[i] = r.CollectedAt
+	}
+	_, err := d.pool.Exec(ctx, `
+		INSERT INTO facts (agent_id, module, data, collected_at)
+		SELECT * FROM unnest($1::text[], $2::text[], $3::jsonb[], $4::timestamptz[])
+		ON CONFLICT (agent_id, module) DO UPDATE
+		SET data = EXCLUDED.data, collected_at = EXCLUDED.collected_at`,
+		agentIDs, modules, datas, times,
 	)
 	return err
 }

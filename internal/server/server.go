@@ -43,6 +43,11 @@ type Config struct {
 	RegistrationSecret  string // pre-shared secret for agent registration
 	LeaderElection      bool   // when true, only the elected leader marks itself ready
 	FileCfg             *config.File // parsed config file (for TLS/signing fallback)
+
+	// Fact batcher knobs. Zero means use defaults.
+	FactFlushInterval time.Duration // default 250ms
+	FactFlushSize     int           // default 5000  — early flush trigger
+	FactStageCap      int           // default 20000 — hard drop ceiling
 }
 
 // Server is the DirQ server.
@@ -97,18 +102,27 @@ type Server struct {
 	demoteMu       sync.Mutex
 	demoteCooldown map[string]demoteRecord
 
-	// Bounded worker pool for fact upserts (#7). Prevents unbounded
-	// goroutine creation when thousands of query results arrive at once.
-	factCh chan factUpsert
+	// Fact-write staging. Query results land here keyed by
+	// (agent_id, module) so a burst of upserts for the same key in one
+	// flush window collapses to a single row. A batcher goroutine
+	// flushes the snapshot via db.BulkUpsertFacts on size or time
+	// thresholds — see runFactBatcher.
+	factStageMu      sync.Mutex
+	factStage        map[factKey]db.FactRow
+	factFlushSignal  chan struct{}
+	factDropLogged   time.Time // rate-limits the "stage full, dropping" warning
 
 	// Leader election. When LeaderElection is disabled, this stays nil
 	// and /readyz unconditionally returns 200 (single-instance mode).
 	leader db.Leader
 }
 
-type factUpsert struct {
+// factKey is the dedup key for staged fact upserts. Matches the facts
+// table primary key so coalescing in memory is equivalent to letting the
+// DB upsert resolve the collision — just much cheaper.
+type factKey struct {
 	agentID string
-	data    map[string]any
+	module  string
 }
 
 type agentStream struct {
@@ -137,9 +151,10 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 		streams:        make(map[string]*agentStream),
 		execSessions:   make(map[string]*execSession),
 		sessionTokens:  make(map[string]string),
-		reassigning:    make(map[string]time.Time),
-		demoteCooldown: make(map[string]demoteRecord),
-		factCh:         make(chan factUpsert, 4096),
+		reassigning:     make(map[string]time.Time),
+		demoteCooldown:  make(map[string]demoteRecord),
+		factStage:       make(map[factKey]db.FactRow),
+		factFlushSignal: make(chan struct{}, 1),
 	}
 }
 
@@ -330,10 +345,10 @@ func (s *Server) Start(ctx context.Context) error {
 		s.log.Info("leader election enabled", "backend", s.db.Kind())
 	}
 
-	// Start the stale-agent reaper, topology rebalancer, and fact workers.
+	// Start the stale-agent reaper, topology rebalancer, and fact batcher.
 	go s.startReaper(ctx)
 	go s.startRebalancer(ctx)
-	s.startFactWorkers(ctx, 8)
+	go s.runFactBatcher(ctx)
 
 	capacity := s.topoCfg.MaxZoneLeaders * s.topoCfg.MaxChildrenPerNode * s.topoCfg.MaxChildrenPerNode
 	s.log.Info("DirQ server starting",
