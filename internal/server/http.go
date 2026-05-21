@@ -188,12 +188,16 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-filter by tag.* conditions in WHERE (avoids dispatching to irrelevant agents).
+	// Pre-filter by tag.* and bare hostname conditions in WHERE (avoids
+	// dispatching to irrelevant agents). Without this, bare-hostname
+	// filters silently fall through to a fleet-wide broadcast — the
+	// agent-side filter only buckets module.field conditions, so it
+	// can't catch them either.
 	agents := allAgents
-	if query.HasTagConditions(parsed.Where) {
+	if query.HasTagConditions(parsed.Where) || query.HasHostnameCondition(parsed.Where) {
 		agents = make([]db.Agent, 0, len(allAgents))
 		for _, a := range allAgents {
-			if query.MatchesAgentTags(parsed.Where, a.Tags) {
+			if query.MatchesAgentRecord(parsed.Where, a.Tags, a.Hostname) {
 				agents = append(agents, a)
 			}
 		}
