@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.21.2] - 2026-05-22
+
+### Fixed
+
+- **Registration batcher no longer stacks zone leaders on the same source IP.** The v0.21.1 batcher had a second pass that filled remaining ZL slots from same-IP candidates when a batch contained fewer distinct IPs than open slots — which defeated the whole point of source-IP diversity.  Observed in the latest 50×50 emulation: 4 of 5 zone leaders landed on one VM despite the batcher firing.  The fix removes the second pass entirely (leftover slots wait for batches with different IPs, or for the rebalancer's "promote a relay with children" path 30s later) and adds a relay-only commit path for the non-ZL slice of multi-agent batches that bypasses `assignRole`'s "openZL > 0 → promote" step so the same-IP candidates can't be promoted by the fallback either.
+
 ## [0.21.1] - 2026-05-22
 
 ### Added
@@ -638,6 +644,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.21.2]: https://github.com/atgreen/dirq/releases/tag/v0.21.2
 [0.21.1]: https://github.com/atgreen/dirq/releases/tag/v0.21.1
 [0.21.0]: https://github.com/atgreen/dirq/releases/tag/v0.21.0
 [0.20.3]: https://github.com/atgreen/dirq/releases/tag/v0.20.3
