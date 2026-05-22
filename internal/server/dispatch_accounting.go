@@ -27,12 +27,25 @@ const transportGrace = 30 * time.Second
 // before doing anything visible (enqueue to result channel, write to
 // HTTP stream) so receivers can rely on each agent producing exactly
 // one accounted event.
+//
+// arrivals is a small ring buffer of recent terminal timestamps used by
+// /debug/inflight to surface "where is this query stuck right now" —
+// quickly counting how many responses landed in the last {1, 5, 30}
+// seconds tells you whether a slow path is slow-but-progressing or
+// actually stuck.
 type sessionAccounting struct {
-	mu       sync.Mutex
-	pending  map[string]bool // agent IDs we're still waiting on
-	total    int             // size of the original target set
-	accounted int            // monotonic counter; total - accounted == len(pending)
+	mu        sync.Mutex
+	pending   map[string]bool // agent IDs we're still waiting on
+	total     int             // size of the original target set
+	accounted int             // monotonic counter; total - accounted == len(pending)
+	arrivals  []time.Time     // ring buffer of recent ClaimAgent times
+	arrivalsI int             // ring write index
 }
+
+// arrivalsCapacity caps how many recent terminal timestamps each
+// session keeps for diagnostics.  Sized for a 30-second window at
+// roughly the highest rate we'd care about (a few thousand per second).
+const arrivalsCapacity = 4096
 
 // newSessionAccounting builds an accounting struct seeded with the
 // initial target set.  Empty target sets are valid (caller will exit
@@ -64,7 +77,34 @@ func (a *sessionAccounting) ClaimAgent(agentID string) bool {
 	}
 	delete(a.pending, agentID)
 	a.accounted++
+	if a.arrivals == nil {
+		a.arrivals = make([]time.Time, arrivalsCapacity)
+	}
+	a.arrivals[a.arrivalsI%arrivalsCapacity] = time.Now()
+	a.arrivalsI++
 	return true
+}
+
+// ArrivalsSince returns how many terminal events landed in the
+// given lookback window.  Used by /debug/inflight to surface
+// "responses-in-last-Ns" gauges that distinguish a slow-but-moving
+// dispatcher from one that's actually stuck.  Capped at
+// arrivalsCapacity entries kept (older entries get overwritten).
+func (a *sessionAccounting) ArrivalsSince(window time.Duration) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	cutoff := time.Now().Add(-window)
+	count := 0
+	scan := arrivalsCapacity
+	if a.arrivalsI < arrivalsCapacity {
+		scan = a.arrivalsI
+	}
+	for i := 0; i < scan; i++ {
+		if a.arrivals[i].After(cutoff) {
+			count++
+		}
+	}
+	return count
 }
 
 // Remaining returns the number of targets still pending.

@@ -77,27 +77,32 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 	}
 
 	// Register the agent's identity with the in-memory topology so role
-	// assignment can pick a parent for it.  All decisions happen against
-	// in-memory maps — no DB round-trips, no global lock, microseconds.
+	// assignment can pick a parent for it.
 	s.topology.AddAgent(agent.ID, req.Hostname, listenAddr)
-	a := s.assignRole(agent.ID)
+
+	// Route through the burst-aware batcher so a wave of concurrent
+	// registrations gets ZL slots spread across distinct source IPs
+	// instead of locking all ZL slots onto whichever VM happened to win
+	// the lock-contention race.  Steady-state registrations pay one
+	// batch window (~200 ms) of latency, which is invisible compared to
+	// the gRPC + TLS handshake cost they already pay.
+	sourceIP := ""
+	if p, ok := peer.FromContext(ctx); ok {
+		if tcpAddr, ok := p.Addr.(*net.TCPAddr); ok {
+			sourceIP = tcpAddr.IP.String()
+		}
+	}
+	a := s.regBatch.submit(&pendingReg{
+		agentID:    agent.ID,
+		hostname:   req.Hostname,
+		listenAddr: listenAddr,
+		sourceIP:   sourceIP,
+		resp:       make(chan assignment, 1),
+	})
 
 	roleName := "relay"
-	switch a.Role {
-	case pb.AgentRole_AGENT_ROLE_ZONE_LEADER:
+	if a.Role == pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
 		roleName = "zone_leader"
-		s.topology.AssignZoneLeader(agent.ID)
-	default:
-		if !s.topology.AssignChild(agent.ID, a.ParentID) {
-			// Race: chosen parent filled up between FindShallowest and
-			// AssignChild.  Fall back to promoting this agent to ZL so
-			// it gets a route instead of being orphaned.
-			s.log.Warn("topology: chosen parent full at commit, promoting to zone_leader",
-				"agent_id", agent.ID, "intended_parent", a.ParentID)
-			s.topology.AssignZoneLeader(agent.ID)
-			a = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
-			roleName = "zone_leader"
-		}
 	}
 
 	s.log.Info("agent registered",

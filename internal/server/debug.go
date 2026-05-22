@@ -17,19 +17,100 @@ import (
 
 // inflightSession is the JSON shape returned by /api/v1/debug/inflight.
 type inflightSession struct {
-	RequestID  string   `json:"request_id"`
-	Kind       string   `json:"kind"` // "exec", "exec_multi", "query", "put_file", "fetch_file"
-	Targets    int      `json:"targets"`
-	Received   int      `json:"received"`
-	Missing    []string `json:"missing,omitempty"` // agent IDs that haven't answered
-	ElapsedMS  int64    `json:"elapsed_ms"`
-	TimeoutMS  int64    `json:"timeout_ms"`
-	StartedAt  string   `json:"started_at"`
+	RequestID         string         `json:"request_id"`
+	Kind              string         `json:"kind"` // "exec", "exec_multi", "query", "put_file", "fetch_file"
+	Targets           int            `json:"targets"`
+	Received          int            `json:"received"`
+	Missing           []string       `json:"missing,omitempty"`         // agent IDs that haven't answered
+	ArrivalsLast1s    int            `json:"arrivals_last_1s,omitempty"`
+	ArrivalsLast5s    int            `json:"arrivals_last_5s,omitempty"`
+	ArrivalsLast30s   int            `json:"arrivals_last_30s,omitempty"`
+	ByZoneLeader      []zlBreakdown  `json:"by_zone_leader,omitempty"`
+	ElapsedMS         int64          `json:"elapsed_ms"`
+	TimeoutMS         int64          `json:"timeout_ms"`
+	StartedAt         string         `json:"started_at"`
+}
+
+// zlBreakdown attributes the pending set of one in-flight broadcast to
+// the zone leader each missing agent routes through, so operators can
+// see at a glance which ZL's subtree is dragging a broadcast down.
+type zlBreakdown struct {
+	ZoneLeaderID       string `json:"zone_leader_id"`
+	ZoneLeaderHostname string `json:"zone_leader_hostname"`
+	ZoneLeaderAddr     string `json:"zone_leader_addr"`
+	SubtreeSize        int    `json:"subtree_size"`
+	Received           int    `json:"received"`
+	Pending            int    `json:"pending"`
+	StreamConnected    bool   `json:"stream_connected"`
+	SendBufUsed        int    `json:"send_buf_used"`
+	SendBufCap         int    `json:"send_buf_cap"`
 }
 
 type inflightResponse struct {
 	Sessions []inflightSession `json:"sessions"`
 	Now      string            `json:"now"`
+}
+
+// buildZLBreakdown attributes the still-pending agent set to its zone
+// leader and reports per-ZL pending/received/stream-buffer state.  This
+// is the diagnostic that surfaces "which ZL is the bottleneck" — when
+// one ZL's send_buf_used is at capacity and its pending count is high,
+// you've found the chokepoint.
+func (s *Server) buildZLBreakdown(missing []string, total int) []zlBreakdown {
+	zlSubtreeMissing := make(map[string]int)
+	for _, id := range missing {
+		zlID, ok := s.topology.FindZoneLeader(id)
+		if !ok {
+			zlID = "" // orphan; group under empty string
+		}
+		zlSubtreeMissing[zlID]++
+	}
+	if len(zlSubtreeMissing) == 0 {
+		return nil
+	}
+
+	// Sort ZLs by pending count, descending — the worst offender first.
+	type entry struct {
+		id      string
+		pending int
+	}
+	entries := make([]entry, 0, len(zlSubtreeMissing))
+	for id, p := range zlSubtreeMissing {
+		entries = append(entries, entry{id: id, pending: p})
+	}
+	// Manual bubble — len is tiny.
+	for i := range entries {
+		for j := i + 1; j < len(entries); j++ {
+			if entries[j].pending > entries[i].pending {
+				entries[i], entries[j] = entries[j], entries[i]
+			}
+		}
+	}
+
+	out := make([]zlBreakdown, 0, len(entries))
+	for _, e := range entries {
+		b := zlBreakdown{
+			ZoneLeaderID: e.id,
+			Pending:      e.pending,
+		}
+		if e.id == "" {
+			b.ZoneLeaderHostname = "(orphan — no ZL in topology)"
+		} else if n, ok := s.topology.Get(e.id); ok {
+			b.ZoneLeaderHostname = n.Hostname
+			b.ZoneLeaderAddr = n.ListenAddr
+			b.SubtreeSize = len(s.topology.SubtreeIDs(e.id))
+			b.Received = b.SubtreeSize - e.pending
+		}
+		s.mu.RLock()
+		if as, ok := s.streams[e.id]; ok {
+			b.StreamConnected = true
+			b.SendBufUsed = len(as.send)
+			b.SendBufCap = cap(as.send)
+		}
+		s.mu.RUnlock()
+		out = append(out, b)
+	}
+	return out
 }
 
 // handleDebugInflight dumps every in-flight exec / query / file-op session
@@ -60,14 +141,18 @@ func (s *Server) handleDebugInflight(w http.ResponseWriter, _ *http.Request) {
 	for id, bs := range execBroadcastSessions {
 		missing := bs.PendingSnapshot()
 		out.Sessions = append(out.Sessions, inflightSession{
-			RequestID: id,
-			Kind:      "exec_multi",
-			Targets:   bs.Total(),
-			Received:  bs.AccountedCount(),
-			Missing:   missing,
-			ElapsedMS: now.Sub(bs.startedAt).Milliseconds(),
-			TimeoutMS: bs.timeout.Milliseconds(),
-			StartedAt: bs.startedAt.UTC().Format(time.RFC3339Nano),
+			RequestID:       id,
+			Kind:            "exec_multi",
+			Targets:         bs.Total(),
+			Received:        bs.AccountedCount(),
+			Missing:         missing,
+			ArrivalsLast1s:  bs.ArrivalsSince(1 * time.Second),
+			ArrivalsLast5s:  bs.ArrivalsSince(5 * time.Second),
+			ArrivalsLast30s: bs.ArrivalsSince(30 * time.Second),
+			ByZoneLeader:    s.buildZLBreakdown(missing, bs.Total()),
+			ElapsedMS:       now.Sub(bs.startedAt).Milliseconds(),
+			TimeoutMS:       bs.timeout.Milliseconds(),
+			StartedAt:       bs.startedAt.UTC().Format(time.RFC3339Nano),
 		})
 	}
 	execBroadcastSessionsMu.RUnlock()
@@ -77,14 +162,18 @@ func (s *Server) handleDebugInflight(w http.ResponseWriter, _ *http.Request) {
 	for id, qs := range querySessions {
 		missing := qs.PendingSnapshot()
 		out.Sessions = append(out.Sessions, inflightSession{
-			RequestID: id,
-			Kind:      "query",
-			Targets:   qs.Total(),
-			Received:  qs.AccountedCount(),
-			Missing:   missing,
-			ElapsedMS: now.Sub(qs.startedAt).Milliseconds(),
-			TimeoutMS: qs.timeout.Milliseconds(),
-			StartedAt: qs.startedAt.UTC().Format(time.RFC3339Nano),
+			RequestID:       id,
+			Kind:            "query",
+			Targets:         qs.Total(),
+			Received:        qs.AccountedCount(),
+			Missing:         missing,
+			ArrivalsLast1s:  qs.ArrivalsSince(1 * time.Second),
+			ArrivalsLast5s:  qs.ArrivalsSince(5 * time.Second),
+			ArrivalsLast30s: qs.ArrivalsSince(30 * time.Second),
+			ByZoneLeader:    s.buildZLBreakdown(missing, qs.Total()),
+			ElapsedMS:       now.Sub(qs.startedAt).Milliseconds(),
+			TimeoutMS:       qs.timeout.Milliseconds(),
+			StartedAt:       qs.startedAt.UTC().Format(time.RFC3339Nano),
 		})
 	}
 	querySessionsMu.RUnlock()
@@ -94,14 +183,18 @@ func (s *Server) handleDebugInflight(w http.ResponseWriter, _ *http.Request) {
 	for id, ds := range deploySessions {
 		missing := ds.PendingSnapshot()
 		out.Sessions = append(out.Sessions, inflightSession{
-			RequestID: id,
-			Kind:      "deploy",
-			Targets:   ds.Total(),
-			Received:  ds.AccountedCount(),
-			Missing:   missing,
-			ElapsedMS: now.Sub(ds.startedAt).Milliseconds(),
-			TimeoutMS: ds.timeout.Milliseconds(),
-			StartedAt: ds.startedAt.UTC().Format(time.RFC3339Nano),
+			RequestID:       id,
+			Kind:            "deploy",
+			Targets:         ds.Total(),
+			Received:        ds.AccountedCount(),
+			Missing:         missing,
+			ArrivalsLast1s:  ds.ArrivalsSince(1 * time.Second),
+			ArrivalsLast5s:  ds.ArrivalsSince(5 * time.Second),
+			ArrivalsLast30s: ds.ArrivalsSince(30 * time.Second),
+			ByZoneLeader:    s.buildZLBreakdown(missing, ds.Total()),
+			ElapsedMS:       now.Sub(ds.startedAt).Milliseconds(),
+			TimeoutMS:       ds.timeout.Milliseconds(),
+			StartedAt:       ds.startedAt.UTC().Format(time.RFC3339Nano),
 		})
 	}
 	deploySessionsMu.RUnlock()

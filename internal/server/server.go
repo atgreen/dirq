@@ -54,14 +54,15 @@ type Config struct {
 type Server struct {
 	pb.UnimplementedDirQServerServer
 
-	cfg      Config
-	topoCfg  TopologyConfig
-	topology *MeshTopology // in-memory authoritative mesh state (see meshtopology.go)
-	db       db.DB
-	log      *slog.Logger
-	grpcSv   *grpc.Server
-	httpSv   *http.Server
-	signer   *signutil.Signer
+	cfg       Config
+	topoCfg   TopologyConfig
+	topology  *MeshTopology         // in-memory authoritative mesh state (see meshtopology.go)
+	regBatch  *registrationBatcher  // burst-aware ZL-diverse role assignment
+	db        db.DB
+	log       *slog.Logger
+	grpcSv    *grpc.Server
+	httpSv    *http.Server
+	signer    *signutil.Signer
 
 	// oldSignerPubKeys holds raw Ed25519 public keys from previous signing keys.
 	// Populated when DIRQ_SIGNING_PUB_OLD / signing_pub_old is configured.
@@ -144,7 +145,7 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 		topoCfg.MaxChildrenPerNode = cfg.MaxChildrenPerNode
 	}
 
-	return &Server{
+	srv := &Server{
 		cfg:             cfg,
 		topoCfg:         topoCfg,
 		topology:        NewMeshTopology(topoCfg),
@@ -158,6 +159,8 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 		factStage:       make(map[factKey]db.FactRow),
 		factFlushSignal: make(chan struct{}, 1),
 	}
+	srv.regBatch = newRegistrationBatcher(srv)
+	return srv
 }
 
 // runTopologySnapshotter periodically writes (role, parent_id) pairs

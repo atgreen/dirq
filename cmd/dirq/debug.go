@@ -71,15 +71,30 @@ debugger.`,
 				return nil
 			}
 
+			type zlb struct {
+				ZoneLeaderID       string `json:"zone_leader_id"`
+				ZoneLeaderHostname string `json:"zone_leader_hostname"`
+				ZoneLeaderAddr     string `json:"zone_leader_addr"`
+				SubtreeSize        int    `json:"subtree_size"`
+				Received           int    `json:"received"`
+				Pending            int    `json:"pending"`
+				StreamConnected    bool   `json:"stream_connected"`
+				SendBufUsed        int    `json:"send_buf_used"`
+				SendBufCap         int    `json:"send_buf_cap"`
+			}
 			var out struct {
 				Sessions []struct {
-					RequestID string   `json:"request_id"`
-					Kind      string   `json:"kind"`
-					Targets   int      `json:"targets"`
-					Received  int      `json:"received"`
-					Missing   []string `json:"missing"`
-					ElapsedMS int64    `json:"elapsed_ms"`
-					TimeoutMS int64    `json:"timeout_ms"`
+					RequestID       string   `json:"request_id"`
+					Kind            string   `json:"kind"`
+					Targets         int      `json:"targets"`
+					Received        int      `json:"received"`
+					Missing         []string `json:"missing"`
+					ArrivalsLast1s  int      `json:"arrivals_last_1s"`
+					ArrivalsLast5s  int      `json:"arrivals_last_5s"`
+					ArrivalsLast30s int      `json:"arrivals_last_30s"`
+					ByZoneLeader    []zlb    `json:"by_zone_leader"`
+					ElapsedMS       int64    `json:"elapsed_ms"`
+					TimeoutMS       int64    `json:"timeout_ms"`
 				} `json:"sessions"`
 			}
 			if err := json.Unmarshal(resp, &out); err != nil {
@@ -96,14 +111,14 @@ debugger.`,
 				return out.Sessions[i].ElapsedMS > out.Sessions[j].ElapsedMS
 			})
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "REQUEST_ID\tKIND\tTARGETS\tRECVD\tELAPSED\tTIMEOUT\tMISSING")
+			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "REQUEST_ID\tKIND\tTARGETS\tRECVD\tELAPSED\tTIMEOUT\tMISSING")
 			for _, s := range out.Sessions {
 				missing := "—"
 				if len(s.Missing) > 0 {
 					missing = formatMissing(s.Missing)
 				}
-				fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+				fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
 					s.RequestID,
 					s.Kind,
 					s.Targets,
@@ -113,7 +128,41 @@ debugger.`,
 					missing,
 				)
 			}
-			w.Flush()
+			tw.Flush()
+
+			// Per-ZL bottleneck breakdown for sessions that have any
+			// missing agents and broadcast-style accounting.  Surfaces
+			// "which zone leader's subtree is dragging things down"
+			// without needing to grep through logs.
+			for _, s := range out.Sessions {
+				if len(s.ByZoneLeader) == 0 {
+					continue
+				}
+				fmt.Println()
+				fmt.Printf("── %s  (%d missing of %d, elapsed %s) ──\n",
+					s.RequestID, len(s.Missing), s.Targets,
+					formatDuration(s.ElapsedMS))
+				fmt.Printf("   arrivals: last 1s=%d  last 5s=%d  last 30s=%d\n",
+					s.ArrivalsLast1s, s.ArrivalsLast5s, s.ArrivalsLast30s)
+				ztw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(ztw, "   ZONE_LEADER\tSUBTREE\tRECVD\tPENDING\tSEND_BUF\tNOTE")
+				for _, z := range s.ByZoneLeader {
+					note := ""
+					if z.SendBufCap > 0 && z.SendBufUsed >= z.SendBufCap {
+						note = "← bottleneck (send_buf full)"
+					} else if !z.StreamConnected {
+						note = "← stream not connected"
+					}
+					name := z.ZoneLeaderHostname
+					if name == "" {
+						name = z.ZoneLeaderID
+					}
+					fmt.Fprintf(ztw, "   %s\t%d\t%d\t%d\t%d/%d\t%s\n",
+						name, z.SubtreeSize, z.Received, z.Pending,
+						z.SendBufUsed, z.SendBufCap, note)
+				}
+				ztw.Flush()
+			}
 			return nil
 		},
 	}
