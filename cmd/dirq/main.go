@@ -2959,29 +2959,20 @@ Examples:
 				}
 			}
 
-			// Count total online hosts to determine how many were not assessed.
-			notAssessed := 0
-			if hostsResp, err := apiRequest("GET", "/api/v1/hosts", nil); err == nil {
-				var allAgents []struct {
-					Online bool `json:"online"`
-				}
-				if json.Unmarshal(hostsResp, &allAgents) == nil {
-					online := 0
-					for _, a := range allAgents {
-						if a.Online {
-							online++
-						}
-					}
-					notAssessed = online - len(assessedHosts)
-				}
-			}
+			// Split "not assessed" by actual OS so the label doesn't lie.
+			// Distinguishing non-RHEL (genuine skip) from RHEL-no-response
+			// (mesh / timeout symptom) tells the operator what to investigate.
+			nonRHEL, rhelNoResponse := countNotAssessed(assessedHosts)
 
 			fmt.Printf("\n%d vulnerable, %d patched", vulnerable, patched)
 			if noFix > 0 {
 				fmt.Printf(", %d no fix available", noFix)
 			}
-			if notAssessed > 0 {
-				fmt.Printf(", %d not assessed (non-RHEL)", notAssessed)
+			if nonRHEL > 0 {
+				fmt.Printf(", %d non-RHEL", nonRHEL)
+			}
+			if rhelNoResponse > 0 {
+				fmt.Printf(", %d RHEL did not respond", rhelNoResponse)
 			}
 			fmt.Println()
 
@@ -2995,6 +2986,43 @@ Examples:
 	cmd.Flags().IntVar(&timeout, "timeout", 60, "query timeout in seconds")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "show timing and query details")
 	return cmd
+}
+
+// countNotAssessed inspects the fleet's online agent records and returns
+// (non_rhel, rhel_but_did_not_respond) — assessedHosts is the set of
+// hostnames that returned data for a RHEL-targeted query.
+func countNotAssessed(assessedHosts map[string]bool) (nonRHEL, rhelNoResponse int) {
+	hostsResp, err := apiRequest("GET", "/api/v1/hosts", nil)
+	if err != nil {
+		return 0, 0
+	}
+	var agents []struct {
+		Hostname string `json:"hostname"`
+		OS       string `json:"os"`
+		Online   bool   `json:"online"`
+	}
+	if json.Unmarshal(hostsResp, &agents) != nil {
+		return 0, 0
+	}
+	for _, a := range agents {
+		if !a.Online {
+			continue
+		}
+		// Match the RHEL-family set used by the query filter.
+		isRHEL := false
+		switch strings.ToLower(a.OS) {
+		case "rhel", "redhat", "red hat enterprise linux", "centos", "rocky", "almalinux", "alma", "oracle":
+			isRHEL = true
+		}
+		if !isRHEL {
+			nonRHEL++
+			continue
+		}
+		if !assessedHosts[a.Hostname] {
+			rhelNoResponse++
+		}
+	}
+	return nonRHEL, rhelNoResponse
 }
 
 // ─────────────────────────────────────────────────────────
@@ -3228,26 +3256,16 @@ Examples:
 				}
 			}
 
-			// Count not assessed.
-			notAssessed := 0
-			if hostsResp, err := apiRequest("GET", "/api/v1/hosts", nil); err == nil {
-				var allAgents []struct {
-					Online bool `json:"online"`
-				}
-				if json.Unmarshal(hostsResp, &allAgents) == nil {
-					online := 0
-					for _, a := range allAgents {
-						if a.Online {
-							online++
-						}
-					}
-					notAssessed = online - len(assessedHosts)
-				}
-			}
+			// Split "not assessed" so the label doesn't conflate non-RHEL
+			// hosts with RHEL hosts that simply didn't respond.
+			nonRHEL, rhelNoResponse := countNotAssessed(assessedHosts)
 
 			fmt.Printf("\n%d vulnerable, %d patched", vulnerable, patched)
-			if notAssessed > 0 {
-				fmt.Printf(", %d not assessed (non-RHEL)", notAssessed)
+			if nonRHEL > 0 {
+				fmt.Printf(", %d non-RHEL", nonRHEL)
+			}
+			if rhelNoResponse > 0 {
+				fmt.Printf(", %d RHEL did not respond", rhelNoResponse)
 			}
 			fmt.Println()
 
