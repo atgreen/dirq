@@ -5,6 +5,14 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.21.1] - 2026-05-22
+
+### Added
+
+- **Burst-aware registration batching with source-IP diversity for zone leaders.** Registration RPCs now flow through a small in-memory queue (default 200ms window, 200 max batch) and role assignment runs over the whole batch at flush time.  Multi-item batches prefer one zone leader per distinct (and ZL-free) source IP, spreading ZLs across distinct hosts in a single decision instead of letting whichever VM won the lock-contention race grab them all.  Lone registrations fast-path through the existing per-agent assignRole — no change to steady-state behavior.  Useful in production any time you have a co-located burst (rack reboot, post-maintenance restart, deployment rollouts); same code path that made 50,000-agent fleet-scale emulation finally converge with ZLs on 5 different VMs.
+- **`/api/v1/debug/inflight` per-zone-leader breakdown.** For every in-flight broadcast (query/exec/deploy), the response now groups the still-pending agent set by zone leader and includes: subtree size, received count, pending count, stream-send-buffer depth, and response-arrival counters for the last 1/5/30 seconds.  Surfaces "which ZL is the bottleneck" without grepping logs.
+- **`dirq debug inflight` CLI now renders the per-ZL breakdown.** Marks the chokepoint ZL with `← bottleneck (send_buf full)` when its send buffer is at capacity, and the per-window arrival counts let you distinguish a slow-but-progressing broadcast from one that's actually stuck.
+
 ## [0.21.0] - 2026-05-22
 
 This release replaces the broadcast dispatchers' idle-timeout heuristic with explicit per-target accounting tied to mesh-state signals.  Long-running fleet commands (e.g. `dnf install` across thousands of hosts) no longer get cut off at 30 s of silence between fast and slow responders; unreachable agents get retired the moment the server learns they're gone instead of pinning the dispatcher to the hard timeout; **users can now set `--timeout` arbitrarily long without artificial caps**.
@@ -630,6 +638,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.21.1]: https://github.com/atgreen/dirq/releases/tag/v0.21.1
 [0.21.0]: https://github.com/atgreen/dirq/releases/tag/v0.21.0
 [0.20.3]: https://github.com/atgreen/dirq/releases/tag/v0.20.3
 [0.20.2]: https://github.com/atgreen/dirq/releases/tag/v0.20.2
