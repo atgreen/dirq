@@ -447,11 +447,27 @@ var (
 	querySessionsMu sync.RWMutex
 )
 
+// dispatchOutcome reports honest dispatch results so callers can
+// distinguish a real completion from a give-up-early idle timeout.
+// Today the CLI used to display "Status: completed" regardless, which
+// hid bugs where most of the fleet never answered.
+type dispatchOutcome struct {
+	Results       []*pb.QueryResult
+	TotalTargets  int  // size of the original dispatch set
+	Responded     int  // agents that returned a result (success or no-match)
+	Complete      bool // true iff every target accounted for (no idle/hard timeout)
+	HardTimedOut  bool // hard timeout fired before everyone responded
+	IdleTimedOut  bool // dispatcher stopped because nothing was arriving
+}
+
+// MissingCount returns how many targets never produced a response.
+func (o dispatchOutcome) MissingCount() int { return o.TotalTargets - o.Responded }
+
 // dispatchQuery broadcasts a query through all connected zone leaders.
 // Zone leaders relay the query down through the mesh to all agents in
 // their subtrees. Each agent executes the query locally and results
 // bubble back up through the mesh.
-func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetIDs []string) ([]*pb.QueryResult, error) {
+func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetIDs []string) (dispatchOutcome, error) {
 	qs := &querySession{
 		queryID:        qr.QueryId,
 		results:        make(chan *pb.QueryResult, len(targetIDs)),
@@ -480,7 +496,7 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 		},
 	}
 	if err := s.signServerMessage(msg); err != nil {
-		return nil, fmt.Errorf("sign query request: %w", err)
+		return dispatchOutcome{}, fmt.Errorf("sign query request: %w", err)
 	}
 
 	// Broadcast to ALL connected zone leaders. Each zone leader executes
@@ -508,16 +524,27 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 	// Agents send "no match" responses when they don't match the WHERE clause,
 	// so the server can count completions and stop as soon as all targets
 	// have answered. The idle timeout is a safety net for agents that crash
-	// or are unreachable through the mesh — kept tight because queries are
-	// fast (data collection only) and stragglers shouldn't gate the response.
+	// or are unreachable through the mesh — but it has to scale with the
+	// fleet, since a wider fan-out spreads responses over a longer interval
+	// even on a healthy mesh.  Floor of 2s for tiny fleets, +1s per 500
+	// targets thereafter, hard cap of 30s.
+	idleWindow := 2 * time.Second
+	if extra := time.Duration(len(targetIDs)/500) * time.Second; extra > 0 {
+		idleWindow += extra
+	}
+	if idleWindow > 30*time.Second {
+		idleWindow = 30 * time.Second
+	}
+
 	var results []*pb.QueryResult
 	hardTimeout := time.NewTimer(qs.timeout)
 	defer hardTimeout.Stop()
-	idleTimeout := time.NewTimer(1 * time.Second)
+	idleTimeout := time.NewTimer(idleWindow)
 	defer idleTimeout.Stop()
 
 	responded := 0
 	maxResults := len(targetIDs)
+	outcome := dispatchOutcome{TotalTargets: maxResults}
 	for responded < maxResults {
 		select {
 		case r := <-qs.results:
@@ -538,18 +565,33 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 				default:
 				}
 			}
-			idleTimeout.Reset(1 * time.Second)
+			idleTimeout.Reset(idleWindow)
 		case <-idleTimeout.C:
-			return results, nil
+			s.log.Info("query stopped on idle timeout",
+				"query_id", qr.QueryId, "received", responded, "targets", maxResults,
+				"idle_window", idleWindow)
+			outcome.Results = results
+			outcome.Responded = responded
+			outcome.IdleTimedOut = true
+			return outcome, nil
 		case <-hardTimeout.C:
-			s.log.Warn("query timed out", "query_id", qr.QueryId, "received", responded, "targets", maxResults)
-			return results, nil
+			s.log.Warn("query hard-timeout fired",
+				"query_id", qr.QueryId, "received", responded, "targets", maxResults)
+			outcome.Results = results
+			outcome.Responded = responded
+			outcome.HardTimedOut = true
+			return outcome, nil
 		case <-ctx.Done():
-			return results, ctx.Err()
+			outcome.Results = results
+			outcome.Responded = responded
+			return outcome, ctx.Err()
 		}
 	}
 
-	return results, nil
+	outcome.Results = results
+	outcome.Responded = responded
+	outcome.Complete = true
+	return outcome, nil
 }
 
 func (s *Server) handleQueryResult(result *pb.QueryResult) {

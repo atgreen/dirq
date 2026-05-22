@@ -579,6 +579,10 @@ type execMultiResult struct {
 	FinishedAt   string `json:"finished_at,omitempty"`
 	TotalTargets int    `json:"total_targets,omitempty"`
 	Received     int    `json:"received,omitempty"`
+	// Targets the field-resolution query couldn't account for.  Non-zero
+	// means the broadcast set is a subset of the real matching fleet —
+	// callers shouldn't claim "complete" coverage.
+	UnresolvedTargets int `json:"unresolved_targets,omitempty"`
 }
 
 // execBroadcastSession tracks an in-flight broadcast exec.
@@ -691,11 +695,15 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 
 	// If there are non-tag field conditions (e.g., os_info.os = 'linux'),
 	// run a query first to resolve which agents match, then intersect.
+	// Track how many targets the resolution query couldn't account for so
+	// we can surface partial coverage in the eventual exec header.
+	unresolvedTargets := 0
 	if query.HasFieldConditions(parsed.Where) {
-		matchedIDs, err := s.resolveFieldTargets(ctx, req.Query, timeout)
+		matchedIDs, missing, err := s.resolveFieldTargets(ctx, req.Query, timeout)
 		if err != nil {
 			s.log.Warn("field-based target resolution failed, using tag filter only", "error", err)
 		} else {
+			unresolvedTargets = missing
 			matched := make(map[string]bool, len(matchedIDs))
 			for _, id := range matchedIDs {
 				matched[id] = true
@@ -732,8 +740,9 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 
 	// Header line.
 	enc.Encode(execMultiResult{
-		Type:         "header",
-		TotalTargets: len(targets),
+		Type:              "header",
+		TotalTargets:      len(targets),
+		UnresolvedTargets: unresolvedTargets,
 	})
 	flusher.Flush()
 
@@ -884,8 +893,11 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 
 // resolveFieldTargets runs a SELECT hostname query to find which agents
 // match field-based WHERE conditions (e.g., os_info.os = 'linux').
-// Returns the list of matching agent IDs.
-func (s *Server) resolveFieldTargets(ctx context.Context, queryStr string, timeout int) ([]string, error) {
+// Returns the list of matching agent IDs and how many targets failed to
+// respond — callers must propagate `missing` so the eventual exec result
+// doesn't claim "N/N complete" when the underlying field resolution lost
+// part of the fleet to idle/hard timeout.
+func (s *Server) resolveFieldTargets(ctx context.Context, queryStr string, timeout int) (ids []string, missing int, err error) {
 	body, _ := json.Marshal(map[string]any{
 		"query":   queryStr,
 		"timeout": timeout,
@@ -900,26 +912,27 @@ func (s *Server) resolveFieldTargets(ctx context.Context, queryStr string, timeo
 	s.handleQuery(rec, req)
 
 	if rec.code != http.StatusOK {
-		return nil, fmt.Errorf("query failed: HTTP %d", rec.code)
+		return nil, 0, fmt.Errorf("query failed: HTTP %d", rec.code)
 	}
 
 	var result struct {
+		Status  string `json:"status"`
+		Missing int    `json:"missing"`
 		Results []struct {
 			AgentID string `json:"agent_id"`
 			Success bool   `json:"success"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(rec.body.Bytes(), &result); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	var ids []string
 	for _, r := range result.Results {
 		if r.Success {
 			ids = append(ids, r.AgentID)
 		}
 	}
-	return ids, nil
+	return ids, result.Missing, nil
 }
 
 // responseRecorder captures an HTTP response for internal use.

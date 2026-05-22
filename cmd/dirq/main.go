@@ -1062,8 +1062,9 @@ Examples:
 
 			// First line is the header with target count.
 			var header struct {
-				Type         string `json:"type"`
-				TotalTargets int    `json:"total_targets"`
+				Type              string `json:"type"`
+				TotalTargets      int    `json:"total_targets"`
+				UnresolvedTargets int    `json:"unresolved_targets"`
 			}
 			if err := dec.Decode(&header); err != nil {
 				return fmt.Errorf("failed to read response header: %w", err)
@@ -1075,7 +1076,15 @@ Examples:
 			}
 
 			if !jsonOut {
-				fmt.Printf("Targets: %d\n\n", header.TotalTargets)
+				if header.UnresolvedTargets > 0 {
+					// The query that resolved field conditions (e.g.
+					// os_info.os = 'linux') returned partial results — exec
+					// is only running against the subset that answered.
+					fmt.Printf("Targets: %d  (warning: %d host(s) did not respond to the field-resolution query; exec coverage is partial)\n\n",
+						header.TotalTargets, header.UnresolvedTargets)
+				} else {
+					fmt.Printf("Targets: %d\n\n", header.TotalTargets)
+				}
 			}
 
 			// Stream results as they arrive.
@@ -1146,7 +1155,16 @@ Examples:
 			}
 
 			if !jsonOut {
-				fmt.Printf("%d/%d completed\n", received, header.TotalTargets)
+				if received < header.TotalTargets {
+					fmt.Printf("%d/%d responded; %d host(s) did not reply (mesh timeout or unreachable)\n",
+						received, header.TotalTargets, header.TotalTargets-received)
+				} else {
+					fmt.Printf("%d/%d completed\n", received, header.TotalTargets)
+				}
+				if header.UnresolvedTargets > 0 {
+					fmt.Printf("Plus %d host(s) excluded from the broadcast because field-resolution didn't get a response — actual coverage is partial.\n",
+						header.UnresolvedTargets)
+				}
 			}
 
 			if hasFailures {
@@ -1866,6 +1884,7 @@ Examples:
 				Status       string `json:"status"`
 				TotalTargets int    `json:"total_targets"`
 				Received     int    `json:"received"`
+				Missing      int    `json:"missing"`
 				Results      []struct {
 					Hostname string         `json:"hostname"`
 					Success  bool           `json:"success"`
@@ -1878,7 +1897,13 @@ Examples:
 			}
 
 			fmt.Printf("Query: %s\n", result.QueryID)
-			fmt.Printf("Status: %s | Targets: %d | Received: %d\n\n", result.Status, result.TotalTargets, result.Received)
+			if result.Missing > 0 {
+				fmt.Printf("Status: %s | Targets: %d | Received: %d | Missing: %d (mesh timeout or unreachable)\n\n",
+					result.Status, result.TotalTargets, result.Received, result.Missing)
+			} else {
+				fmt.Printf("Status: %s | Targets: %d | Received: %d\n\n",
+					result.Status, result.TotalTargets, result.Received)
+			}
 
 			if len(result.Results) == 0 {
 				fmt.Println("No results.")

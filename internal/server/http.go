@@ -145,9 +145,10 @@ type queryRequest struct {
 
 type queryResponse struct {
 	QueryID      string        `json:"query_id"`
-	Status       string        `json:"status"`
+	Status       string        `json:"status"`           // "completed" iff every target answered; "incomplete" if idle/hard timeout fired first
 	TotalTargets int           `json:"total_targets"`
 	Received     int           `json:"received"`
+	Missing      int           `json:"missing,omitempty"` // total_targets - received (>0 only when status != "completed")
 	Results      []queryResult `json:"results"`
 }
 
@@ -242,11 +243,12 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Dispatch to agents.
-	results, err := s.dispatchQuery(ctx, qr, targetIDs)
+	outcome, err := s.dispatchQuery(ctx, qr, targetIDs)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "query dispatch failed: "+err.Error())
 		return
 	}
+	results := outcome.Results
 
 	// Convert results.
 	successCount := 0
@@ -315,17 +317,23 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update query record.
+	// Update query record.  Status reflects whether every target was
+	// accounted for; "incomplete" surfaces idle/hard timeouts so callers
+	// know not to trust the partial result set as authoritative.
+	status := "completed"
+	if !outcome.Complete {
+		status = "incomplete"
+	}
 	if dbQuery.ID != "" {
-		timeoutCount := len(targetIDs) - len(results)
-		s.db.UpdateQueryStatus(ctx, dbQuery.ID, "completed", successCount, errorCount, timeoutCount)
+		s.db.UpdateQueryStatus(ctx, dbQuery.ID, status, successCount, errorCount, outcome.MissingCount())
 	}
 
 	jsonResponse(w, http.StatusOK, queryResponse{
 		QueryID:      qr.QueryId,
-		Status:       "completed",
-		TotalTargets: len(targetIDs),
-		Received:     len(results),
+		Status:       status,
+		TotalTargets: outcome.TotalTargets,
+		Received:     outcome.Responded,
+		Missing:      outcome.MissingCount(),
 		Results:      aggregated,
 	})
 }
