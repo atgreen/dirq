@@ -54,13 +54,14 @@ type Config struct {
 type Server struct {
 	pb.UnimplementedDirQServerServer
 
-	cfg     Config
-	topoCfg TopologyConfig
-	db      db.DB
-	log     *slog.Logger
-	grpcSv  *grpc.Server
-	httpSv  *http.Server
-	signer  *signutil.Signer
+	cfg      Config
+	topoCfg  TopologyConfig
+	topology *MeshTopology // in-memory authoritative mesh state (see meshtopology.go)
+	db       db.DB
+	log      *slog.Logger
+	grpcSv   *grpc.Server
+	httpSv   *http.Server
+	signer   *signutil.Signer
 
 	// oldSignerPubKeys holds raw Ed25519 public keys from previous signing keys.
 	// Populated when DIRQ_SIGNING_PUB_OLD / signing_pub_old is configured.
@@ -144,18 +145,67 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 	}
 
 	return &Server{
-		cfg:            cfg,
-		topoCfg:        topoCfg,
-		db:             database,
-		log:            log,
-		streams:        make(map[string]*agentStream),
-		execSessions:   make(map[string]*execSession),
-		sessionTokens:  make(map[string]string),
+		cfg:             cfg,
+		topoCfg:         topoCfg,
+		topology:        NewMeshTopology(topoCfg),
+		db:              database,
+		log:             log,
+		streams:         make(map[string]*agentStream),
+		execSessions:    make(map[string]*execSession),
+		sessionTokens:   make(map[string]string),
 		reassigning:     make(map[string]time.Time),
 		demoteCooldown:  make(map[string]demoteRecord),
 		factStage:       make(map[factKey]db.FactRow),
 		factFlushSignal: make(chan struct{}, 1),
 	}
+}
+
+// runTopologySnapshotter periodically writes (role, parent_id) pairs
+// from the in-memory MeshTopology back to the DB.  The DB is no longer
+// the source of truth — this is purely a recovery aid so visibility
+// survives a server restart and external tooling can read the agents
+// table without an admin RPC.  Writes are best-effort: errors are
+// logged but don't affect routing.
+func (s *Server) runTopologySnapshotter(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.snapshotTopologyOnce(ctx)
+		}
+	}
+}
+
+func (s *Server) snapshotTopologyOnce(ctx context.Context) {
+	// Walk every node and write its current (role, parent_id) to the DB.
+	// Fire-and-forget; the topology mutex is released for each write.
+	for _, id := range s.topology.allNodeIDs() {
+		n, ok := s.topology.Get(id)
+		if !ok {
+			continue
+		}
+		if n.Role != "" {
+			s.db.SetAgentRole(ctx, n.ID, n.Role)
+		}
+		s.db.SetAgentParent(ctx, n.ID, n.ParentID)
+	}
+}
+
+// rehydrateTopology seeds the in-memory MeshTopology from the DB at
+// startup so dirq hosts graph isn't blank for the first few seconds
+// while agents reconnect.  Routing is rebuilt from live streams anyway,
+// so this is purely a visibility aid.
+func (s *Server) rehydrateTopology(ctx context.Context) {
+	agents, err := s.db.ListAgents(ctx, db.ListAgentsFilter{})
+	if err != nil {
+		s.log.Warn("rehydrate topology from DB failed", "error", err)
+		return
+	}
+	s.topology.Rehydrate(agents)
+	s.log.Info("rehydrated topology from DB", "agents", len(agents))
 }
 
 // writeAgentConfig generates /var/lib/dirq/agent.conf with inline TLS certs
@@ -345,10 +395,17 @@ func (s *Server) Start(ctx context.Context) error {
 		s.log.Info("leader election enabled", "backend", s.db.Kind())
 	}
 
+	// Seed the in-memory topology from the DB so visibility (dirq hosts
+	// graph) works during the few-second window before agents reconnect.
+	// Routing itself is rebuilt from live streams; this is only for
+	// operator observability across a restart.
+	s.rehydrateTopology(ctx)
+
 	// Start the stale-agent reaper, topology rebalancer, and fact batcher.
 	go s.startReaper(ctx)
 	go s.startRebalancer(ctx)
 	go s.runFactBatcher(ctx)
+	go s.runTopologySnapshotter(ctx)
 
 	capacity := s.topoCfg.MaxZoneLeaders * s.topoCfg.MaxChildrenPerNode * s.topoCfg.MaxChildrenPerNode
 	s.log.Info("DirQ server starting",

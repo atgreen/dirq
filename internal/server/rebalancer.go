@@ -7,7 +7,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/atgreen/dirq/internal/db"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -43,18 +42,14 @@ func (s *Server) startRebalancer(ctx context.Context) {
 func (s *Server) rebalanceOnce(ctx context.Context) {
 	cfg := s.topoCfg
 
-	// Count online zone leaders (from DB, not streams — streams include fallbacks).
-	onlineZLs, err := s.db.CountOnlineZoneLeaders(ctx)
-	if err != nil {
-		return
-	}
+	// Counts come from the in-memory topology, not the DB.
+	onlineZLs := s.topology.CountOnlineZoneLeaders()
 
 	// Count non-ZL agents connected directly to the server (fallback connections).
 	excessDirect := 0
 	s.mu.RLock()
 	for agentID := range s.streams {
-		agent, err := s.db.GetAgent(ctx, agentID)
-		if err == nil && agent.Role != "zone_leader" {
+		if n, ok := s.topology.Get(agentID); ok && n.Role != "zone_leader" {
 			excessDirect++
 		}
 	}
@@ -94,19 +89,16 @@ func (s *Server) rebalanceOnce(ctx context.Context) {
 
 // promoteOneRelay finds the relay with the most children and promotes it.
 func (s *Server) promoteOneRelay(ctx context.Context) {
-	candidates, err := s.db.FindRelaysWithChildren(ctx)
-	if err != nil || len(candidates) == 0 {
+	candidateID, _, hostname, ok := s.topology.FindRelayToPromote()
+	if !ok {
 		s.log.Info("rebalancer: no relay with children to promote")
 		return
 	}
 
-	candidate := candidates[0]
-	childCount, _ := s.db.CountChildren(ctx, candidate.ID)
-
 	msg := &pb.ServerMessage{
 		Payload: &pb.ServerMessage_PeerUpdate{
 			PeerUpdate: &pb.PeerUpdate{
-				TargetAgentId: candidate.ID,
+				TargetAgentId: candidateID,
 				NewRole:       pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
 				NewParentAddr: "",
 			},
@@ -116,20 +108,18 @@ func (s *Server) promoteOneRelay(ctx context.Context) {
 		s.signServerMessage(msg)
 	}
 
-	// Only update DB after successfully sending the message.
-	if s.sendToAgent(ctx, candidate.ID, msg) {
-		s.db.SetAgentRole(ctx, candidate.ID, "zone_leader")
-		s.db.SetAgentParent(ctx, candidate.ID, "")
+	// Only update topology after successfully sending the message.
+	if s.sendToAgent(ctx, candidateID, msg) {
+		s.topology.AssignZoneLeader(candidateID)
 		s.log.Info("rebalancer: promoted relay to zone leader",
-			"agent", candidate.Hostname,
-			"children", childCount,
+			"agent", hostname,
+			"children", s.topology.CountChildren(candidateID),
 		)
 	}
 }
 
 // demoteOne moves one non-ZL agent from a direct server connection to a ZL.
 func (s *Server) demoteOne(ctx context.Context) {
-	cfg := s.topoCfg
 	now := time.Now()
 
 	// Find one non-ZL agent connected directly, skipping any still in cooldown.
@@ -137,8 +127,7 @@ func (s *Server) demoteOne(ctx context.Context) {
 	s.mu.RLock()
 	s.demoteMu.Lock()
 	for id := range s.streams {
-		agent, err := s.db.GetAgent(ctx, id)
-		if err != nil || agent.Role == "zone_leader" {
+		if n, ok := s.topology.Get(id); !ok || n.Role == "zone_leader" {
 			continue
 		}
 		if rec, ok := s.demoteCooldown[id]; ok {
@@ -160,14 +149,14 @@ func (s *Server) demoteOne(ctx context.Context) {
 		return
 	}
 
-	parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
-	if err != nil || parent.ID == "" || parent.ID == agentID {
+	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
+	if !ok || parentID == agentID {
 		return
 	}
+	parentNode, _ := s.topology.Get(parentID)
 
 	var fallbacks []string
-	fbAgents, _ := s.db.FindFallbackParents(ctx, parent.ID, cfg.MaxChildrenPerNode, 2)
-	for _, fb := range fbAgents {
+	for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
 		fallbacks = append(fallbacks, fb.ListenAddr)
 	}
 
@@ -176,7 +165,7 @@ func (s *Server) demoteOne(ctx context.Context) {
 			PeerUpdate: &pb.PeerUpdate{
 				TargetAgentId:    agentID,
 				NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
-				NewParentAddr:    parent.ListenAddr,
+				NewParentAddr:    parentAddr,
 				NewFallbackAddrs: fallbacks,
 			},
 		},
@@ -199,8 +188,7 @@ func (s *Server) demoteOne(ctx context.Context) {
 
 	select {
 	case as.send <- msg:
-		s.db.SetAgentRole(ctx, agentID, "relay")
-		s.db.SetAgentParent(ctx, agentID, parent.ID)
+		s.topology.AssignChild(agentID, parentID)
 
 		s.demoteMu.Lock()
 		rec := s.demoteCooldown[agentID]
@@ -210,7 +198,7 @@ func (s *Server) demoteOne(ctx context.Context) {
 		s.demoteMu.Unlock()
 
 		s.log.Info("rebalancer: demoted to relay",
-			"agent_id", agentID, "new_parent", parent.Hostname,
+			"agent_id", agentID, "new_parent", parentNode.Hostname,
 			"demotion_attempt", rec.failures)
 	default:
 	}
@@ -218,23 +206,20 @@ func (s *Server) demoteOne(ctx context.Context) {
 
 // redistributeOne moves one subtree from a heavy node to a light node.
 func (s *Server) redistributeOne(ctx context.Context) {
-	cfg := s.topoCfg
-
-	heavy, light, found, err := s.db.FindImbalancedNodes(ctx, cfg.MaxChildrenPerNode)
-	if err != nil || !found {
+	heavy, light, found := s.topology.FindImbalanced()
+	if !found {
 		return
 	}
 
-	child, err := s.db.FindChildOfParent(ctx, heavy.Agent.ID)
-	if err != nil || child.ID == "" {
+	child, ok := s.topology.PickChildOf(heavy.Agent.ID)
+	if !ok || child.ID == "" {
 		return
 	}
 
-	childChildren, _ := s.db.CountChildren(ctx, child.ID)
+	childChildren := s.topology.CountChildren(child.ID)
 
 	var fallbacks []string
-	fbAgents, _ := s.db.FindFallbackParents(ctx, light.Agent.ID, cfg.MaxChildrenPerNode, 2)
-	for _, fb := range fbAgents {
+	for _, fb := range s.topology.FindFallbackParents(light.Agent.ID, 2) {
 		fallbacks = append(fallbacks, fb.ListenAddr)
 	}
 
@@ -255,7 +240,7 @@ func (s *Server) redistributeOne(ctx context.Context) {
 	s.markReassigning(child.ID)
 
 	if s.sendToAgent(ctx, child.ID, msg) {
-		s.db.SetAgentParent(ctx, child.ID, light.Agent.ID)
+		s.topology.AssignChild(child.ID, light.Agent.ID)
 		s.log.Info("rebalancer: redistributed subtree",
 			"child", child.Hostname,
 			"subtree_size", childChildren,
@@ -267,7 +252,7 @@ func (s *Server) redistributeOne(ctx context.Context) {
 
 // sendToAgent sends a message to an agent — tries direct stream first,
 // then routes through the agent's zone leader.
-func (s *Server) sendToAgent(ctx context.Context, agentID string, msg *pb.ServerMessage) bool {
+func (s *Server) sendToAgent(_ context.Context, agentID string, msg *pb.ServerMessage) bool {
 	s.mu.RLock()
 	if as, ok := s.streams[agentID]; ok {
 		s.mu.RUnlock()
@@ -281,12 +266,12 @@ func (s *Server) sendToAgent(ctx context.Context, agentID string, msg *pb.Server
 	s.mu.RUnlock()
 
 	// Route through zone leader.
-	zl, err := s.db.FindZoneLeader(ctx, agentID)
-	if err != nil || zl.ID == "" {
+	zlID, ok := s.topology.FindZoneLeader(agentID)
+	if !ok {
 		return false
 	}
 	s.mu.RLock()
-	as, ok := s.streams[zl.ID]
+	as, ok := s.streams[zlID]
 	s.mu.RUnlock()
 	if !ok {
 		return false
@@ -301,24 +286,22 @@ func (s *Server) sendToAgent(ctx context.Context, agentID string, msg *pb.Server
 
 // reassignOrphans moves all children of a dead parent to healthy nodes.
 // Called when a zone leader's stream closes.
-func (s *Server) reassignOrphans(ctx context.Context, deadParentID string) {
-	children, err := s.db.ListAgents(ctx, db.ListAgentsFilter{ParentID: deadParentID})
-	if err != nil || len(children) == 0 {
+func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
+	children := s.topology.ChildrenOf(deadParentID)
+	if len(children) == 0 {
 		return
 	}
 
-	cfg := s.topoCfg
 	for _, child := range children {
-		parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
-		if err != nil || parent.ID == "" || parent.ID == child.ID {
+		parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
+		if !ok || parentID == child.ID {
 			// Tree has no room to absorb this orphan — promote it to zone
-			// leader rather than leaving it dangling with a NULL parent_id.
-			// The DB update lands either way; the PeerUpdate is best-effort
-			// (delivered only if the orphan still has a live stream).
+			// leader rather than leaving it dangling with no parent.
+			// The PeerUpdate is best-effort (delivered only if the orphan
+			// still has a live stream).
 			s.log.Info("reassignOrphans: no parent available, promoting orphan to zone_leader",
 				"child", child.Hostname)
-			s.db.SetAgentRole(ctx, child.ID, "zone_leader")
-			s.db.SetAgentParent(ctx, child.ID, "")
+			s.topology.AssignZoneLeader(child.ID)
 			promoteMsg := &pb.ServerMessage{
 				Payload: &pb.ServerMessage_PeerUpdate{
 					PeerUpdate: &pb.PeerUpdate{
@@ -342,17 +325,16 @@ func (s *Server) reassignOrphans(ctx context.Context, deadParentID string) {
 			continue
 		}
 
-		s.db.SetAgentParent(ctx, child.ID, parent.ID)
+		parentNode, _ := s.topology.Get(parentID)
+		s.topology.AssignChild(child.ID, parentID)
 		s.log.Info("reassignOrphans: moved child to new parent",
-			"child", child.Hostname, "new_parent", parent.Hostname)
+			"child", child.Hostname, "new_parent", parentNode.Hostname)
 
 		// If the child is connected directly to the server, tell it
 		// to reconnect to its new parent.
 		var fallbacks []string
-		if fbAgents, err := s.db.FindFallbackParents(ctx, parent.ID, cfg.MaxChildrenPerNode, 2); err == nil {
-			for _, fb := range fbAgents {
-				fallbacks = append(fallbacks, fb.ListenAddr)
-			}
+		for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
+			fallbacks = append(fallbacks, fb.ListenAddr)
 		}
 
 		msg := &pb.ServerMessage{
@@ -360,7 +342,7 @@ func (s *Server) reassignOrphans(ctx context.Context, deadParentID string) {
 				PeerUpdate: &pb.PeerUpdate{
 					TargetAgentId:    child.ID,
 					NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
-					NewParentAddr:    parent.ListenAddr,
+					NewParentAddr:    parentAddr,
 					NewFallbackAddrs: fallbacks,
 				},
 			},

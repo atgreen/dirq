@@ -163,9 +163,9 @@ func (s *Server) handleDebugStream(w http.ResponseWriter, r *http.Request) {
 	// Not directly connected — figure out the zone leader the server's
 	// dispatch would normally route through, and whether that zone
 	// leader itself has a live stream.
-	zl, err := s.db.FindZoneLeader(r.Context(), agent.ID)
-	if err != nil {
-		out.Note = "no zone leader found in DB; single-host exec would fall back to fan-out broadcast"
+	zl, ok := s.topology.FindZoneLeaderAgent(agent.ID)
+	if !ok {
+		out.Note = "no zone leader found in topology; single-host exec would fall back to fan-out broadcast"
 		jsonResponse(w, http.StatusOK, out)
 		return
 	}

@@ -195,6 +195,8 @@ func (m *mockDB) RemoveServerPeer(context.Context, string) error           { ret
 func newTestServer(mock *mockDB, authDisabled bool) *Server {
 	return &Server{
 		cfg:          Config{AuthDisabled: authDisabled},
+		topoCfg:      DefaultTopologyConfig(),
+		topology:     NewMeshTopology(DefaultTopologyConfig()),
 		db:           mock,
 		log:          slog.Default(),
 		streams:      make(map[string]*agentStream),

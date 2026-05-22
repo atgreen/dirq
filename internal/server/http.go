@@ -340,7 +340,30 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Overlay live role+parent_id from the in-memory topology so the CLI
+	// (dirq hosts list, dirq hosts graph) always sees the current shape,
+	// not the DB's possibly-stale snapshot.
+	s.enrichWithTopology(agents)
 	jsonResponse(w, http.StatusOK, agents)
+}
+
+// enrichWithTopology rewrites each agent's Role and ParentID from the
+// in-memory MeshTopology when present.  Static fields (hostname, OS,
+// listen_addr, tags, etc.) come from the DB unchanged.
+func (s *Server) enrichWithTopology(agents []db.Agent) {
+	for i := range agents {
+		n, ok := s.topology.Get(agents[i].ID)
+		if !ok {
+			continue
+		}
+		agents[i].Role = n.Role
+		if n.ParentID == "" {
+			agents[i].ParentID = nil
+		} else {
+			pid := n.ParentID
+			agents[i].ParentID = &pid
+		}
+	}
 }
 
 // resolveAgent looks up an agent by ID, falling back to hostname.
@@ -521,6 +544,7 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.enrichWithTopology(agents)
 
 	// Build Ansible dynamic inventory with nested group hierarchy.
 	//
@@ -715,50 +739,23 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		versions[v]++
 	}
 
-	// Topology stats.
+	// Topology stats from the in-memory MeshTopology (O(N), not O(N²)).
 	s.mu.RLock()
 	zoneLeaders := len(s.streams)
 	s.mu.RUnlock()
 
-	// Find max tree depth and orphans (online agents with offline parents).
 	maxDepth := 0
 	orphans := 0
-	parentOnline := map[string]bool{}
-	for _, a := range allAgents {
-		parentOnline[a.ID] = a.Online
-	}
 	for _, a := range onlineAgents {
-		// Walk parent chain to compute depth.
-		depth := 0
-		seen := map[string]bool{}
-		cur := a.ID
-		for {
-			found := false
-			for _, p := range allAgents {
-				if p.ID == cur && p.ParentID != nil && *p.ParentID != "" {
-					if seen[cur] {
-						break
-					}
-					seen[cur] = true
-					depth++
-					cur = *p.ParentID
-					found = true
-					break
-				}
-			}
-			if !found {
-				break
-			}
+		n, ok := s.topology.Get(a.ID)
+		if !ok {
+			continue
 		}
-		if depth > maxDepth {
-			maxDepth = depth
+		if n.Depth > maxDepth {
+			maxDepth = n.Depth
 		}
-
-		// Check for orphans.
-		if a.ParentID != nil && *a.ParentID != "" {
-			if isOnline, exists := parentOnline[*a.ParentID]; exists && !isOnline {
-				orphans++
-			}
+		if n.Role != "zone_leader" && n.ParentID == "" {
+			orphans++
 		}
 	}
 

@@ -4,9 +4,6 @@
 package server
 
 import (
-	"context"
-	"fmt"
-
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -60,72 +57,40 @@ type assignment struct {
 // There is no relay/leaf distinction — every non-ZL node is simply a "node"
 // in the tree. Nodes with children automatically relay traffic; nodes without
 // children are effectively leafs. The agent binary handles both cases.
-func (s *Server) assignRole(ctx context.Context, agentID string) (assignment, error) {
+//
+// All decisions read in-memory MeshTopology state — no DB round-trips on
+// the registration hot path.  See meshtopology.go for the rationale.
+func (s *Server) assignRole(agentID string) assignment {
 	cfg := s.topoCfg
 
-	// Step 0: If this agent is re-registering and was previously promoted to
-	// zone leader (e.g., by reassignOrphans or RequestPeers when the tree
-	// saturated), keep that role.  Otherwise the recomputed assignment would
-	// undo the promotion and re-orphan the agent on the next churn cycle.
-	if agentID != "" {
-		if existing, err := s.db.GetAgent(ctx, agentID); err == nil &&
-			existing.Role == "zone_leader" &&
-			(existing.ParentID == nil || *existing.ParentID == "") {
-			s.log.Info("topology: preserving existing zone_leader assignment on re-register",
-				"agent_id", agentID)
-			return assignment{
-				Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
-			}, nil
+	// Step 0: re-registration of a previously-promoted orphan.  Keep the
+	// zone_leader role so the orphan-promotion fix doesn't get undone.
+	if existing, ok := s.topology.Get(agentID); ok &&
+		existing.Role == "zone_leader" && existing.ParentID == "" {
+		return assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
+	}
+
+	// Step 1: Need more zone leaders?
+	if s.topology.CountOnlineZoneLeaders() < cfg.MaxZoneLeaders {
+		return assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
+	}
+
+	// Step 2: BFS-fill — shallowest online parent with room.
+	if parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom(); ok {
+		fbAgents := s.topology.FindFallbackParents(parentID, 2)
+		fallbacks := make([]string, 0, len(fbAgents))
+		for _, fb := range fbAgents {
+			fallbacks = append(fallbacks, fb.ListenAddr)
 		}
-	}
-
-	// Step 1: Do we need more zone leaders?
-	zoneLeaderCount, err := s.db.CountAgentsByRole(ctx, "zone_leader")
-	if err != nil {
-		return assignment{}, fmt.Errorf("count zone leaders: %w", err)
-	}
-
-	if zoneLeaderCount < cfg.MaxZoneLeaders {
-		s.log.Info("topology: assigning as zone_leader",
-			"current_zone_leaders", zoneLeaderCount,
-			"max", cfg.MaxZoneLeaders,
-		)
-		return assignment{
-			Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
-		}, nil
-	}
-
-	// Step 2: Find any node with room, preferring shallowest (BFS fill).
-	parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
-	if err == nil && parent.ID != "" {
-		// Find fallback parents on different branches for fault isolation.
-		var fallbacks []string
-		fbAgents, err := s.db.FindFallbackParents(ctx, parent.ID, cfg.MaxChildrenPerNode, 2)
-		if err == nil {
-			for _, fb := range fbAgents {
-				fallbacks = append(fallbacks, fb.ListenAddr)
-			}
-		}
-
-		s.log.Info("topology: assigning under parent",
-			"parent", parent.Hostname,
-			"parent_id", parent.ID,
-			"fallbacks", len(fallbacks),
-		)
 		return assignment{
 			Role:          pb.AgentRole_AGENT_ROLE_RELAY,
-			ParentID:      parent.ID,
-			ParentAddr:    parent.ListenAddr,
+			ParentID:      parentID,
+			ParentAddr:    parentAddr,
 			FallbackAddrs: fallbacks,
-		}, nil
+		}
 	}
 
-	// Step 3: Tree is full. Add an extra zone leader.
-	s.log.Warn("topology: tree is full, adding extra zone_leader",
-		"zone_leaders", zoneLeaderCount,
-		"max", cfg.MaxZoneLeaders,
-	)
-	return assignment{
-		Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
-	}, nil
+	// Step 3: Tree saturated — add an extra zone leader so this agent
+	// has a route instead of being orphaned.
+	return assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
 }

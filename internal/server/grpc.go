@@ -76,42 +76,28 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		return nil, fmt.Errorf("register agent: %w", err)
 	}
 
-	// Assign role under an advisory lock to prevent races when thousands
-	// of agents register concurrently. Without this, multiple agents can
-	// all see "4 zone leaders" and all become the 5th, or two agents can
-	// be assigned to a parent that only has 1 slot left.
-	var a assignment
-	err = s.db.WithTopologyLock(ctx, func() error {
-		var assignErr error
-		a, assignErr = s.assignRole(ctx, agent.ID)
-		if assignErr != nil {
-			return assignErr
-		}
-
-		roleName := "relay"
-		switch a.Role {
-		case pb.AgentRole_AGENT_ROLE_ZONE_LEADER:
-			roleName = "zone_leader"
-		}
-		if err := s.db.SetAgentRole(ctx, agent.ID, roleName); err != nil {
-			return err
-		}
-		if a.ParentID != "" {
-			if err := s.db.SetAgentParent(ctx, agent.ID, a.ParentID); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		s.log.Error("topology assignment failed, rejecting registration", "error", err)
-		return nil, fmt.Errorf("topology assignment failed (retry later): %w", err)
-	}
+	// Register the agent's identity with the in-memory topology so role
+	// assignment can pick a parent for it.  All decisions happen against
+	// in-memory maps — no DB round-trips, no global lock, microseconds.
+	s.topology.AddAgent(agent.ID, req.Hostname, listenAddr)
+	a := s.assignRole(agent.ID)
 
 	roleName := "relay"
 	switch a.Role {
 	case pb.AgentRole_AGENT_ROLE_ZONE_LEADER:
 		roleName = "zone_leader"
+		s.topology.AssignZoneLeader(agent.ID)
+	default:
+		if !s.topology.AssignChild(agent.ID, a.ParentID) {
+			// Race: chosen parent filled up between FindShallowest and
+			// AssignChild.  Fall back to promoting this agent to ZL so
+			// it gets a route instead of being orphaned.
+			s.log.Warn("topology: chosen parent full at commit, promoting to zone_leader",
+				"agent_id", agent.ID, "intended_parent", a.ParentID)
+			s.topology.AssignZoneLeader(agent.ID)
+			a = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
+			roleName = "zone_leader"
+		}
 	}
 
 	s.log.Info("agent registered",
@@ -272,6 +258,7 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 	s.mu.Lock()
 	s.streams[agentID] = as
 	s.mu.Unlock()
+	s.topology.MarkOnline(agentID)
 
 	defer func() {
 		s.mu.Lock()
@@ -284,6 +271,7 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			s.log.Info("agent stream closed (reassigned)", "agent_id", agentID)
 			return
 		}
+		s.topology.MarkOffline(agentID)
 		if err := s.db.SetAgentOffline(context.Background(), agentID); err != nil {
 			s.log.Error("failed to mark agent offline", "agent_id", agentID, "error", err)
 		}
@@ -394,45 +382,43 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 	// if the server doesn't have an active stream for it (i.e., it's
 	// genuinely dead, not just slow). This avoids accidentally killing
 	// healthy nodes that the agent was just reassigned to.
-	if agent, err := s.db.GetAgent(ctx, req.AgentId); err == nil && agent.ParentID != nil && *agent.ParentID != "" {
+	if n, ok := s.topology.Get(req.AgentId); ok && n.ParentID != "" {
 		s.mu.RLock()
-		_, parentAlive := s.streams[*agent.ParentID]
+		_, parentAlive := s.streams[n.ParentID]
 		s.mu.RUnlock()
 		if !parentAlive {
-			s.db.SetAgentOffline(ctx, *agent.ParentID)
-			s.log.Info("marked failed parent offline", "parent_id", *agent.ParentID)
+			s.topology.MarkOffline(n.ParentID)
+			s.db.SetAgentOffline(ctx, n.ParentID)
+			s.log.Info("marked failed parent offline", "parent_id", n.ParentID)
 		}
 	}
 
-	cfg := s.topoCfg
-	parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
-	if err != nil || parent.ID == "" || parent.ID == req.AgentId {
+	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
+	if !ok || parentID == req.AgentId {
 		// No parent has room (tree saturated under churn) — promote the
 		// requesting agent to zone leader rather than orphaning it.  This
 		// is the escape hatch that keeps the mesh converging when the
 		// upper levels temporarily can't absorb a new child.
 		s.log.Info("no parent has room, promoting agent to zone_leader",
 			"agent_id", req.AgentId)
-		s.db.SetAgentRole(ctx, req.AgentId, "zone_leader")
-		s.db.SetAgentParent(ctx, req.AgentId, "")
+		s.topology.AssignZoneLeader(req.AgentId)
 		return &pb.PeerResponse{
 			NewRole: pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
 		}, nil
 	}
 
 	var fallbacks []string
-	if fbAgents, err := s.db.FindFallbackParents(ctx, parent.ID, cfg.MaxChildrenPerNode, 2); err == nil {
-		for _, fb := range fbAgents {
-			fallbacks = append(fallbacks, fb.ListenAddr)
-		}
+	for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
+		fallbacks = append(fallbacks, fb.ListenAddr)
 	}
 
-	s.db.SetAgentParent(ctx, req.AgentId, parent.ID)
+	s.topology.AssignChild(req.AgentId, parentID)
+	parentNode, _ := s.topology.Get(parentID)
 	s.log.Info("agent reassigned to new parent",
-		"agent_id", req.AgentId, "new_parent", parent.Hostname)
+		"agent_id", req.AgentId, "new_parent", parentNode.Hostname)
 
 	return &pb.PeerResponse{
-		ZoneLeaderAddr: parent.ListenAddr,
+		ZoneLeaderAddr: parentAddr,
 		FallbackAddrs:  fallbacks,
 	}, nil
 }

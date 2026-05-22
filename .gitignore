@@ -27,3 +27,9 @@ certs/
 # OS
 .DS_Store
 .demo-certs/
+
+# Local AWS test-fleet state (SSH keys, generated configs)
+.dirq-aws-state/
+
+# Claude Code workspace artifacts
+.claude/
