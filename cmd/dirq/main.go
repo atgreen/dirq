@@ -457,7 +457,7 @@ func graphCmd() *cobra.Command {
 
 			if dotOut {
 				fmt.Println("digraph dirq {")
-				fmt.Println("  rankdir=TB;")
+				fmt.Println("  rankdir=LR;")
 				fmt.Println("  node [shape=box, style=filled, fontname=\"Helvetica\"];")
 				fmt.Println("  \"dirq-server\" [shape=diamond, fillcolor=\"#4a90d9\", fontcolor=white];")
 				for id, n := range nodes {

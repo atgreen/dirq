@@ -19,11 +19,16 @@ import (
 // Deploy session tracking
 // ─────────────────────────────────────────────────────────
 
+// deploySession tracks an in-flight broadcast deploy.  Embeds the
+// shared first-terminal-wins accounting so real DeployResponses and
+// synthetic disconnect failures dedupe at the same gate as exec/query.
 type deploySession struct {
 	requestID string
 	results   chan *pb.DeployResponse
 	startedAt time.Time
 	timeout   time.Duration
+	targetIDs []string
+	*sessionAccounting
 }
 
 var (
@@ -37,10 +42,13 @@ func (s *Server) handleDeployResponse(resp *pb.DeployResponse) {
 	deploySessionsMu.RUnlock()
 
 	if ok {
-		select {
-		case ds.results <- resp:
-		default:
-			s.log.Warn("deploy result channel full", "request_id", resp.RequestId)
+		// First-terminal-wins gate.
+		if ds.ClaimAgent(resp.AgentId) {
+			select {
+			case ds.results <- resp:
+			default:
+				s.log.Warn("deploy result channel full", "request_id", resp.RequestId)
+			}
 		}
 	}
 }
@@ -172,12 +180,17 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 
 	requestID := fmt.Sprintf("deploy-%d", time.Now().UnixNano())
 
-	// Create deploy session to collect responses.
+	// Create deploy session to collect responses.  Hard timeout =
+	// install timeout + transport grace, same shape as exec.
+	targetIDsCopy := make([]string, len(targetIDs))
+	copy(targetIDsCopy, targetIDs)
 	ds := &deploySession{
-		requestID: requestID,
-		results:   make(chan *pb.DeployResponse, len(targets)),
-		startedAt: time.Now(),
-		timeout:   time.Duration(timeout) * time.Second,
+		requestID:         requestID,
+		results:           make(chan *pb.DeployResponse, len(targets)),
+		startedAt:         time.Now(),
+		timeout:           time.Duration(timeout)*time.Second + transportGrace,
+		targetIDs:         targetIDsCopy,
+		sessionAccounting: newSessionAccounting(targetIDsCopy),
 	}
 
 	deploySessionsMu.Lock()
@@ -217,8 +230,12 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast to all zone leaders (same as query dispatch).
+	// Broadcast to all zone leaders.  Fanout-failure handling matches
+	// query/exec: synthesize failures for any subtree under a ZL whose
+	// buffer is full so the dispatcher doesn't wait for impossible
+	// responses.
 	sent := 0
+	var failedSubtrees []string
 	s.mu.RLock()
 	for _, as := range s.streams {
 		select {
@@ -226,27 +243,33 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 			sent++
 		default:
 			s.log.Warn("zone leader send buffer full during deploy", "agent_id", as.agentID)
+			failedSubtrees = append(failedSubtrees, as.agentID)
 		}
 	}
 	s.mu.RUnlock()
+
+	for _, zlID := range failedSubtrees {
+		ids := s.topology.SubtreeIDs(zlID)
+		for _, id := range ids {
+			s.markGoneInDeploySession(ds, id, "fanout to ZL failed")
+		}
+	}
 
 	s.log.Info("deploy broadcast sent",
 		"request_id", requestID,
 		"targets", len(targetIDs),
 		"zone_leaders", sent,
+		"failed_subtrees", len(failedSubtrees),
 	)
 
-	// Stream results as agents respond.
+	// Stream results as agents respond.  Completion driven by the
+	// shared sessionAccounting — same as exec/query, no idle timeout.
 	hardTimeout := time.NewTimer(ds.timeout)
 	defer hardTimeout.Stop()
-	idleTimeout := time.NewTimer(30 * time.Second)
-	defer idleTimeout.Stop()
 
-	received := 0
-	for received < len(targets) {
+	for ds.Remaining() > 0 {
 		select {
 		case resp := <-ds.results:
-			received++
 			out := deployResultLine{
 				Type:     "result",
 				AgentID:  resp.AgentId,
@@ -260,18 +283,13 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 			}
 			enc.Encode(out)
 			flusher.Flush()
-
-			if !idleTimeout.Stop() {
-				select {
-				case <-idleTimeout.C:
-				default:
-				}
-			}
-			idleTimeout.Reset(30 * time.Second)
-		case <-idleTimeout.C:
-			return
 		case <-hardTimeout.C:
-			s.log.Warn("deploy timed out", "request_id", requestID, "received", received, "targets", len(targets))
+			s.log.Warn("deploy broadcast hard-timeout fired",
+				"request_id", requestID,
+				"accounted", ds.AccountedCount(),
+				"targets", ds.Total(),
+				"still_pending", ds.Remaining(),
+			)
 			return
 		case <-ctx.Done():
 			return

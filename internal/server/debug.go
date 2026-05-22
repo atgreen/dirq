@@ -58,20 +58,12 @@ func (s *Server) handleDebugInflight(w http.ResponseWriter, _ *http.Request) {
 	// Broadcast exec.
 	execBroadcastSessionsMu.RLock()
 	for id, bs := range execBroadcastSessions {
-		bs.receivedMu.Lock()
-		received := len(bs.receivedAgents)
-		missing := make([]string, 0, len(bs.targetIDs)-received)
-		for _, tid := range bs.targetIDs {
-			if !bs.receivedAgents[tid] {
-				missing = append(missing, tid)
-			}
-		}
-		bs.receivedMu.Unlock()
+		missing := bs.PendingSnapshot()
 		out.Sessions = append(out.Sessions, inflightSession{
 			RequestID: id,
 			Kind:      "exec_multi",
-			Targets:   len(bs.targetIDs),
-			Received:  received,
+			Targets:   bs.Total(),
+			Received:  bs.AccountedCount(),
 			Missing:   missing,
 			ElapsedMS: now.Sub(bs.startedAt).Milliseconds(),
 			TimeoutMS: bs.timeout.Milliseconds(),
@@ -83,20 +75,12 @@ func (s *Server) handleDebugInflight(w http.ResponseWriter, _ *http.Request) {
 	// Broadcast query.
 	querySessionsMu.RLock()
 	for id, qs := range querySessions {
-		qs.receivedMu.Lock()
-		received := len(qs.receivedAgents)
-		missing := make([]string, 0, len(qs.targetIDs)-received)
-		for _, tid := range qs.targetIDs {
-			if !qs.receivedAgents[tid] {
-				missing = append(missing, tid)
-			}
-		}
-		qs.receivedMu.Unlock()
+		missing := qs.PendingSnapshot()
 		out.Sessions = append(out.Sessions, inflightSession{
 			RequestID: id,
 			Kind:      "query",
-			Targets:   len(qs.targetIDs),
-			Received:  received,
+			Targets:   qs.Total(),
+			Received:  qs.AccountedCount(),
 			Missing:   missing,
 			ElapsedMS: now.Sub(qs.startedAt).Milliseconds(),
 			TimeoutMS: qs.timeout.Milliseconds(),
@@ -104,6 +88,23 @@ func (s *Server) handleDebugInflight(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 	querySessionsMu.RUnlock()
+
+	// Broadcast deploy.
+	deploySessionsMu.RLock()
+	for id, ds := range deploySessions {
+		missing := ds.PendingSnapshot()
+		out.Sessions = append(out.Sessions, inflightSession{
+			RequestID: id,
+			Kind:      "deploy",
+			Targets:   ds.Total(),
+			Received:  ds.AccountedCount(),
+			Missing:   missing,
+			ElapsedMS: now.Sub(ds.startedAt).Milliseconds(),
+			TimeoutMS: ds.timeout.Milliseconds(),
+			StartedAt: ds.startedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	deploySessionsMu.RUnlock()
 
 	jsonResponse(w, http.StatusOK, out)
 }

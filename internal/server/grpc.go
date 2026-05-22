@@ -271,11 +271,28 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			s.log.Info("agent stream closed (reassigned)", "agent_id", agentID)
 			return
 		}
+
+		// Snapshot the subtree under this agent BEFORE marking it
+		// offline; the agent's children (if any) lose their route to
+		// the server too because we forwarded broadcasts through this
+		// AgentStream.  Any in-flight broadcast that was waiting on
+		// the agent or its subtree needs synthetic failures so it can
+		// converge instead of waiting for the hard timeout.
+		subtree := s.topology.SubtreeIDs(agentID)
+
 		s.topology.MarkOffline(agentID)
 		if err := s.db.SetAgentOffline(context.Background(), agentID); err != nil {
 			s.log.Error("failed to mark agent offline", "agent_id", agentID, "error", err)
 		}
-		s.log.Info("agent stream closed, marked offline", "agent_id", agentID)
+		s.log.Info("agent stream closed, marked offline",
+			"agent_id", agentID, "subtree_size", len(subtree))
+
+		// Notify in-flight broadcast dispatchers so they stop waiting.
+		if len(subtree) > 0 {
+			s.notifySessionsAgentGone("stream closed", subtree...)
+		} else {
+			s.notifySessionsAgentGone("stream closed", agentID)
+		}
 
 		// If this was a zone leader, reassign its orphaned children to
 		// healthy parents so they don't stay stuck under a dead node.
@@ -335,11 +352,26 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 				s.log.Info("peer disconnected (reassigning, skipped)", "agent_id", deadID)
 				break
 			}
+			// Snapshot the lost subtree from the in-memory topology
+			// BEFORE marking it offline.  PeerDisconnected propagates
+			// up the mesh when a relay loses one of its children — the
+			// whole subtree below `deadID` is now unreachable through
+			// our existing routing.  In-flight broadcasts need to know
+			// to stop waiting on those agents.
+			affected := s.topology.MarkSubtreeOffline(deadID)
 			count, err := s.db.MarkAgentTreeOffline(ctx, deadID)
 			if err != nil {
 				s.log.Error("failed to mark agent tree offline", "agent_id", deadID, "error", err)
 			} else if count > 0 {
-				s.log.Info("peer disconnected, marked tree offline", "agent_id", deadID, "count", count)
+				s.log.Info("peer disconnected, marked tree offline",
+					"agent_id", deadID, "db_count", count, "mesh_count", len(affected))
+			}
+			if len(affected) > 0 {
+				s.notifySessionsAgentGone("peer disconnected", affected...)
+			} else {
+				// Topology didn't know about the agent (e.g., never
+				// fully registered); still notify by the bare ID.
+				s.notifySessionsAgentGone("peer disconnected", deadID)
 			}
 		case *pb.AgentMessage_QueryResult:
 			s.handleQueryResult(p.QueryResult)
@@ -427,19 +459,17 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 // Query dispatch
 // ─────────────────────────────────────────────────────────
 
-// querySession tracks an in-flight query.
+// querySession tracks an in-flight query.  The embedded
+// *sessionAccounting is the single gate every terminal event passes
+// through (real QueryResult, synthetic disconnect, fanout failure) so
+// the dispatcher counts each agent at most once.
 type querySession struct {
 	queryID   string
 	results   chan *pb.QueryResult
 	targetIDs []string
 	startedAt time.Time
 	timeout   time.Duration
-
-	// Tracking for /api/v1/debug/inflight. receivedAgents is the set of
-	// agent IDs that have answered (success or no-match); set-diff with
-	// targetIDs is the still-missing set.
-	receivedMu     sync.Mutex
-	receivedAgents map[string]bool
+	*sessionAccounting
 }
 
 var (
@@ -469,12 +499,12 @@ func (o dispatchOutcome) MissingCount() int { return o.TotalTargets - o.Responde
 // bubble back up through the mesh.
 func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetIDs []string) (dispatchOutcome, error) {
 	qs := &querySession{
-		queryID:        qr.QueryId,
-		results:        make(chan *pb.QueryResult, len(targetIDs)),
-		targetIDs:      targetIDs,
-		startedAt:      time.Now(),
-		timeout:        time.Duration(qr.TimeoutSeconds) * time.Second,
-		receivedAgents: make(map[string]bool, len(targetIDs)),
+		queryID:           qr.QueryId,
+		results:           make(chan *pb.QueryResult, len(targetIDs)),
+		targetIDs:         targetIDs,
+		startedAt:         time.Now(),
+		timeout:           time.Duration(qr.TimeoutSeconds) * time.Second,
+		sessionAccounting: newSessionAccounting(targetIDs),
 	}
 	if qs.timeout == 0 {
 		qs.timeout = 60 * time.Second
@@ -500,9 +530,12 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 	}
 
 	// Broadcast to ALL connected zone leaders. Each zone leader executes
-	// the query itself AND relays it to its entire subtree. Results from
-	// leaf and relay agents bubble back up through the mesh.
+	// the query itself AND relays it to its entire subtree.  If a ZL's
+	// send buffer is full, its entire subtree won't get the query — we
+	// synthesize failures immediately so the dispatcher doesn't wait the
+	// hard timeout for responses that can never arrive.
 	sent := 0
+	var failedSubtrees []string
 	s.mu.RLock()
 	for _, as := range s.streams {
 		select {
@@ -510,86 +543,65 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 			sent++
 		default:
 			s.log.Warn("zone leader send buffer full", "agent_id", as.agentID)
+			failedSubtrees = append(failedSubtrees, as.agentID)
 		}
 	}
 	s.mu.RUnlock()
+
+	for _, zlID := range failedSubtrees {
+		ids := s.topology.SubtreeIDs(zlID)
+		for _, id := range ids {
+			s.markGoneInQuerySession(qs, id, "fanout to ZL failed")
+		}
+	}
 
 	s.log.Info("query dispatched to zone leaders",
 		"query_id", qr.QueryId,
 		"target_agents", len(targetIDs),
 		"zone_leaders", sent,
+		"failed_subtrees", len(failedSubtrees),
 	)
 
-	// Collect results until all targets respond or the hard timeout expires.
-	// Agents send "no match" responses when they don't match the WHERE clause,
-	// so the server can count completions and stop as soon as all targets
-	// have answered. The idle timeout is a safety net for agents that crash
-	// or are unreachable through the mesh — but it has to scale with the
-	// fleet, since a wider fan-out spreads responses over a longer interval
-	// even on a healthy mesh.  Floor of 2s for tiny fleets, +1s per 500
-	// targets thereafter, hard cap of 30s.
-	idleWindow := 2 * time.Second
-	if extra := time.Duration(len(targetIDs)/500) * time.Second; extra > 0 {
-		idleWindow += extra
-	}
-	if idleWindow > 30*time.Second {
-		idleWindow = 30 * time.Second
-	}
-
+	// Collect results until every target produces a terminal event
+	// (real response OR synthetic disconnect failure injected through
+	// handleQueryResult after the first-terminal-wins gate).  The hard
+	// timeout is a true backstop — it should rarely fire because
+	// stream-loss notifications retire un-reachable agents promptly.
 	var results []*pb.QueryResult
 	hardTimeout := time.NewTimer(qs.timeout)
 	defer hardTimeout.Stop()
-	idleTimeout := time.NewTimer(idleWindow)
-	defer idleTimeout.Stop()
 
-	responded := 0
 	maxResults := len(targetIDs)
 	outcome := dispatchOutcome{TotalTargets: maxResults}
-	for responded < maxResults {
+	for qs.Remaining() > 0 {
 		select {
 		case r := <-qs.results:
-			responded++
-			// Record which agent answered (match or no-match) so the
-			// debug/inflight endpoint can compute the still-missing set.
-			qs.receivedMu.Lock()
-			qs.receivedAgents[r.AgentId] = true
-			qs.receivedMu.Unlock()
 			// Only include successful matches in the returned results.
-			// "no match" responses count toward completion but are discarded.
+			// "no match" responses (Success=false, Error="no match") and
+			// synthetic disconnect failures count toward completion but
+			// are discarded — surfaced via outcome.MissingCount() so the
+			// caller can distinguish "no data" from "didn't answer".
 			if r.Success {
 				results = append(results, r)
 			}
-			if !idleTimeout.Stop() {
-				select {
-				case <-idleTimeout.C:
-				default:
-				}
-			}
-			idleTimeout.Reset(idleWindow)
-		case <-idleTimeout.C:
-			s.log.Info("query stopped on idle timeout",
-				"query_id", qr.QueryId, "received", responded, "targets", maxResults,
-				"idle_window", idleWindow)
-			outcome.Results = results
-			outcome.Responded = responded
-			outcome.IdleTimedOut = true
-			return outcome, nil
 		case <-hardTimeout.C:
 			s.log.Warn("query hard-timeout fired",
-				"query_id", qr.QueryId, "received", responded, "targets", maxResults)
+				"query_id", qr.QueryId,
+				"accounted", qs.AccountedCount(), "targets", maxResults,
+				"still_pending", qs.Remaining())
 			outcome.Results = results
-			outcome.Responded = responded
+			outcome.Responded = qs.AccountedCount()
 			outcome.HardTimedOut = true
 			return outcome, nil
 		case <-ctx.Done():
 			outcome.Results = results
-			outcome.Responded = responded
+			outcome.Responded = qs.AccountedCount()
 			return outcome, ctx.Err()
 		}
 	}
 
 	outcome.Results = results
-	outcome.Responded = responded
+	outcome.Responded = qs.AccountedCount()
 	outcome.Complete = true
 	return outcome, nil
 }
@@ -604,10 +616,16 @@ func (s *Server) handleQueryResult(result *pb.QueryResult) {
 	querySessionsMu.RUnlock()
 
 	if ok {
-		select {
-		case qs.results <- result:
-		default:
-			s.log.Warn("query result channel full", "query_id", result.QueryId)
+		// First-terminal-wins.  If a synthetic disconnect failure
+		// has already accounted for this agent, drop the late real
+		// response — otherwise the dispatcher counts twice and
+		// exits early.
+		if qs.ClaimAgent(result.AgentId) {
+			select {
+			case qs.results <- result:
+			default:
+				s.log.Warn("query result channel full", "query_id", result.QueryId)
+			}
 		}
 	}
 

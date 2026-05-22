@@ -531,6 +531,76 @@ func (t *MeshTopology) PickChildOf(parentID string) (db.Agent, bool) {
 	return db.Agent{ID: c.id, Hostname: c.hostname, ListenAddr: c.listenAddr, Role: c.role}, true
 }
 
+// SubtreeIDs returns every descendant of rootID (including rootID itself),
+// regardless of online state.  Iterative BFS so deep trees don't recurse;
+// the walk happens under RLock and returns a snapshot the caller can use
+// after the lock is released.  Used by the broadcast-dispatcher notifier
+// when a ZL or relay stream closes — every agent in the subtree is
+// effectively unreachable until reconnect, so in-flight broadcasts can
+// account them as terminal failures and stop waiting.
+func (t *MeshTopology) SubtreeIDs(rootID string) []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if _, ok := t.nodes[rootID]; !ok {
+		return nil
+	}
+	var out []string
+	queue := []string{rootID}
+	seen := map[string]bool{rootID: true}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		out = append(out, id)
+		n, ok := t.nodes[id]
+		if !ok {
+			continue
+		}
+		for childID := range n.children {
+			if seen[childID] {
+				continue
+			}
+			seen[childID] = true
+			queue = append(queue, childID)
+		}
+	}
+	return out
+}
+
+// MarkSubtreeOffline marks rootID and every descendant offline and
+// returns the IDs that were online before the call.  Used when a
+// PeerDisconnected event propagates up from a relay: the lost child and
+// its entire subtree are gone from the mesh's POV until they reconnect.
+func (t *MeshTopology) MarkSubtreeOffline(rootID string) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.nodes[rootID]; !ok {
+		return nil
+	}
+	var affected []string
+	queue := []string{rootID}
+	seen := map[string]bool{rootID: true}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		n, ok := t.nodes[id]
+		if !ok {
+			continue
+		}
+		if n.online {
+			n.online = false
+			affected = append(affected, id)
+		}
+		for childID := range n.children {
+			if seen[childID] {
+				continue
+			}
+			seen[childID] = true
+			queue = append(queue, childID)
+		}
+	}
+	return affected
+}
+
 // ChildrenOf returns the online children of parentID.
 func (t *MeshTopology) ChildrenOf(parentID string) []db.Agent {
 	t.mu.RLock()

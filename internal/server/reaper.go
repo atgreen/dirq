@@ -29,7 +29,12 @@ func (s *Server) startReaper(ctx context.Context) {
 
 // reapStaleAgents marks agents offline if their last_seen_at is older than
 // 5 minutes. This is a safety net only — most agents are marked offline
-// immediately when their parent detects the stream drop.
+// immediately when their parent detects the stream drop.  After marking
+// them offline in the DB, walks the in-memory topology to find any
+// online nodes whose zone-leader ancestor no longer has a live stream
+// (server-side proof of mesh disconnection); those get marked offline
+// in topology and broadcast dispatchers are notified so they stop
+// waiting.
 func (s *Server) reapStaleAgents(ctx context.Context) {
 	// Refresh last_seen_at for all agents with active server streams
 	// (zone leaders) and their entire subtrees. An open stream proves
@@ -39,6 +44,10 @@ func (s *Server) reapStaleAgents(ctx context.Context) {
 	streamIDs := make([]string, 0, len(s.streams))
 	for id := range s.streams {
 		streamIDs = append(streamIDs, id)
+	}
+	liveStreams := make(map[string]bool, len(streamIDs))
+	for _, id := range streamIDs {
+		liveStreams[id] = true
 	}
 	s.mu.RUnlock()
 
@@ -57,6 +66,30 @@ func (s *Server) reapStaleAgents(ctx context.Context) {
 	}
 	if result > 0 {
 		s.log.Info("reaper: safety-net marked stale agents offline", "count", result)
+	}
+
+	// Walk the in-memory topology and notify dispatchers about any
+	// online agents whose mesh route is gone — their ZL ancestor
+	// doesn't have a live stream to us.  This catches the case the
+	// DB-side reap can't see: an agent that's still recently-seen but
+	// effectively unreachable because its routing chain broke.
+	var unreachable []string
+	for _, id := range s.topology.allNodeIDs() {
+		n, ok := s.topology.Get(id)
+		if !ok || !n.Online {
+			continue
+		}
+		if liveStreams[id] {
+			continue // direct connection alive
+		}
+		zlID, ok := s.topology.FindZoneLeader(id)
+		if !ok || !liveStreams[zlID] {
+			unreachable = append(unreachable, id)
+		}
+	}
+	if len(unreachable) > 0 {
+		s.log.Info("reaper: notifying dispatchers about unreachable agents", "count", len(unreachable))
+		s.notifySessionsAgentGone("reaper: mesh route gone", unreachable...)
 	}
 
 	// Clean up stale reassigning entries (agent never reconnected).

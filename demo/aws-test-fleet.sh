@@ -41,6 +41,18 @@ REPLICAS_PER_VM="${DIRQ_REPLICAS_PER_VM:-1}"
 LISTEN_PORT_BASE=50052
 LISTEN_PORT_HIGH=$((LISTEN_PORT_BASE + REPLICAS_PER_VM - 1))
 
+# Block the kernel from allocating these ports as ephemeral source ports.
+# Linux's default net.ipv4.ip_local_port_range is 32768..60999, which
+# overlaps our listen range — when the userdata phase makes outbound HTTPS
+# connections (dnf install, MSI download, etc.), the kernel can pick a
+# source port that a VH is about to bind, and the bind then fails with
+# EADDRINUSE.  v0.20.1's fail-loud bind makes those VHs exit cleanly
+# rather than hanging unregistered; the collisions show up as ~0.4 %
+# missing agents at 2,500 VH scale.  Reserving a fixed 1,000-port block
+# (50052..51051) supports up to 1,000 VHs per VM = 50,000-agent fleets
+# without having to recompute when REPLICAS_PER_VM changes.
+RESERVED_PORT_HIGH=51051
+
 # Version for RPM/MSI install. Uses latest GitHub release by default.
 DIRQ_VERSION="${DIRQ_VERSION:-}"
 
@@ -299,6 +311,16 @@ baseurl=https://atgreen.github.io/dirq/rpm-repo/
 enabled=1
 gpgcheck=0
 REPO
+
+# Reserve the VH listen range from the kernel's ephemeral-port pool BEFORE
+# any outbound TCP happens.  Default net.ipv4.ip_local_port_range is
+# 32768..60999, which overlaps our listen range and causes occasional
+# EADDRINUSE on VH bind during the userdata install phase.  Block
+# 50052..${RESERVED_PORT_HIGH} so the kernel never hands one of these out
+# as a source port; the reservation is local to this VM and harmless
+# when REPLICAS_PER_VM is small.
+sysctl -w net.ipv4.ip_local_reserved_ports=${LISTEN_PORT_BASE}-${RESERVED_PORT_HIGH}
+echo "net.ipv4.ip_local_reserved_ports = ${LISTEN_PORT_BASE}-${RESERVED_PORT_HIGH}" > /etc/sysctl.d/99-dirq-vh-ports.conf
 
 # Install agent.
 dnf install -y dirq-agent

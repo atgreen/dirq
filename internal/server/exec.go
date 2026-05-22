@@ -585,19 +585,17 @@ type execMultiResult struct {
 	UnresolvedTargets int `json:"unresolved_targets,omitempty"`
 }
 
-// execBroadcastSession tracks an in-flight broadcast exec.
+// execBroadcastSession tracks an in-flight broadcast exec.  The embedded
+// *sessionAccounting is the single first-terminal-wins gate for both
+// real ExecResponses and synthetic disconnect failures, so the
+// dispatcher loop never counts the same agent twice.
 type execBroadcastSession struct {
 	requestID string
 	results   chan *pb.ExecResponse
 	startedAt time.Time
 	timeout   time.Duration
-
-	// Target accounting for /api/v1/debug/inflight. targetIDs is the full
-	// list at dispatch; receivedMu guards receivedAgents which is the set
-	// of agent IDs that have answered. Set diff = still-missing agents.
-	targetIDs     []string
-	receivedMu    sync.Mutex
-	receivedAgents map[string]bool
+	targetIDs []string
+	*sessionAccounting
 }
 
 var (
@@ -612,10 +610,14 @@ func (s *Server) handleExecBroadcastResponse(resp *pb.ExecResponse) {
 	execBroadcastSessionsMu.RUnlock()
 
 	if ok {
-		select {
-		case bs.results <- resp:
-		default:
-			s.log.Warn("broadcast exec result channel full", "request_id", resp.RequestId)
+		// First-terminal-wins gate.  Drop the response if a synthetic
+		// disconnect failure already accounted for this agent.
+		if bs.ClaimAgent(resp.AgentId) {
+			select {
+			case bs.results <- resp:
+			default:
+				s.log.Warn("broadcast exec result channel full", "request_id", resp.RequestId)
+			}
 		}
 		return
 	}
@@ -758,16 +760,20 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 
 	requestID := fmt.Sprintf("execm-%d", time.Now().UnixNano())
 
-	// Create broadcast session to collect responses.
+	// Create broadcast session to collect responses.  Hard timeout
+	// equals the command timeout plus a transport grace: the agent
+	// kills the command at command-timeout, then needs a moment to
+	// flush its ExecResponse back up the mesh.  Without the grace we
+	// race the agent's reply and report a false "did not respond".
 	targetIDsCopy := make([]string, len(targetIDs))
 	copy(targetIDsCopy, targetIDs)
 	bs := &execBroadcastSession{
-		requestID:      requestID,
-		results:        make(chan *pb.ExecResponse, len(targets)),
-		startedAt:      time.Now(),
-		timeout:        time.Duration(timeout) * time.Second,
-		targetIDs:      targetIDsCopy,
-		receivedAgents: make(map[string]bool, len(targets)),
+		requestID:         requestID,
+		results:           make(chan *pb.ExecResponse, len(targets)),
+		startedAt:         time.Now(),
+		timeout:           time.Duration(timeout)*time.Second + transportGrace,
+		targetIDs:         targetIDsCopy,
+		sessionAccounting: newSessionAccounting(targetIDsCopy),
 	}
 
 	execBroadcastSessionsMu.Lock()
@@ -809,8 +815,11 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast to all zone leaders (same as query dispatch).
+	// Broadcast to all zone leaders.  Same fanout-failure handling as
+	// the query dispatcher: a ZL whose buffer is full can't relay to
+	// its subtree, so we synthesize failures immediately.
 	sent := 0
+	var failedSubtrees []string
 	s.mu.RLock()
 	for _, as := range s.streams {
 		select {
@@ -818,34 +827,40 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 			sent++
 		default:
 			s.log.Warn("zone leader send buffer full during exec broadcast", "agent_id", as.agentID)
+			failedSubtrees = append(failedSubtrees, as.agentID)
 		}
 	}
 	s.mu.RUnlock()
+
+	for _, zlID := range failedSubtrees {
+		ids := s.topology.SubtreeIDs(zlID)
+		for _, id := range ids {
+			s.markGoneInExecSession(bs, id, "fanout to ZL failed")
+		}
+	}
 
 	s.log.Info("exec broadcast sent",
 		"request_id", requestID,
 		"targets", len(targetIDs),
 		"zone_leaders", sent,
+		"failed_subtrees", len(failedSubtrees),
 	)
 
-	// Stream results as agents respond.
+	// Stream results as agents respond.  No idle timeout — completion
+	// is driven by sessionAccounting.Remaining() reaching zero.  An
+	// unreachable agent is retired by the server-wide notifier when its
+	// stream closes (or PeerDisconnected propagates up, or the reaper
+	// times it out), which synthesizes a failure into bs.results and
+	// drains the pending set.  The hard timeout is a true backstop that
+	// shouldn't fire under normal conditions.
 	hardTimeout := time.NewTimer(bs.timeout)
 	defer hardTimeout.Stop()
-	idleTimeout := time.NewTimer(30 * time.Second)
-	defer idleTimeout.Stop()
 	progressTicker := time.NewTicker(5 * time.Second)
 	defer progressTicker.Stop()
 
-	received := 0
-	for received < len(targets) {
+	for bs.Remaining() > 0 {
 		select {
 		case resp := <-bs.results:
-			received++
-			// Record which agent answered so /api/v1/debug/inflight can
-			// show the still-missing set while the broadcast is in flight.
-			bs.receivedMu.Lock()
-			bs.receivedAgents[resp.AgentId] = true
-			bs.receivedMu.Unlock()
 			out := execMultiResult{
 				Type:      "result",
 				RequestID: resp.RequestId,
@@ -865,25 +880,20 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 			}
 			enc.Encode(out)
 			flusher.Flush()
-
-			if !idleTimeout.Stop() {
-				select {
-				case <-idleTimeout.C:
-				default:
-				}
-			}
-			idleTimeout.Reset(30 * time.Second)
 		case <-progressTicker.C:
 			enc.Encode(execMultiResult{
 				Type:         "progress",
-				Received:     received,
-				TotalTargets: len(targets),
+				Received:     bs.AccountedCount(),
+				TotalTargets: bs.Total(),
 			})
 			flusher.Flush()
-		case <-idleTimeout.C:
-			return
 		case <-hardTimeout.C:
-			s.log.Warn("exec broadcast timed out", "request_id", requestID, "received", received, "targets", len(targets))
+			s.log.Warn("exec broadcast hard-timeout fired",
+				"request_id", requestID,
+				"accounted", bs.AccountedCount(),
+				"targets", bs.Total(),
+				"still_pending", bs.Remaining(),
+			)
 			return
 		case <-ctx.Done():
 			return
