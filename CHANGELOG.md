@@ -5,6 +5,14 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.3] - 2026-05-22
+
+### Fixed
+
+- **Broadcast queries no longer claim "completed" when most of the fleet didn't respond.** The query dispatcher had a 1-second idle timeout — when no responses arrived for 1s it returned whatever it had with `Status: "completed"`. At fleet scale that's a lie: a 2,500-host broadcast routinely returned 700–900 responses in the first second, the dispatcher gave up, and the CLI confidently printed `911/911 completed` because `dirq exec`'s field-resolution phase (which uses the same dispatcher) saw only the agents that beat the idle window. Three structural changes: `dispatchQuery` now returns a `dispatchOutcome` with explicit `Complete`/`IdleTimedOut`/`HardTimedOut` flags and `Responded`/`TotalTargets` counts; the HTTP handler sets `Status: "incomplete"` and surfaces a new `missing` field whenever the wait ended early; the idle window scales with the target count (2s floor + 1s per 500 targets, capped at 30s) so a wider fan-out gets the time it needs without making small fleets wait.
+- **`dirq exec WHERE <field-condition>` reports honest coverage.** The exec broadcast header carries a new `unresolved_targets` count from the field-resolution query, and the CLI prints `Plus N host(s) excluded from the broadcast because field-resolution didn't get a response — actual coverage is partial.` when it's non-zero. Stops the previous `911/911 completed` lie when the underlying field-resolution dispatcher gave up early. The final tail line is also honest now: `716/2493 responded; 1777 host(s) did not reply (mesh timeout or unreachable)`.
+- **`dirq select` and `dirq query` print the missing count.** Status line reads `Status: incomplete | Targets: N | Received: M | Missing: K (mesh timeout or unreachable)` when the dispatcher couldn't account for everyone.
+
 ## [0.20.2] - 2026-05-22
 
 ### Fixed
@@ -597,6 +605,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.20.3]: https://github.com/atgreen/dirq/releases/tag/v0.20.3
 [0.20.2]: https://github.com/atgreen/dirq/releases/tag/v0.20.2
 [0.20.1]: https://github.com/atgreen/dirq/releases/tag/v0.20.1
 [0.20.0]: https://github.com/atgreen/dirq/releases/tag/v0.20.0
