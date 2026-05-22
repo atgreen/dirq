@@ -5,6 +5,31 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.21.0] - 2026-05-22
+
+This release replaces the broadcast dispatchers' idle-timeout heuristic with explicit per-target accounting tied to mesh-state signals.  Long-running fleet commands (e.g. `dnf install` across thousands of hosts) no longer get cut off at 30 s of silence between fast and slow responders; unreachable agents get retired the moment the server learns they're gone instead of pinning the dispatcher to the hard timeout; **users can now set `--timeout` arbitrarily long without artificial caps**.
+
+### Changed
+
+- **Broadcast dispatchers (query, exec, deploy) no longer use idle timeouts.** Completion is driven by per-target accounting: a session's loop runs until `pending` is empty.  Real responses and synthetic disconnect failures pass through one shared first-terminal-wins gate (`sessionAccounting.ClaimAgent`) so each target is counted at most once.  The hard timeout becomes a true safety net at `command_timeout + 30s transport grace` and rarely fires in practice — stream-loss notifications retire unreachable agents long before it would.
+- **Stream loss now drives dispatcher completion via four signal paths:** `AgentStream` close (synthesizes failures for the whole subtree below the lost ZL); `PeerDisconnected` from upstream relays (now also calls `MeshTopology.MarkSubtreeOffline` rather than only touching the DB); the reaper (walks the in-memory topology, notifies dispatchers about any online agent whose ZL ancestor lost its stream); fanout failures at dispatch time (when a ZL's send buffer is full, the subtree it would have relayed to is immediately accounted as failed instead of waiting forever).
+- **`/api/v1/debug/inflight` now includes deploy sessions** with target/received/missing counts to match exec and query.
+- **`dirq hosts graph --dot` renders left-to-right** (`rankdir=LR`) so large fleet trees fit usefully on screen.
+
+### Fixed
+
+- **No more `1/2490 completed` lies on long-running broadcasts.** The old idle timeout fired at 30 s of silence — for a `dnf install` taking 30+ s per host, the dispatcher exited after the first local response landed, claiming completion while the broadcast was actually still in progress on 2,489 other hosts.
+- **AWS test fleet stops losing ~0.4 % of VHs to ephemeral-port collisions.** Linux userdata now reserves ports 50052-51051 via `net.ipv4.ip_local_reserved_ports` before `dnf install` runs.  Sized for up to 1,000 VHs per VM (50,000-agent fleets).
+
+### Notes
+
+The design was reviewed against codex's "first terminal event wins per agent" critique.  Notable invariants the implementation preserves:
+
+- One synchronized gate (`ClaimAgent`) covers both real responses and synthetic disconnect injections so the dispatcher never counts an agent twice.
+- Lock hygiene: snapshot session pointers under each global session mutex, release, then call per-session `markGone` inline.  Result channels are never written while holding the global session lock — so stream close handlers don't get blocked by a slow dispatcher.
+- Subtree walks in `MeshTopology` are iterative (not recursive) and snapshot under a single RLock pass.
+- Synthesized failures count toward completion but are omitted from returned results — surfaced via the existing `missing` field added in 0.20.3.
+
 ## [0.20.3] - 2026-05-22
 
 ### Fixed
@@ -605,6 +630,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.21.0]: https://github.com/atgreen/dirq/releases/tag/v0.21.0
 [0.20.3]: https://github.com/atgreen/dirq/releases/tag/v0.20.3
 [0.20.2]: https://github.com/atgreen/dirq/releases/tag/v0.20.2
 [0.20.1]: https://github.com/atgreen/dirq/releases/tag/v0.20.1
