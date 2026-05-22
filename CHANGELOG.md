@@ -5,6 +5,23 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.22.0] - 2026-05-22
+
+### Removed
+
+- **The proactive topology rebalancer is gone.** The 30 s ticker that ran `promoteOneRelay` / `demoteOne` / `redistributeOne` was solving problems the rest of the system already handles — new agent registrations naturally fill empty ZL slots via the burst-aware batcher with source-IP diversity, and the orphan-promotion fallback in `RequestPeers` / `reassignOrphans` covers tree saturation.  What the proactive paths *did* keep causing was mid-broadcast agent disruption (the "agent went away during reassignment" failures), repeated undo of the batcher's IP-diversity work over each tick, and ~50 lines of demote-cooldown / reassigning-set plumbing to dampen the rebalancer's own feedback loops.  Net delete of 395 lines.  Reactive recovery is unchanged: `reassignOrphans` still runs from `AgentStream`'s close defer when a node dies — direct children get reassigned (or promoted on saturation) and the rest of the subtree keeps its existing peer streams.
+
+### Why this is safe
+
+Two invariants verified by tracing:
+
+- **A zone leader dies →** server's `AgentStream` close defer fires `reassignOrphans` synchronously.  Direct children get reassigned to other zone leaders via `FindShallowestParentWithRoom`, or promoted to zone leader themselves if the tree is saturated.  Deeper descendants don't lose their streams (their immediate parent — a depth-1 relay — is still alive, just reconnecting upstream).  Slot fills as new agents register, or stays empty if no new agents arrive (a 4-of-5 ZL fleet still handles its load fine).
+- **A relay dies →** its parent detects the peer-stream close and sends `PeerDisconnected` upstream.  Server marks the subtree offline and notifies in-flight broadcasts.  The dead relay's children see their own upstream break, run `connectLoop` → fallback parents → `RequestPeers`, and rehome to a healthy parent — promoted to ZL via the orphan-promotion path if the tree is saturated.
+
+### Operational note
+
+`max_zone_leaders` and `max_children` still mean what they meant — they're upper bounds on new registration assignment.  The server no longer actively maintains the ZL count at exactly `max_zone_leaders`; over a long quiet period after a ZL death, the count may sit one below max until the next registration burst.  That's fine; the remaining ZLs serve the existing fleet, and the burst itself will provide a fresh-IP candidate.
+
 ## [0.21.2] - 2026-05-22
 
 ### Fixed
@@ -644,6 +661,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.22.0]: https://github.com/atgreen/dirq/releases/tag/v0.22.0
 [0.21.2]: https://github.com/atgreen/dirq/releases/tag/v0.21.2
 [0.21.1]: https://github.com/atgreen/dirq/releases/tag/v0.21.1
 [0.21.0]: https://github.com/atgreen/dirq/releases/tag/v0.21.0
