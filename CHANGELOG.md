@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.2] - 2026-05-22
+
+### Fixed
+
+- **Agent registration no longer takes O(N²) under fleet load.** Every Register call used to take a global Go mutex while running two recursive-CTE walks of the whole `agents` table (`FindShallowestParentWithRoom` + `FindFallbackParents`). With a few thousand concurrent registrations the per-call cost grew to hundreds of milliseconds and the queue stretched to **10+ minutes**, leaving most agents stuck in a pre-assignment limbo (`role='leaf'`, `parent_id=NULL`) where they couldn't be routed to and broadcast queries silently counted them as "non-RHEL". The live mesh shape now lives in a new in-memory `MeshTopology` (RWMutex-protected maps for nodes, zone leaders, parent/child links, depth cache) and every assignment is sub-microsecond. The Register hot path no longer touches `WithTopologyLock` at all. Migrated every other topology call site too — RequestPeers, stream open/close lifecycle, rebalancer (`promoteOneRelay`, `demoteOne`, `redistributeOne`, `sendToAgent`, `reassignOrphans`), and `dirq debug stream`. `/api/v1/status` now computes depth and orphan counts in O(N) against the in-memory depth cache instead of the previous O(N²) nested scan.
+
+### Changed
+
+- **`agents.role` and `agents.parent_id` are now best-effort snapshots, not authoritative state.** A new background goroutine writes them back every 30 seconds for operator visibility and cross-restart UX; nothing reads them for routing. On startup, the server rehydrates `MeshTopology` from the DB so `dirq hosts list / graph` aren't blank during the few seconds between restart and agent reconnect. `/api/v1/hosts` overlays the in-memory topology onto each record before serializing, so the CLI always shows live truth regardless of how fresh the snapshot is.
+
 ## [0.20.1] - 2026-05-22
 
 ### Fixed
@@ -587,6 +597,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.20.2]: https://github.com/atgreen/dirq/releases/tag/v0.20.2
 [0.20.1]: https://github.com/atgreen/dirq/releases/tag/v0.20.1
 [0.20.0]: https://github.com/atgreen/dirq/releases/tag/v0.20.0
 [0.19.0]: https://github.com/atgreen/dirq/releases/tag/v0.19.0
