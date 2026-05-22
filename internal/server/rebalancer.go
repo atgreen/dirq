@@ -5,250 +5,39 @@ package server
 
 import (
 	"context"
-	"time"
 
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
-// demoteRecord tracks demotion history for an agent so the rebalancer
-// can back off when an agent keeps bouncing back to a direct connection.
-type demoteRecord struct {
-	lastDemote time.Time
-	failures   int // consecutive bounce-backs
-}
-
-const (
-	demoteBaseBackoff = 1 * time.Minute
-	demoteMaxBackoff  = 30 * time.Minute
-)
-
-// startRebalancer periodically checks the topology and makes minimal
-// adjustments to keep the mesh healthy. Only ONE action per cycle to
-// avoid feedback loops.
-func (s *Server) startRebalancer(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.rebalanceOnce(ctx)
-		}
-	}
-}
-
-func (s *Server) rebalanceOnce(ctx context.Context) {
-	cfg := s.topoCfg
-
-	// Counts come from the in-memory topology, not the DB.
-	onlineZLs := s.topology.CountOnlineZoneLeaders()
-
-	// Count non-ZL agents connected directly to the server (fallback connections).
-	excessDirect := 0
-	s.mu.RLock()
-	for agentID := range s.streams {
-		if n, ok := s.topology.Get(agentID); ok && n.Role != "zone_leader" {
-			excessDirect++
-		}
-	}
-	s.mu.RUnlock()
-
-	// Priority 1: Not enough zone leaders — promote ONE relay.
-	// Only if we actually have fewer than desired.
-	if onlineZLs < cfg.MaxZoneLeaders {
-		s.log.Info("rebalancer: need more zone leaders",
-			"online", onlineZLs, "desired", cfg.MaxZoneLeaders)
-		s.promoteOneRelay(ctx)
-		return // one action per cycle
-	}
-
-	// Priority 2: Excess fallback connections — demote ONE back under a ZL.
-	if excessDirect > 0 {
-		s.log.Info("rebalancer: excess direct connections", "excess", excessDirect)
-		s.demoteOne(ctx)
-		return // one action per cycle
-	}
-
-	// Housekeeping: clear cooldown records for agents that are no longer
-	// connected directly (they successfully moved under a ZL).
-	s.demoteMu.Lock()
-	s.mu.RLock()
-	for id := range s.demoteCooldown {
-		if _, direct := s.streams[id]; !direct {
-			delete(s.demoteCooldown, id)
-		}
-	}
-	s.mu.RUnlock()
-	s.demoteMu.Unlock()
-
-	// Priority 3: Tree imbalance — redistribute ONE subtree.
-	s.redistributeOne(ctx)
-}
-
-// promoteOneRelay finds the relay with the most children and promotes it.
-func (s *Server) promoteOneRelay(ctx context.Context) {
-	candidateID, _, hostname, ok := s.topology.FindRelayToPromote()
-	if !ok {
-		s.log.Info("rebalancer: no relay with children to promote")
-		return
-	}
-
-	msg := &pb.ServerMessage{
-		Payload: &pb.ServerMessage_PeerUpdate{
-			PeerUpdate: &pb.PeerUpdate{
-				TargetAgentId: candidateID,
-				NewRole:       pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
-				NewParentAddr: "",
-			},
-		},
-	}
-	if s.signer != nil {
-		s.signServerMessage(msg)
-	}
-
-	// Only update topology after successfully sending the message.
-	if s.sendToAgent(ctx, candidateID, msg) {
-		s.topology.AssignZoneLeader(candidateID)
-		s.log.Info("rebalancer: promoted relay to zone leader",
-			"agent", hostname,
-			"children", s.topology.CountChildren(candidateID),
-		)
-	}
-}
-
-// demoteOne moves one non-ZL agent from a direct server connection to a ZL.
-func (s *Server) demoteOne(ctx context.Context) {
-	now := time.Now()
-
-	// Find one non-ZL agent connected directly, skipping any still in cooldown.
-	var agentID string
-	s.mu.RLock()
-	s.demoteMu.Lock()
-	for id := range s.streams {
-		if n, ok := s.topology.Get(id); !ok || n.Role == "zone_leader" {
-			continue
-		}
-		if rec, ok := s.demoteCooldown[id]; ok {
-			backoff := demoteBaseBackoff * (1 << rec.failures)
-			if backoff > demoteMaxBackoff {
-				backoff = demoteMaxBackoff
-			}
-			if now.Before(rec.lastDemote.Add(backoff)) {
-				continue // still cooling down
-			}
-		}
-		agentID = id
-		break
-	}
-	s.demoteMu.Unlock()
-	s.mu.RUnlock()
-
-	if agentID == "" {
-		return
-	}
-
-	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
-	if !ok || parentID == agentID {
-		return
-	}
-	parentNode, _ := s.topology.Get(parentID)
-
-	var fallbacks []string
-	for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
-		fallbacks = append(fallbacks, fb.ListenAddr)
-	}
-
-	msg := &pb.ServerMessage{
-		Payload: &pb.ServerMessage_PeerUpdate{
-			PeerUpdate: &pb.PeerUpdate{
-				TargetAgentId:    agentID,
-				NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
-				NewParentAddr:    parentAddr,
-				NewFallbackAddrs: fallbacks,
-			},
-		},
-	}
-	if s.signer != nil {
-		s.signServerMessage(msg)
-	}
-
-	s.mu.Lock()
-	as, ok := s.streams[agentID]
-	if ok {
-		as.reassigned = true
-	}
-	s.mu.Unlock()
-	if !ok {
-		return
-	}
-
-	s.markReassigning(agentID)
-
-	select {
-	case as.send <- msg:
-		s.topology.AssignChild(agentID, parentID)
-
-		s.demoteMu.Lock()
-		rec := s.demoteCooldown[agentID]
-		rec.lastDemote = time.Now()
-		rec.failures++
-		s.demoteCooldown[agentID] = rec
-		s.demoteMu.Unlock()
-
-		s.log.Info("rebalancer: demoted to relay",
-			"agent_id", agentID, "new_parent", parentNode.Hostname,
-			"demotion_attempt", rec.failures)
-	default:
-	}
-}
-
-// redistributeOne moves one subtree from a heavy node to a light node.
-func (s *Server) redistributeOne(ctx context.Context) {
-	heavy, light, found := s.topology.FindImbalanced()
-	if !found {
-		return
-	}
-
-	child, ok := s.topology.PickChildOf(heavy.Agent.ID)
-	if !ok || child.ID == "" {
-		return
-	}
-
-	childChildren := s.topology.CountChildren(child.ID)
-
-	var fallbacks []string
-	for _, fb := range s.topology.FindFallbackParents(light.Agent.ID, 2) {
-		fallbacks = append(fallbacks, fb.ListenAddr)
-	}
-
-	msg := &pb.ServerMessage{
-		Payload: &pb.ServerMessage_PeerUpdate{
-			PeerUpdate: &pb.PeerUpdate{
-				TargetAgentId:    child.ID,
-				NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
-				NewParentAddr:    light.Agent.ListenAddr,
-				NewFallbackAddrs: fallbacks,
-			},
-		},
-	}
-	if s.signer != nil {
-		s.signServerMessage(msg)
-	}
-
-	s.markReassigning(child.ID)
-
-	if s.sendToAgent(ctx, child.ID, msg) {
-		s.topology.AssignChild(child.ID, light.Agent.ID)
-		s.log.Info("rebalancer: redistributed subtree",
-			"child", child.Hostname,
-			"subtree_size", childChildren,
-			"from", heavy.Agent.Hostname,
-			"to", light.Agent.Hostname,
-		)
-	}
-}
+// This file used to host a proactive rebalancer that ran on a 30 s tick
+// and shuffled the tree to fill ZL slots, demote stragglers, and even
+// out subtree sizes.  The proactive paths are gone — they caused more
+// disruption (mid-broadcast agent moves, IP-diversity violations) than
+// they cured.  What remains is purely reactive:
+//
+//   - reassignOrphans: fires from AgentStream's close defer when a node
+//     dies.  The dead node's direct children get reassigned (or
+//     promoted to ZL if the tree is saturated) so they keep routing.
+//     Deeper descendants don't lose their streams (their immediate
+//     parent is still alive, just reconnecting upstream).
+//
+//   - sendToAgent: shared dispatch helper used by exec, file ops, and
+//     PeerUpdate emissions.  Tries the agent's direct stream first,
+//     falls back to routing through its zone leader.
+//
+// Slot maintenance over time happens through three signal paths that
+// run without a ticker:
+//
+//   - New registrations.  The batcher (registration_batcher.go) places
+//     fresh agents using source-IP diversity, naturally filling empty
+//     ZL slots when new hosts arrive.
+//   - Orphan-promotion fallback.  RequestPeers / reassignOrphans
+//     promote saturated-tree agents to ZL via the in-memory topology's
+//     escape hatch.
+//   - Agent reconnect.  Every agent runs connectLoop on stream loss,
+//     trying its primary parent, then fallback addresses, then
+//     RequestPeers — which always either finds a parent or promotes
+//     the agent.
 
 // sendToAgent sends a message to an agent — tries direct stream first,
 // then routes through the agent's zone leader.
@@ -284,8 +73,12 @@ func (s *Server) sendToAgent(_ context.Context, agentID string, msg *pb.ServerMe
 	}
 }
 
-// reassignOrphans moves all children of a dead parent to healthy nodes.
-// Called when a zone leader's stream closes.
+// reassignOrphans moves all children of a dead parent to healthy
+// nodes.  Called from AgentStream's close defer when a zone leader
+// (or any node with a direct server stream) drops.  The direct
+// children are the only ones whose upstream is now broken — deeper
+// descendants stay connected to their depth-1 parent, which itself is
+// reassigning upstream.
 func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 	children := s.topology.ChildrenOf(deadParentID)
 	if len(children) == 0 {
@@ -361,13 +154,4 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 		}
 		s.mu.Unlock()
 	}
-}
-
-// markReassigning records that an agent is being intentionally moved by the
-// rebalancer. When its old parent reports the disconnect via PeerDisconnected,
-// the server will skip marking it offline.
-func (s *Server) markReassigning(agentID string) {
-	s.reassigningMu.Lock()
-	s.reassigning[agentID] = time.Now()
-	s.reassigningMu.Unlock()
 }

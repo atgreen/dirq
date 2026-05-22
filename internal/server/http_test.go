@@ -201,7 +201,6 @@ func newTestServer(mock *mockDB, authDisabled bool) *Server {
 		log:          slog.Default(),
 		streams:      make(map[string]*agentStream),
 		execSessions: make(map[string]*execSession),
-		reassigning:  make(map[string]time.Time),
 	}
 }
 

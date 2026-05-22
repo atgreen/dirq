@@ -91,13 +91,4 @@ func (s *Server) reapStaleAgents(ctx context.Context) {
 		s.log.Info("reaper: notifying dispatchers about unreachable agents", "count", len(unreachable))
 		s.notifySessionsAgentGone("reaper: mesh route gone", unreachable...)
 	}
-
-	// Clean up stale reassigning entries (agent never reconnected).
-	s.reassigningMu.Lock()
-	for id, t := range s.reassigning {
-		if time.Since(t) > 2*time.Minute {
-			delete(s.reassigning, id)
-		}
-	}
-	s.reassigningMu.Unlock()
 }

@@ -83,26 +83,15 @@ type Server struct {
 	sessionMu     sync.RWMutex
 	sessionTokens map[string]string
 
-	// Agents currently being reassigned by the rebalancer. Their
-	// disconnect from the old parent is expected — don't mark offline.
-	reassigningMu sync.Mutex
-	reassigning   map[string]time.Time
-
 	// mTLS: when true, all gRPC methods except Register require a
 	// valid client certificate. Enabled when the CA key is available.
 	mtlsEnabled bool
 
 	// CA for issuing per-agent client certificates during registration.
-	tlsCfg      tlsutil.Config
-	caCert      *x509.Certificate
-	caKey       *ecdsa.PrivateKey
+	tlsCfg       tlsutil.Config
+	caCert       *x509.Certificate
+	caKey        *ecdsa.PrivateKey
 	certReloader *tlsutil.CertReloader
-
-	// Dampening: tracks agents that were demoted but bounced back to
-	// a direct server connection.  Prevents the rebalancer from
-	// re-demoting them every cycle.
-	demoteMu       sync.Mutex
-	demoteCooldown map[string]demoteRecord
 
 	// Fact-write staging. Query results land here keyed by
 	// (agent_id, module) so a burst of upserts for the same key in one
@@ -154,8 +143,6 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 		streams:         make(map[string]*agentStream),
 		execSessions:    make(map[string]*execSession),
 		sessionTokens:   make(map[string]string),
-		reassigning:     make(map[string]time.Time),
-		demoteCooldown:  make(map[string]demoteRecord),
 		factStage:       make(map[factKey]db.FactRow),
 		factFlushSignal: make(chan struct{}, 1),
 	}
@@ -404,9 +391,11 @@ func (s *Server) Start(ctx context.Context) error {
 	// operator observability across a restart.
 	s.rehydrateTopology(ctx)
 
-	// Start the stale-agent reaper, topology rebalancer, and fact batcher.
+	// Start the stale-agent reaper, fact batcher, and topology snapshotter.
+	// (The proactive topology rebalancer is gone — reactive paths
+	// reassignOrphans + the registration batcher + orphan-promotion
+	// fallback maintain the tree.)
 	go s.startReaper(ctx)
-	go s.startRebalancer(ctx)
 	go s.runFactBatcher(ctx)
 	go s.runTopologySnapshotter(ctx)
 
