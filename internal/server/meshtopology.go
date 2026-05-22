@@ -424,30 +424,60 @@ func (t *MeshTopology) ZoneLeaderIDs() []string {
 	return out
 }
 
-// FindRelayToPromote picks one online relay that has children but isn't
-// already a zone leader — used by the rebalancer when more ZLs are needed.
-// Returns (id, listenAddr) of the relay with the most children (best
-// candidate to promote so its subtree converts to a fresh branch).
+// FindRelayToPromote picks one online relay that has children but
+// isn't already a zone leader — used by the rebalancer when more ZLs
+// are needed.  The selection is source-IP-aware: it strongly prefers
+// candidates whose source IP doesn't already host a zone leader, so
+// repeated promotion ticks spread zone leaders across distinct hosts
+// instead of stacking them on whichever VM happened to grow the
+// deepest subtree.  In production this means a rack-failure recovery
+// promotes a relay on a different rack; in emulation it stops the
+// rebalancer from undoing the registration batcher's IP-diversity
+// work over 30s ticks.  If no fresh-IP relay exists, falls back to
+// "relay with the most children" so single-source-IP fleets still
+// get their ZL slots filled.
 func (t *MeshTopology) FindRelayToPromote() (id, listenAddr, hostname string, ok bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	bestID := ""
-	bestChildren := 0
+	// Snapshot which source IPs already host a zone leader.
+	zlIPs := make(map[string]bool)
+	for zlID := range t.zoneLeaders {
+		if n, ok := t.nodes[zlID]; ok && n.online {
+			zlIPs[ipOfListen(n.listenAddr)] = true
+		}
+	}
+
+	// First pass: best fresh-IP candidate (relay with most children
+	// whose IP doesn't already host a ZL).
+	bestFreshID := ""
+	bestFreshChildren := 0
+	// Second pass fallback: best any-IP candidate.
+	bestAnyID := ""
+	bestAnyChildren := 0
 	for nodeID, n := range t.nodes {
 		if !n.online || n.role != "relay" || len(n.children) == 0 {
 			continue
 		}
 		c := len(n.children)
-		if c > bestChildren {
-			bestChildren = c
-			bestID = nodeID
+		if c > bestAnyChildren {
+			bestAnyChildren = c
+			bestAnyID = nodeID
+		}
+		if !zlIPs[ipOfListen(n.listenAddr)] && c > bestFreshChildren {
+			bestFreshChildren = c
+			bestFreshID = nodeID
 		}
 	}
-	if bestID == "" {
+
+	pick := bestFreshID
+	if pick == "" {
+		pick = bestAnyID
+	}
+	if pick == "" {
 		return "", "", "", false
 	}
-	n := t.nodes[bestID]
+	n := t.nodes[pick]
 	return n.id, n.listenAddr, n.hostname, true
 }
 
