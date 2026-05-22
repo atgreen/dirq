@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.22.1] - 2026-05-22
+
+### Fixed
+
+- **Registration batcher no longer stacks zone leaders on one host via its single-item fast-path.** `flushBatch` had a special case for size-1 batches that routed them through the legacy per-agent `assignRole`, which promotes to ZL whenever `onlineZLs < MaxZoneLeaders` with no IP-diversity check. At realistic registration-jitter rates (~1–2 arrivals per 200 ms batch window), the overwhelming majority of batches are size 1, so the fast path won every race and filled all ZL slots from whichever VM's VHs arrived first. Observed on a 50×50 fleet: 4 of 5 ZLs on one VM; that VM saturated and every broadcast hit the 60 s hard timeout with ~22 % of agents still pending. Fix: route every batch (including size 1) through the diversity-aware path. A size-1 batch from a ZL-free IP still promotes; a size-1 batch from a ZL-holding IP falls through to relay assignment.
+
 ## [0.22.0] - 2026-05-22
 
 ### Removed
@@ -661,6 +667,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.22.1]: https://github.com/atgreen/dirq/releases/tag/v0.22.1
 [0.22.0]: https://github.com/atgreen/dirq/releases/tag/v0.22.0
 [0.21.2]: https://github.com/atgreen/dirq/releases/tag/v0.21.2
 [0.21.1]: https://github.com/atgreen/dirq/releases/tag/v0.21.1
