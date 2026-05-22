@@ -354,7 +354,17 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			}
 			s.reassigningMu.Unlock()
 			if isReassigning {
-				s.log.Info("peer disconnected (reassigning, skipped)", "agent_id", deadID)
+				// The rebalancer is intentionally moving this agent — don't
+				// mark it offline in the DB or topology (it'll be back via
+				// a new parent stream).  BUT in-flight broadcasts whose
+				// targets include this agent still need to be told: the
+				// agent's old route is gone, and the response from its
+				// new route may not arrive within the user's --timeout.
+				// Late real responses get deduped by ClaimAgent so we
+				// don't double-count.
+				s.log.Info("peer disconnected (reassigning, notifying broadcasts)",
+					"agent_id", deadID)
+				s.notifySessionsAgentGone("peer disconnected during reassignment", deadID)
 				break
 			}
 			// Snapshot the lost subtree from the in-memory topology
