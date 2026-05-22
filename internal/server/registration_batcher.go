@@ -158,7 +158,15 @@ func (b *registrationBatcher) assignBatchDiverse(batch []*pendingReg) []assignme
 		}
 	}
 
-	// First pass: promote one rep per distinct (and ZL-free) IP up to openZL.
+	// Promote one rep per distinct (and ZL-free) IP up to openZL.  We
+	// deliberately do NOT stack a second ZL onto an IP that already has
+	// one within the same batch — the whole point of batching is to
+	// spread ZLs by source IP.  If openZL remains positive after this
+	// pass (e.g. the batch only saw 1 source IP but there are 4 free ZL
+	// slots), leave the slots open.  Later batches that contain other
+	// IPs will fill them; the rebalancer's "promote a relay with
+	// children" path covers the steady-state case if no new IPs ever
+	// arrive.
 	promoted := make(map[int]bool)
 	if openZL > 0 {
 		for _, g := range groups {
@@ -178,45 +186,25 @@ func (b *registrationBatcher) assignBatchDiverse(batch []*pendingReg) []assignme
 		}
 	}
 
-	// Second pass: any remaining ZL capacity from IPs we've already
-	// covered — pick one more rep from each remaining group regardless
-	// of duplicate IP. This is the degraded case when the batch contains
-	// fewer distinct IPs than open ZL slots.
-	if openZL > 0 {
-		for _, g := range groups {
-			if openZL <= 0 {
-				break
-			}
-			for _, idx := range g.indices {
-				if promoted[idx] {
-					continue
-				}
-				p := batch[idx]
-				b.s.topology.AssignZoneLeader(p.agentID)
-				out[idx] = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
-				promoted[idx] = true
-				openZL--
-				break
-			}
-		}
-	}
-
-	// Third pass: everyone else becomes a relay via standard BFS-fill.
-	// applyAssignment encapsulates the existing per-agent logic so the
-	// "parent full at commit, promote instead" fallback keeps working.
+	// Everyone else becomes a relay via BFS-fill — explicitly NOT
+	// promoting any of them to ZL even when openZL > 0 remains.  If the
+	// batch only saw one source IP, we leave ZL slots open for future
+	// batches with different IPs.  Without this restriction, the
+	// fallback assignRole would happily promote same-IP candidates and
+	// defeat the diversity logic above.
 	for i := range batch {
 		if promoted[i] {
 			continue
 		}
-		out[i] = b.s.applyAssignment(batch[i])
+		out[i] = b.s.applyRelayAssignment(batch[i])
 	}
 
 	return out
 }
 
 // applyAssignment runs the existing per-agent assignRole + topology
-// commit for one registration.  Used for single-item batches and for
-// the relay/non-ZL slice of multi-item batches.
+// commit for one registration.  Used for single-item batches where
+// diversity gymnastics don't apply.
 func (s *Server) applyAssignment(p *pendingReg) assignment {
 	a := s.assignRole(p.agentID)
 	switch a.Role {
@@ -231,6 +219,40 @@ func (s *Server) applyAssignment(p *pendingReg) assignment {
 		}
 	}
 	return a
+}
+
+// applyRelayAssignment is the relay-only commit path used by the
+// multi-agent batch's non-ZL slice.  The batcher has already decided
+// who gets ZL slots based on source-IP diversity; everyone else must
+// be a relay even when openZL > 0 remains.  If the BFS-fill finds no
+// parent with room (rare — the tree should always have room until
+// saturated), this falls back to promotion as the orphan-protection
+// escape hatch.
+func (s *Server) applyRelayAssignment(p *pendingReg) assignment {
+	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
+	if !ok {
+		s.log.Warn("topology: no parent with room during batch relay fill, promoting",
+			"agent_id", p.agentID)
+		s.topology.AssignZoneLeader(p.agentID)
+		return assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
+	}
+	fbAgents := s.topology.FindFallbackParents(parentID, 2)
+	fallbacks := make([]string, 0, len(fbAgents))
+	for _, fb := range fbAgents {
+		fallbacks = append(fallbacks, fb.ListenAddr)
+	}
+	if !s.topology.AssignChild(p.agentID, parentID) {
+		s.log.Warn("topology: chosen parent full at commit during batch relay fill, promoting",
+			"agent_id", p.agentID, "intended_parent", parentID)
+		s.topology.AssignZoneLeader(p.agentID)
+		return assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
+	}
+	return assignment{
+		Role:          pb.AgentRole_AGENT_ROLE_RELAY,
+		ParentID:      parentID,
+		ParentAddr:    parentAddr,
+		FallbackAddrs: fallbacks,
+	}
 }
 
 func countDistinctIPs(batch []*pendingReg) int {
