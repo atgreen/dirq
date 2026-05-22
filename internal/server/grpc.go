@@ -654,6 +654,15 @@ func (s *Server) handleQueryResult(result *pb.QueryResult) {
 // always update for free since coalescing only overwrites). The
 // producer never blocks the gRPC receive loop — drops are logged with
 // rate limiting.
+//
+// Critical for scale: JSON marshal happens OUTSIDE the lock.  The
+// `packages` module data is tens of KB per agent, and marshaling it
+// inside the global factStageMu would serialize the entire AgentStream
+// receive path across all 5 zone-leader streams.  At 50k agents with
+// ~5ms marshal per response, that's a 250-second floor on broadcast
+// fact ingestion if it stayed serialized.  Marshal-then-lock makes the
+// expensive work concurrent across goroutines and the lock-hold time
+// per response drops to microseconds.
 func (s *Server) stageFacts(agentID string, data map[string]any) {
 	stageCap := s.cfg.FactStageCap
 	if stageCap <= 0 {
@@ -665,26 +674,43 @@ func (s *Server) stageFacts(agentID string, data map[string]any) {
 	}
 
 	now := time.Now()
-	s.factStageMu.Lock()
-	dropped := 0
+
+	// Marshal every module's data BEFORE taking the lock.  This is the
+	// expensive part — keeping it outside lets multiple goroutines do it
+	// concurrently instead of serializing on factStageMu.
+	type stagedEntry struct {
+		key  factKey
+		blob []byte
+	}
+	prepared := make([]stagedEntry, 0, len(data))
 	for module, raw := range data {
 		md, ok := raw.(map[string]any)
 		if !ok {
-			continue
-		}
-		key := factKey{agentID: agentID, module: module}
-		if _, exists := s.factStage[key]; !exists && len(s.factStage) >= stageCap {
-			dropped++
 			continue
 		}
 		blob, err := json.Marshal(md)
 		if err != nil {
 			continue
 		}
-		s.factStage[key] = db.FactRow{
-			AgentID:     agentID,
-			Module:      module,
-			Data:        blob,
+		prepared = append(prepared, stagedEntry{
+			key:  factKey{agentID: agentID, module: module},
+			blob: blob,
+		})
+	}
+
+	// Take the lock only to commit prepared entries to the stage map.
+	// Lock-hold time is O(len(prepared)) map operations — microseconds.
+	dropped := 0
+	s.factStageMu.Lock()
+	for _, e := range prepared {
+		if _, exists := s.factStage[e.key]; !exists && len(s.factStage) >= stageCap {
+			dropped++
+			continue
+		}
+		s.factStage[e.key] = db.FactRow{
+			AgentID:     e.key.agentID,
+			Module:      e.key.module,
+			Data:        e.blob,
 			CollectedAt: now,
 		}
 	}
