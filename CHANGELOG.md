@@ -5,6 +5,16 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.0] - 2026-05-22
+
+### Added
+
+- **One `dirq-agent` process can now host N virtual hosts** for fleet-scale emulation. Set `DIRQ_VIRTUAL_HOSTS=N` plus `DIRQ_HOSTNAME_PREFIX=<prefix>` and the agent spawns N in-process goroutines, each presenting itself to the server as an independent host with its own agent_id, session token, mTLS client cert, gRPC connection upstream, and downstream relay listen port (`base+i`). Synthesized hostnames are `<prefix>-NNNNN`. Per-instance mTLS certs live under `$DATA_DIR/tls/instances/<hostname>/` so siblings can't clobber each other. The new `make aws` knob `DIRQ_REPLICAS_PER_VM=N` wires this through to the EC2 fleet — e.g., `DIRQ_REPLICAS_PER_VM=1000 LINUX_COUNT=50 make aws` produces 50,000 emulated hosts on 50 VMs, with the security group's relay-port range auto-widened to cover `50052..50051+N`. The relay listener now binds synchronously in `Run()` before registration so port collisions surface as a `Run()` error instead of vanishing into a background goroutine while the agent looks healthy. Windows VMs stay single-tenant (multi-VH is Linux-only).
+
+### Fixed
+
+- **Bare-hostname `WHERE hostname = 'foo'` queries no longer silently broadcast to the entire fleet.** The server's pre-filter only recognized `tag.*` conditions, so a hostname predicate fell through to "match every agent" and dispatched the query to every connected host instead of just the named one. Hostname conditions are now matched against the agents table during pre-filtering alongside tag conditions, so queries scale correctly with the fleet's hostname cardinality.
+
 ## [0.19.0] - 2026-05-21
 
 ### Added
@@ -566,6 +576,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.20.0]: https://github.com/atgreen/dirq/releases/tag/v0.20.0
 [0.19.0]: https://github.com/atgreen/dirq/releases/tag/v0.19.0
 [0.18.0]: https://github.com/atgreen/dirq/releases/tag/v0.18.0
 [0.17.15]: https://github.com/atgreen/dirq/releases/tag/v0.17.15
