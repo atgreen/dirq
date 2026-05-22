@@ -122,6 +122,12 @@ message PeerResponse {
   repeated PeerInfo peers = 2;
   string zone_leader_addr = 3;
   repeated string fallback_addrs = 4;
+  // new_role lets the server promote a requesting agent in-band when the
+  // tree is saturated and no parent has room.  When set to
+  // AGENT_ROLE_ZONE_LEADER, the agent should reconnect directly to the
+  // server (regardless of zone_leader_addr).  Unset (UNSPECIFIED) means
+  // the agent's existing role is unchanged.
+  AgentRole new_role = 5;
 }
 
 // ─────────────────────────────────────────────────────────

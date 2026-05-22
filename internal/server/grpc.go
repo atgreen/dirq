@@ -83,7 +83,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 	var a assignment
 	err = s.db.WithTopologyLock(ctx, func() error {
 		var assignErr error
-		a, assignErr = s.assignRole(ctx)
+		a, assignErr = s.assignRole(ctx, agent.ID)
 		if assignErr != nil {
 			return assignErr
 		}
@@ -407,8 +407,17 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 	cfg := s.topoCfg
 	parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
 	if err != nil || parent.ID == "" || parent.ID == req.AgentId {
-		s.log.Warn("no parent available for reassignment", "agent_id", req.AgentId)
-		return &pb.PeerResponse{}, nil
+		// No parent has room (tree saturated under churn) — promote the
+		// requesting agent to zone leader rather than orphaning it.  This
+		// is the escape hatch that keeps the mesh converging when the
+		// upper levels temporarily can't absorb a new child.
+		s.log.Info("no parent has room, promoting agent to zone_leader",
+			"agent_id", req.AgentId)
+		s.db.SetAgentRole(ctx, req.AgentId, "zone_leader")
+		s.db.SetAgentParent(ctx, req.AgentId, "")
+		return &pb.PeerResponse{
+			NewRole: pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
+		}, nil
 	}
 
 	var fallbacks []string

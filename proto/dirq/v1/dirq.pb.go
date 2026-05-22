@@ -625,8 +625,14 @@ type PeerResponse struct {
 	Peers          []*PeerInfo            `protobuf:"bytes,2,rep,name=peers,proto3" json:"peers,omitempty"`
 	ZoneLeaderAddr string                 `protobuf:"bytes,3,opt,name=zone_leader_addr,json=zoneLeaderAddr,proto3" json:"zone_leader_addr,omitempty"`
 	FallbackAddrs  []string               `protobuf:"bytes,4,rep,name=fallback_addrs,json=fallbackAddrs,proto3" json:"fallback_addrs,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// new_role lets the server promote a requesting agent in-band when the
+	// tree is saturated and no parent has room.  When set to
+	// AGENT_ROLE_ZONE_LEADER, the agent should reconnect directly to the
+	// server (regardless of zone_leader_addr).  Unset (UNSPECIFIED) means
+	// the agent's existing role is unchanged.
+	NewRole       AgentRole `protobuf:"varint,5,opt,name=new_role,json=newRole,proto3,enum=dirq.v1.AgentRole" json:"new_role,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PeerResponse) Reset() {
@@ -678,6 +684,13 @@ func (x *PeerResponse) GetFallbackAddrs() []string {
 		return x.FallbackAddrs
 	}
 	return nil
+}
+
+func (x *PeerResponse) GetNewRole() AgentRole {
+	if x != nil {
+		return x.NewRole
+	}
+	return AgentRole_AGENT_ROLE_UNSPECIFIED
 }
 
 type AgentMessage struct {
@@ -2770,11 +2783,12 @@ const file_proto_dirq_v1_dirq_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\"(\n" +
 	"\vPeerRequest\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x88\x01\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\xb7\x01\n" +
 	"\fPeerResponse\x12'\n" +
 	"\x05peers\x18\x02 \x03(\v2\x11.dirq.v1.PeerInfoR\x05peers\x12(\n" +
 	"\x10zone_leader_addr\x18\x03 \x01(\tR\x0ezoneLeaderAddr\x12%\n" +
-	"\x0efallback_addrs\x18\x04 \x03(\tR\rfallbackAddrs\"\xca\x04\n" +
+	"\x0efallback_addrs\x18\x04 \x03(\tR\rfallbackAddrs\x12-\n" +
+	"\bnew_role\x18\x05 \x01(\x0e2\x12.dirq.v1.AgentRoleR\anewRole\"\xca\x04\n" +
 	"\fAgentMessage\x122\n" +
 	"\theartbeat\x18\x01 \x01(\v2\x12.dirq.v1.HeartbeatH\x00R\theartbeat\x129\n" +
 	"\fquery_result\x18\x02 \x01(\v2\x14.dirq.v1.QueryResultH\x00R\vqueryResult\x12+\n" +
@@ -3039,49 +3053,50 @@ var file_proto_dirq_v1_dirq_proto_depIdxs = []int32{
 	0,  // 1: dirq.v1.RegisterResponse.role:type_name -> dirq.v1.AgentRole
 	6,  // 2: dirq.v1.RegisterResponse.peers:type_name -> dirq.v1.PeerInfo
 	6,  // 3: dirq.v1.PeerResponse.peers:type_name -> dirq.v1.PeerInfo
-	14, // 4: dirq.v1.AgentMessage.heartbeat:type_name -> dirq.v1.Heartbeat
-	17, // 5: dirq.v1.AgentMessage.query_result:type_name -> dirq.v1.QueryResult
-	13, // 6: dirq.v1.AgentMessage.hello:type_name -> dirq.v1.AgentHello
-	22, // 7: dirq.v1.AgentMessage.exec_response:type_name -> dirq.v1.ExecResponse
-	26, // 8: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
-	25, // 9: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
-	18, // 10: dirq.v1.AgentMessage.aggregated_result:type_name -> dirq.v1.AggregatedQueryResult
-	10, // 11: dirq.v1.AgentMessage.peer_disconnected:type_name -> dirq.v1.PeerDisconnected
-	28, // 12: dirq.v1.AgentMessage.deploy_response:type_name -> dirq.v1.DeployResponse
-	15, // 13: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
-	19, // 14: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
-	20, // 15: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
-	21, // 16: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
-	23, // 17: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
-	24, // 18: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
-	27, // 19: dirq.v1.ServerMessage.deploy_request:type_name -> dirq.v1.DeployRequest
-	12, // 20: dirq.v1.ServerMessage.rotate_command:type_name -> dirq.v1.RotateCommand
-	1,  // 21: dirq.v1.RotateCommand.type:type_name -> dirq.v1.RotateCommand.RotationType
-	31, // 22: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
-	16, // 23: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
-	32, // 24: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
-	31, // 25: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
-	17, // 26: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
-	6,  // 27: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
-	0,  // 28: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
-	30, // 29: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
-	31, // 30: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
-	31, // 31: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
-	2,  // 32: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
-	9,  // 33: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
-	7,  // 34: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
-	4,  // 35: dirq.v1.DirQServer.RenewCert:input_type -> dirq.v1.RenewCertRequest
-	9,  // 36: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
-	3,  // 37: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
-	11, // 38: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
-	8,  // 39: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
-	5,  // 40: dirq.v1.DirQServer.RenewCert:output_type -> dirq.v1.RenewCertResponse
-	11, // 41: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
-	37, // [37:42] is the sub-list for method output_type
-	32, // [32:37] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	0,  // 4: dirq.v1.PeerResponse.new_role:type_name -> dirq.v1.AgentRole
+	14, // 5: dirq.v1.AgentMessage.heartbeat:type_name -> dirq.v1.Heartbeat
+	17, // 6: dirq.v1.AgentMessage.query_result:type_name -> dirq.v1.QueryResult
+	13, // 7: dirq.v1.AgentMessage.hello:type_name -> dirq.v1.AgentHello
+	22, // 8: dirq.v1.AgentMessage.exec_response:type_name -> dirq.v1.ExecResponse
+	26, // 9: dirq.v1.AgentMessage.file_chunk:type_name -> dirq.v1.FileChunk
+	25, // 10: dirq.v1.AgentMessage.fetch_response:type_name -> dirq.v1.FetchFileResponse
+	18, // 11: dirq.v1.AgentMessage.aggregated_result:type_name -> dirq.v1.AggregatedQueryResult
+	10, // 12: dirq.v1.AgentMessage.peer_disconnected:type_name -> dirq.v1.PeerDisconnected
+	28, // 13: dirq.v1.AgentMessage.deploy_response:type_name -> dirq.v1.DeployResponse
+	15, // 14: dirq.v1.ServerMessage.query_request:type_name -> dirq.v1.QueryRequest
+	19, // 15: dirq.v1.ServerMessage.peer_update:type_name -> dirq.v1.PeerUpdate
+	20, // 16: dirq.v1.ServerMessage.update_push:type_name -> dirq.v1.AgentUpdatePush
+	21, // 17: dirq.v1.ServerMessage.exec_request:type_name -> dirq.v1.ExecRequest
+	23, // 18: dirq.v1.ServerMessage.put_file:type_name -> dirq.v1.PutFileRequest
+	24, // 19: dirq.v1.ServerMessage.fetch_file:type_name -> dirq.v1.FetchFileRequest
+	27, // 20: dirq.v1.ServerMessage.deploy_request:type_name -> dirq.v1.DeployRequest
+	12, // 21: dirq.v1.ServerMessage.rotate_command:type_name -> dirq.v1.RotateCommand
+	1,  // 22: dirq.v1.RotateCommand.type:type_name -> dirq.v1.RotateCommand.RotationType
+	31, // 23: dirq.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
+	16, // 24: dirq.v1.QueryRequest.filters:type_name -> dirq.v1.Filter
+	32, // 25: dirq.v1.QueryResult.data:type_name -> google.protobuf.Struct
+	31, // 26: dirq.v1.QueryResult.collected_at:type_name -> google.protobuf.Timestamp
+	17, // 27: dirq.v1.AggregatedQueryResult.results:type_name -> dirq.v1.QueryResult
+	6,  // 28: dirq.v1.PeerUpdate.new_peers:type_name -> dirq.v1.PeerInfo
+	0,  // 29: dirq.v1.PeerUpdate.new_role:type_name -> dirq.v1.AgentRole
+	30, // 30: dirq.v1.ExecRequest.environment:type_name -> dirq.v1.ExecRequest.EnvironmentEntry
+	31, // 31: dirq.v1.ExecResponse.started_at:type_name -> google.protobuf.Timestamp
+	31, // 32: dirq.v1.ExecResponse.finished_at:type_name -> google.protobuf.Timestamp
+	2,  // 33: dirq.v1.DirQServer.Register:input_type -> dirq.v1.RegisterRequest
+	9,  // 34: dirq.v1.DirQServer.AgentStream:input_type -> dirq.v1.AgentMessage
+	7,  // 35: dirq.v1.DirQServer.RequestPeers:input_type -> dirq.v1.PeerRequest
+	4,  // 36: dirq.v1.DirQServer.RenewCert:input_type -> dirq.v1.RenewCertRequest
+	9,  // 37: dirq.v1.DirQRelay.RelayStream:input_type -> dirq.v1.AgentMessage
+	3,  // 38: dirq.v1.DirQServer.Register:output_type -> dirq.v1.RegisterResponse
+	11, // 39: dirq.v1.DirQServer.AgentStream:output_type -> dirq.v1.ServerMessage
+	8,  // 40: dirq.v1.DirQServer.RequestPeers:output_type -> dirq.v1.PeerResponse
+	5,  // 41: dirq.v1.DirQServer.RenewCert:output_type -> dirq.v1.RenewCertResponse
+	11, // 42: dirq.v1.DirQRelay.RelayStream:output_type -> dirq.v1.ServerMessage
+	38, // [38:43] is the sub-list for method output_type
+	33, // [33:38] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_proto_dirq_v1_dirq_proto_init() }

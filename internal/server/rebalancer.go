@@ -311,8 +311,34 @@ func (s *Server) reassignOrphans(ctx context.Context, deadParentID string) {
 	for _, child := range children {
 		parent, err := s.db.FindShallowestParentWithRoom(ctx, cfg.MaxChildrenPerNode)
 		if err != nil || parent.ID == "" || parent.ID == child.ID {
-			s.log.Warn("reassignOrphans: no parent available", "child", child.Hostname)
+			// Tree has no room to absorb this orphan — promote it to zone
+			// leader rather than leaving it dangling with a NULL parent_id.
+			// The DB update lands either way; the PeerUpdate is best-effort
+			// (delivered only if the orphan still has a live stream).
+			s.log.Info("reassignOrphans: no parent available, promoting orphan to zone_leader",
+				"child", child.Hostname)
+			s.db.SetAgentRole(ctx, child.ID, "zone_leader")
 			s.db.SetAgentParent(ctx, child.ID, "")
+			promoteMsg := &pb.ServerMessage{
+				Payload: &pb.ServerMessage_PeerUpdate{
+					PeerUpdate: &pb.PeerUpdate{
+						TargetAgentId: child.ID,
+						NewRole:       pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
+						NewParentAddr: "",
+					},
+				},
+			}
+			if s.signer != nil {
+				s.signServerMessage(promoteMsg)
+			}
+			s.mu.Lock()
+			if as, ok := s.streams[child.ID]; ok {
+				select {
+				case as.send <- promoteMsg:
+				default:
+				}
+			}
+			s.mu.Unlock()
 			continue
 		}
 

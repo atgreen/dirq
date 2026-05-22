@@ -322,6 +322,7 @@ cat >> /etc/dirq/agent.conf <<MVH
 virtual_hosts: ${REPLICAS_PER_VM}
 hostname_prefix: ${name}
 listen: :${LISTEN_PORT_BASE}
+registration_jitter_seconds: 30
 MVH
 fi
 

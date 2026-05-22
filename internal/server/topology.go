@@ -60,8 +60,24 @@ type assignment struct {
 // There is no relay/leaf distinction — every non-ZL node is simply a "node"
 // in the tree. Nodes with children automatically relay traffic; nodes without
 // children are effectively leafs. The agent binary handles both cases.
-func (s *Server) assignRole(ctx context.Context) (assignment, error) {
+func (s *Server) assignRole(ctx context.Context, agentID string) (assignment, error) {
 	cfg := s.topoCfg
+
+	// Step 0: If this agent is re-registering and was previously promoted to
+	// zone leader (e.g., by reassignOrphans or RequestPeers when the tree
+	// saturated), keep that role.  Otherwise the recomputed assignment would
+	// undo the promotion and re-orphan the agent on the next churn cycle.
+	if agentID != "" {
+		if existing, err := s.db.GetAgent(ctx, agentID); err == nil &&
+			existing.Role == "zone_leader" &&
+			(existing.ParentID == nil || *existing.ParentID == "") {
+			s.log.Info("topology: preserving existing zone_leader assignment on re-register",
+				"agent_id", agentID)
+			return assignment{
+				Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
+			}, nil
+		}
+	}
 
 	// Step 1: Do we need more zone leaders?
 	zoneLeaderCount, err := s.db.CountAgentsByRole(ctx, "zone_leader")

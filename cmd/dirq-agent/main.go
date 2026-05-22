@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/atgreen/dirq/internal/agent"
 	"github.com/atgreen/dirq/internal/config"
@@ -40,6 +41,11 @@ func main() {
 
 	execEnabled := config.EnvOr("DIRQ_EXEC_ENABLED", fileCfg, "exec_enabled", "false") == "true"
 
+	jitterSecs, _ := strconv.Atoi(config.EnvOr("DIRQ_REGISTRATION_JITTER_SECONDS", fileCfg, "registration_jitter_seconds", "0"))
+	if jitterSecs < 0 {
+		jitterSecs = 0
+	}
+
 	baseCfg := agent.Config{
 		ServerAddr:         config.EnvOr("DIRQ_SERVER", fileCfg, "server", "localhost:50051"),
 		ListenAddr:         config.EnvOr("DIRQ_LISTEN", fileCfg, "listen", ":50052"),
@@ -49,6 +55,7 @@ func main() {
 		RegistrationSecret: config.EnvOr("DIRQ_REGISTRATION_SECRET", fileCfg, "registration_secret", ""),
 		FileCfg:            fileCfg,
 		Hostname:           config.EnvOr("DIRQ_HOSTNAME", fileCfg, "hostname", ""),
+		RegistrationJitter: time.Duration(jitterSecs) * time.Second,
 	}
 
 	// Emulation mode: spawn N virtual-host agents in this process.  Each one
@@ -122,11 +129,26 @@ func runVirtualHosts(log *slog.Logger, base agent.Config, fileCfg *config.File, 
 		width = d
 	}
 
+	// Default to N/4 seconds of jitter (capped at 60s) for emulation runs so
+	// 1000 VHs don't all hit Register in the same millisecond.  The user can
+	// override (including back to 0) via DIRQ_REGISTRATION_JITTER_SECONDS.
+	if base.RegistrationJitter == 0 {
+		defaultJitter := time.Duration(n/4) * time.Second
+		if defaultJitter > 60*time.Second {
+			defaultJitter = 60 * time.Second
+		}
+		if defaultJitter < 5*time.Second {
+			defaultJitter = 5 * time.Second
+		}
+		base.RegistrationJitter = defaultJitter
+	}
+
 	log.Info("DirQ agent starting (multi-VH emulation)",
 		"virtual_hosts", n,
 		"server", base.ServerAddr,
 		"listen_base", base.ListenAddr,
 		"hostname_prefix", prefix,
+		"jitter_max", base.RegistrationJitter,
 		"version", base.Version,
 	)
 

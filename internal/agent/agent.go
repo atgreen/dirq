@@ -54,6 +54,12 @@ type Config struct {
 	// paths) when multiple agents share a process.  Empty preserves the legacy
 	// single-tenant path under $DATA_DIR/tls/.
 	InstanceName string
+
+	// RegistrationJitter caps a random startup delay applied before the first
+	// Register call, smoothing thundering-herd boot scenarios (multi-VH
+	// emulation, rack-reboot recovery, post-maintenance fleet restart).
+	// Zero disables jitter.
+	RegistrationJitter time.Duration
 }
 
 // Agent is the DirQ endpoint agent.
@@ -211,6 +217,19 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// Load an existing mTLS cert from a previous registration (if valid).
 	a.loadExistingMTLSCert()
+
+	// Optional startup jitter: smooth boot stampedes (multi-VH emulation,
+	// rack reboots, post-maintenance recovery).  Applied before bind so the
+	// SO_REUSEADDR window also relaxes across siblings.
+	if a.cfg.RegistrationJitter > 0 {
+		delay := time.Duration(rand.Int64N(int64(a.cfg.RegistrationJitter)))
+		a.log.Info("startup jitter", "delay", delay, "max", a.cfg.RegistrationJitter)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 
 	// Step 1: Bind the relay listener before registering, so port collisions
 	// (common in multi-VH emulation where 1000+ agents share a host) surface
@@ -664,7 +683,9 @@ func (a *Agent) loadExistingMTLSCert() {
 }
 
 // requestNewParent calls the server's RequestPeers RPC to get a new parent
-// assignment.  Updates parentAddr and fallbackAddrs on success.
+// assignment.  Updates parentAddr and fallbackAddrs on success.  If the
+// server can't find a parent with room it may promote this agent to zone
+// leader instead, in which case we reconnect directly to the server.
 func (a *Agent) requestNewParent(ctx context.Context) error {
 	conn, err := grpc.NewClient(a.cfg.ServerAddr, a.grpcDialOpts()...)
 	if err != nil {
@@ -676,6 +697,16 @@ func (a *Agent) requestNewParent(ctx context.Context) error {
 	resp, err := client.RequestPeers(ctx, &pb.PeerRequest{AgentId: a.agentID})
 	if err != nil {
 		return fmt.Errorf("RequestPeers RPC: %w", err)
+	}
+
+	// Server promoted us to zone leader (tree saturated, no parent has room).
+	// Reconnect directly to the server via AgentStream.
+	if resp.NewRole == pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
+		a.role = pb.AgentRole_AGENT_ROLE_ZONE_LEADER
+		a.parentAddr = a.cfg.ServerAddr
+		a.fallbackAddrs = nil
+		a.log.Info("server promoted us to zone_leader; reconnecting to server")
+		return nil
 	}
 
 	if resp.ZoneLeaderAddr == "" {
