@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.22.3] - 2026-05-22
+
+### Changed
+
+- **Fact-cache stage marshals outside the global mutex.** The hot path through `handleQueryResult` held `factStageMu` while running `json.Marshal` on each module's response payload — for the `packages` module that's ~50KB and ~5ms per response.  Serialized across the AgentStream receive goroutines this was the dominant scaling cliff: 50k agents × 5ms ≈ 250s of pure marshal time *if it stayed under the lock*.  Marshal now happens before taking the lock; the lock only covers committing prepared entries to the stage map (microseconds).  Multiple receive goroutines can now marshal concurrently instead of queuing.
+
 ## [0.22.2] - 2026-05-22
 
 ### Fixed
@@ -673,6 +679,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.22.3]: https://github.com/atgreen/dirq/releases/tag/v0.22.3
 [0.22.2]: https://github.com/atgreen/dirq/releases/tag/v0.22.2
 [0.22.1]: https://github.com/atgreen/dirq/releases/tag/v0.22.1
 [0.22.0]: https://github.com/atgreen/dirq/releases/tag/v0.22.0
