@@ -5,6 +5,17 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.1] - 2026-05-22
+
+### Fixed
+
+- **Orphaned agents (parent_id NULL but role=leaf/relay) are now promoted to zone leader instead of being silently stranded.** When the mesh tree saturates under churn — a zone leader's stream flapping, a wave of children re-registering, a parent with no remaining capacity — `RequestPeers` and `reassignOrphans` used to clear the agent's `parent_id` and move on. The agent kept its non-ZL role but had no route, which meant broadcast queries (`dirq cve`, `dirq exec WHERE …`, etc.) fanned out through zone-leader streams and silently missed those orphans. Both paths now route the orphan into the same escape hatch `assignRole` already had: set role=zone_leader, signal the agent via a new `PeerResponse.new_role` field (in-band on `RequestPeers`) or `PeerUpdate(NewRole=ZONE_LEADER, NewParentAddr="")` (best-effort on the live stream from `reassignOrphans`), and reconnect to the server directly. `assignRole` preserves an existing zone_leader+NULL-parent assignment on re-register so the promotion isn't undone the next time the agent reconnects.
+- **`dirq cve` and `dirq errata` no longer label every unreachable host as "non-RHEL".** The count was computed as `online_agents - assessedHosts` and reported as `N not assessed (non-RHEL)`, which conflated three different cases: actually non-RHEL hosts, RHEL hosts that timed out, and RHEL hosts the mesh couldn't reach. The line now splits the count using the agent record's `os` field — output reads `N vulnerable, N patched[, N non-RHEL][, N RHEL did not respond]`, so a non-zero "did not respond" surfaces as the fleet-health signal it actually is, instead of being silently absorbed into a misleading "non-RHEL" total.
+
+### Added
+
+- **`DIRQ_REGISTRATION_JITTER_SECONDS` agent setting** (config key: `registration_jitter_seconds`) caps a random startup delay applied before the first `Register` call. Smooths thundering-herd boot scenarios: multi-VH emulation auto-picks a sensible default (N/4 seconds, clamped to 5–60s), production fleets can opt in for rack-reboot or post-maintenance fleet restarts. Zero disables jitter, preserving previous behavior. The AWS test-fleet script sets `registration_jitter_seconds: 30` when `DIRQ_REPLICAS_PER_VM > 1`.
+
 ## [0.20.0] - 2026-05-22
 
 ### Added
@@ -576,6 +587,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.20.1]: https://github.com/atgreen/dirq/releases/tag/v0.20.1
 [0.20.0]: https://github.com/atgreen/dirq/releases/tag/v0.20.0
 [0.19.0]: https://github.com/atgreen/dirq/releases/tag/v0.19.0
 [0.18.0]: https://github.com/atgreen/dirq/releases/tag/v0.18.0
