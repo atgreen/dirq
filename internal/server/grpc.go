@@ -567,17 +567,20 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 
 	maxResults := len(targetIDs)
 	outcome := dispatchOutcome{TotalTargets: maxResults}
+	consume := func(r *pb.QueryResult) {
+		// Only include successful matches in the returned results.
+		// "no match" responses (Success=false, Error="no match") and
+		// synthetic disconnect failures count toward completion but
+		// are discarded — surfaced via outcome.MissingCount() so the
+		// caller can distinguish "no data" from "didn't answer".
+		if r.Success {
+			results = append(results, r)
+		}
+	}
 	for qs.Remaining() > 0 {
 		select {
 		case r := <-qs.results:
-			// Only include successful matches in the returned results.
-			// "no match" responses (Success=false, Error="no match") and
-			// synthetic disconnect failures count toward completion but
-			// are discarded — surfaced via outcome.MissingCount() so the
-			// caller can distinguish "no data" from "didn't answer".
-			if r.Success {
-				results = append(results, r)
-			}
+			consume(r)
 		case <-hardTimeout.C:
 			s.log.Warn("query hard-timeout fired",
 				"query_id", qr.QueryId,
@@ -591,6 +594,21 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 			outcome.Results = results
 			outcome.Responded = qs.AccountedCount()
 			return outcome, ctx.Err()
+		}
+	}
+
+	// Clean-exit drain — ClaimAgent decrements Remaining BEFORE the
+	// result is consumed from qs.results, so a burst of concurrent
+	// ClaimAgents can race Remaining() to zero while real results still
+	// sit in the channel.  Without this drain those late items get GC'd
+	// and Responded count under-reports the real response set.
+drain:
+	for {
+		select {
+		case r := <-qs.results:
+			consume(r)
+		default:
+			break drain
 		}
 	}
 

@@ -858,28 +858,32 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 	progressTicker := time.NewTicker(5 * time.Second)
 	defer progressTicker.Stop()
 
+	emit := func(resp *pb.ExecResponse) {
+		out := execMultiResult{
+			Type:      "result",
+			RequestID: resp.RequestId,
+			AgentID:   resp.AgentId,
+			Hostname:  resp.Hostname,
+			RC:        int(resp.Rc),
+			Stdout:    encodeBase64(resp.Stdout),
+			Stderr:    encodeBase64(resp.Stderr),
+			Success:   resp.Success,
+			Error:     resp.Error,
+		}
+		if resp.StartedAt != nil {
+			out.StartedAt = resp.StartedAt.AsTime().Format(time.RFC3339)
+		}
+		if resp.FinishedAt != nil {
+			out.FinishedAt = resp.FinishedAt.AsTime().Format(time.RFC3339)
+		}
+		enc.Encode(out)
+		flusher.Flush()
+	}
+
 	for bs.Remaining() > 0 {
 		select {
 		case resp := <-bs.results:
-			out := execMultiResult{
-				Type:      "result",
-				RequestID: resp.RequestId,
-				AgentID:   resp.AgentId,
-				Hostname:  resp.Hostname,
-				RC:        int(resp.Rc),
-				Stdout:    encodeBase64(resp.Stdout),
-				Stderr:    encodeBase64(resp.Stderr),
-				Success:   resp.Success,
-				Error:     resp.Error,
-			}
-			if resp.StartedAt != nil {
-				out.StartedAt = resp.StartedAt.AsTime().Format(time.RFC3339)
-			}
-			if resp.FinishedAt != nil {
-				out.FinishedAt = resp.FinishedAt.AsTime().Format(time.RFC3339)
-			}
-			enc.Encode(out)
-			flusher.Flush()
+			emit(resp)
 		case <-progressTicker.C:
 			enc.Encode(execMultiResult{
 				Type:         "progress",
@@ -896,6 +900,21 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 			)
 			return
 		case <-ctx.Done():
+			return
+		}
+	}
+
+	// Clean exit drain — see drainResults comment.  ClaimAgent decrements
+	// Remaining BEFORE the result is consumed from bs.results, so a burst
+	// of concurrent ClaimAgent calls can race Remaining() to zero while
+	// real results still sit in the channel waiting to be encoded.
+	// Without this drain those late items get GC'd and the CLI sees
+	// fewer encodes than targets accounted (the "1006/1248 in 0.5s" bug).
+	for {
+		select {
+		case resp := <-bs.results:
+			emit(resp)
+		default:
 			return
 		}
 	}

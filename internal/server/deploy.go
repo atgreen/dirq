@@ -267,22 +267,26 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 	hardTimeout := time.NewTimer(ds.timeout)
 	defer hardTimeout.Stop()
 
+	emit := func(resp *pb.DeployResponse) {
+		out := deployResultLine{
+			Type:     "result",
+			AgentID:  resp.AgentId,
+			Hostname: resp.Hostname,
+			Success:  resp.Success,
+			Error:    resp.Error,
+			Phase:    resp.Phase,
+			RC:       int(resp.Rc),
+			Stdout:   encodeBase64(resp.Stdout),
+			Stderr:   encodeBase64(resp.Stderr),
+		}
+		enc.Encode(out)
+		flusher.Flush()
+	}
+
 	for ds.Remaining() > 0 {
 		select {
 		case resp := <-ds.results:
-			out := deployResultLine{
-				Type:     "result",
-				AgentID:  resp.AgentId,
-				Hostname: resp.Hostname,
-				Success:  resp.Success,
-				Error:    resp.Error,
-				Phase:    resp.Phase,
-				RC:       int(resp.Rc),
-				Stdout:   encodeBase64(resp.Stdout),
-				Stderr:   encodeBase64(resp.Stderr),
-			}
-			enc.Encode(out)
-			flusher.Flush()
+			emit(resp)
 		case <-hardTimeout.C:
 			s.log.Warn("deploy broadcast hard-timeout fired",
 				"request_id", requestID,
@@ -292,6 +296,19 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 			)
 			return
 		case <-ctx.Done():
+			return
+		}
+	}
+
+	// Clean-exit drain — see exec.go dispatchExecBroadcast for the
+	// rationale.  Under burst arrivals, ClaimAgent races Remaining() to
+	// zero while real results still sit in ds.results; the drain catches
+	// them before the dispatcher returns.
+	for {
+		select {
+		case resp := <-ds.results:
+			emit(resp)
+		default:
 			return
 		}
 	}
