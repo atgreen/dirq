@@ -44,6 +44,16 @@ type Config struct {
 	ExecEnabled        bool         // Phase 2: whether this agent accepts exec/file requests
 	RegistrationSecret string       // pre-shared secret for registration authentication
 	FileCfg            *config.File // parsed config file (for TLS/signing fallback)
+
+	// Hostname overrides os.Hostname() when reporting identity to the server
+	// and when answering queries.  Used by emulation harnesses that run many
+	// virtual hosts in one process.  Empty means use os.Hostname().
+	Hostname string
+
+	// InstanceName disambiguates per-agent state directories (e.g., mTLS cert
+	// paths) when multiple agents share a process.  Empty preserves the legacy
+	// single-tenant path under $DATA_DIR/tls/.
+	InstanceName string
 }
 
 // Agent is the DirQ endpoint agent.
@@ -52,6 +62,7 @@ type Agent struct {
 
 	cfg          Config
 	log          *slog.Logger
+	hostname     string // resolved at New(); used in registration and query results
 	agentID      string
 	role         pb.AgentRole
 	sessionToken string   // from RegisterResponse, presented in AgentHello
@@ -71,6 +82,11 @@ type Agent struct {
 	// RenewCert shortly after the upstream stream is established.
 	needsCertRenewal bool
 
+	// tlsConfig is this agent's view of the TLS configuration.  Each agent in
+	// a multi-tenant process holds its own copy so persistMTLSCert can repoint
+	// CertFile/KeyFile without trampling its siblings.
+	tlsConfig tlsutil.Config
+
 	// Connected downstream peers
 	mu          sync.RWMutex
 	downstreams map[string]*downstreamPeer
@@ -82,11 +98,13 @@ type downstreamPeer struct {
 	cancel  context.CancelFunc
 }
 
-// cachedTLSConfig is set once during Run() by EnsureCerts.
-var cachedTLSConfig *tlsutil.Config
+// tlsBootstrapMu serializes tlsutil.EnsureCerts across in-process agents so
+// concurrent first-run auto-generation doesn't race on the shared directory.
+// Once files exist, EnsureCerts returns quickly and the mutex barely matters.
+var tlsBootstrapMu sync.Mutex
 
 // grpcDialOpts returns the standard gRPC dial options including TLS.
-func grpcDialOpts() []grpc.DialOption {
+func (a *Agent) grpcDialOpts() []grpc.DialOption {
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
@@ -95,9 +113,8 @@ func grpcDialOpts() []grpc.DialOption {
 		}),
 	}
 
-	cfg := cachedTLSConfig
-	if cfg != nil && cfg.Enabled() {
-		creds, err := tlsutil.ClientCredentials(*cfg)
+	if a.tlsConfig.Enabled() {
+		creds, err := tlsutil.ClientCredentials(a.tlsConfig)
 		if err == nil {
 			opts = append(opts, grpc.WithTransportCredentials(creds))
 			return opts
@@ -111,7 +128,7 @@ func grpcDialOpts() []grpc.DialOption {
 // Unlike grpcDialOpts, this does NOT present a client certificate — the agent
 // doesn't have a server-issued cert yet. Only the CA is loaded so the agent
 // can verify the server's identity.
-func registrationDialOpts() []grpc.DialOption {
+func (a *Agent) registrationDialOpts() []grpc.DialOption {
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
@@ -120,10 +137,9 @@ func registrationDialOpts() []grpc.DialOption {
 		}),
 	}
 
-	cfg := cachedTLSConfig
-	if cfg != nil && cfg.Enabled() {
+	if a.tlsConfig.Enabled() {
 		// Build a config with CA only — no client cert.
-		regCfg := *cfg
+		regCfg := a.tlsConfig
 		regCfg.CertFile = ""
 		regCfg.KeyFile = ""
 		creds, err := tlsutil.ClientCredentials(regCfg)
@@ -139,7 +155,7 @@ func registrationDialOpts() []grpc.DialOption {
 // peerDialOpts returns gRPC dial options for connecting to a peer agent's
 // relay server.  Peer certs contain "localhost" as a SAN but not the peer's
 // IP, so we override ServerName to "localhost" for TLS verification.
-func peerDialOpts() []grpc.DialOption {
+func (a *Agent) peerDialOpts() []grpc.DialOption {
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
@@ -148,9 +164,8 @@ func peerDialOpts() []grpc.DialOption {
 		}),
 	}
 
-	cfg := cachedTLSConfig
-	if cfg != nil && cfg.Enabled() {
-		peerCfg := *cfg
+	if a.tlsConfig.Enabled() {
+		peerCfg := a.tlsConfig
 		peerCfg.ServerName = "localhost"
 		creds, err := tlsutil.ClientCredentials(peerCfg)
 		if err == nil {
@@ -167,36 +182,56 @@ func New(cfg Config, log *slog.Logger) *Agent {
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":50052"
 	}
+	hostname := cfg.Hostname
+	if hostname == "" {
+		hostname, _ = os.Hostname()
+	}
 	return &Agent{
-		cfg:          cfg,
-		log:          log,
-		downstreams:  make(map[string]*downstreamPeer),
+		cfg:         cfg,
+		log:         log,
+		hostname:    hostname,
+		downstreams: make(map[string]*downstreamPeer),
 	}
 }
 
 // Run starts the agent: registers with server, opens stream, listens for peers.
 // If the upstream connection drops, Run reconnects with exponential backoff.
 func (a *Agent) Run(ctx context.Context) error {
-	// Step 0: Ensure TLS certs exist (auto-generate if needed).
+	// Step 0: Ensure TLS certs exist (auto-generate if needed).  Serialized
+	// across in-process agents so concurrent EnsureCerts calls don't race on
+	// the shared auto-gen directory.
+	tlsBootstrapMu.Lock()
 	tlsCfg := tlsutil.ConfigFromEnv(a.cfg.FileCfg)
 	tlsCfg, err := tlsutil.EnsureCerts(tlsCfg, "agent", a.log)
+	tlsBootstrapMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("TLS setup: %w", err)
 	}
-	cachedTLSConfig = &tlsCfg
+	a.tlsConfig = tlsCfg
 
 	// Load an existing mTLS cert from a previous registration (if valid).
 	a.loadExistingMTLSCert()
 
-	// Step 1: Register with the server (retry until success or context cancelled).
+	// Step 1: Bind the relay listener before registering, so port collisions
+	// (common in multi-VH emulation where 1000+ agents share a host) surface
+	// as a Run() error instead of being logged in a background goroutine
+	// while the agent stays registered but unreachable.
+	lis, err := net.Listen("tcp", a.cfg.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("relay listen %s: %w", a.cfg.ListenAddr, err)
+	}
+	a.log.Info("relay server listening", "addr", a.cfg.ListenAddr)
+
+	// Step 2: Register with the server (retry until success or context cancelled).
 	if err := a.registerWithRetry(ctx); err != nil {
+		lis.Close()
 		return err
 	}
 	a.log.Info("registered", "agent_id", a.agentID, "role", a.role)
 
-	// Step 2: Start listening for downstream peers. Every agent listens —
-	// the topology manager may assign children to any node at any time.
-	go a.startRelayServer(ctx)
+	// Step 3: Start serving downstream peers. Every agent listens — the
+	// topology manager may assign children to any node at any time.
+	go a.serveRelay(ctx, lis)
 
 	// Step 4: Connect and run, reconnecting on failure.
 	return a.connectLoop(ctx)
@@ -331,7 +366,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 }
 
 func (a *Agent) register(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.cfg.ServerAddr, registrationDialOpts()...)
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, a.registrationDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
@@ -339,7 +374,7 @@ func (a *Agent) register(ctx context.Context) error {
 
 	client := pb.NewDirQServerClient(conn)
 
-	hostname, _ := os.Hostname()
+	hostname := a.hostname
 
 	caps := []string{}
 	for name := range modules.Registry() {
@@ -430,7 +465,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 	// Zone leaders connect to the server's AgentStream RPC.
 	// Relays and leafs connect to their parent's RelayStream RPC.
 	if a.role == pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
-		conn, err := grpc.NewClient(target, grpcDialOpts()...)
+		conn, err := grpc.NewClient(target, a.grpcDialOpts()...)
 		if err != nil {
 			return fmt.Errorf("connect upstream: %w", err)
 		}
@@ -444,7 +479,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 		a.upstreamStream = stream
 	} else {
 		// Use peer dial options (ServerName override) for relay connections.
-		conn, err := grpc.NewClient(target, peerDialOpts()...)
+		conn, err := grpc.NewClient(target, a.peerDialOpts()...)
 		if err != nil {
 			return fmt.Errorf("connect upstream: %w", err)
 		}
@@ -465,7 +500,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 
 // connectToAddr connects to a specific address as a relay peer (for fallbacks).
 func (a *Agent) connectToAddr(ctx context.Context, addr string) error {
-	conn, err := grpc.NewClient(addr, peerDialOpts()...)
+	conn, err := grpc.NewClient(addr, a.peerDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -507,15 +542,20 @@ func (a *Agent) sendHello() error {
 	})
 }
 
-// mtlsCertDir returns the directory for mTLS client certs.
-func mtlsCertDir() string {
+// mtlsCertDir returns the directory for this agent's mTLS client certs.
+// When InstanceName is set, certs live under tls/instances/<name>/ so multiple
+// agents in the same process don't trample each other's files.
+func (a *Agent) mtlsCertDir() string {
+	if a.cfg.InstanceName != "" {
+		return filepath.Join(config.DataDir(), "tls", "instances", a.cfg.InstanceName)
+	}
 	return filepath.Join(config.DataDir(), "tls")
 }
 
 // persistMTLSCert saves the server-issued client cert/key/CA to disk and
-// updates cachedTLSConfig so subsequent connections use mTLS.
+// updates the agent's tlsConfig so subsequent connections use mTLS.
 func (a *Agent) persistMTLSCert(certPEM, keyPEM, caCertPEM []byte) error {
-	dir := mtlsCertDir()
+	dir := a.mtlsCertDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create mTLS cert dir: %w", err)
 	}
@@ -539,13 +579,11 @@ func (a *Agent) persistMTLSCert(certPEM, keyPEM, caCertPEM []byte) error {
 	}
 
 	// Update TLS config to use the new cert for all subsequent connections.
-	if cachedTLSConfig != nil {
-		cachedTLSConfig.CertFile = certPath
-		cachedTLSConfig.KeyFile = keyPath
-		if len(caCertPEM) > 0 {
-			cachedTLSConfig.CAFile = filepath.Join(dir, "ca.crt")
-			cachedTLSConfig.Insecure = false
-		}
+	a.tlsConfig.CertFile = certPath
+	a.tlsConfig.KeyFile = keyPath
+	if len(caCertPEM) > 0 {
+		a.tlsConfig.CAFile = filepath.Join(dir, "ca.crt")
+		a.tlsConfig.Insecure = false
 	}
 
 	return nil
@@ -553,9 +591,9 @@ func (a *Agent) persistMTLSCert(certPEM, keyPEM, caCertPEM []byte) error {
 
 // renewCert calls the server's RenewCert RPC to obtain a fresh mTLS client
 // certificate without a full re-registration.  It persists the new cert to
-// disk and updates cachedTLSConfig.
+// disk and updates the agent's tlsConfig.
 func (a *Agent) renewCert(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.cfg.ServerAddr, grpcDialOpts()...)
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, a.grpcDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("connect to server for cert renewal: %w", err)
 	}
@@ -583,7 +621,7 @@ func (a *Agent) renewCert(ctx context.Context) error {
 // loadExistingMTLSCert checks for a previously-issued mTLS cert and loads
 // it into the TLS config if valid.
 func (a *Agent) loadExistingMTLSCert() {
-	dir := mtlsCertDir()
+	dir := a.mtlsCertDir()
 	certPath := filepath.Join(dir, "mtls-client.crt")
 	keyPath := filepath.Join(dir, "mtls-client.key")
 
@@ -615,22 +653,20 @@ func (a *Agent) loadExistingMTLSCert() {
 	}
 
 	// Load it.
-	if cachedTLSConfig != nil {
-		cachedTLSConfig.CertFile = certPath
-		cachedTLSConfig.KeyFile = keyPath
-		caPath := filepath.Join(dir, "ca.crt")
-		if _, err := os.Stat(caPath); err == nil {
-			cachedTLSConfig.CAFile = caPath
-			cachedTLSConfig.Insecure = false
-		}
-		a.log.Info("loaded existing mTLS client cert", "cert", certPath)
+	a.tlsConfig.CertFile = certPath
+	a.tlsConfig.KeyFile = keyPath
+	caPath := filepath.Join(dir, "ca.crt")
+	if _, err := os.Stat(caPath); err == nil {
+		a.tlsConfig.CAFile = caPath
+		a.tlsConfig.Insecure = false
 	}
+	a.log.Info("loaded existing mTLS client cert", "cert", certPath)
 }
 
 // requestNewParent calls the server's RequestPeers RPC to get a new parent
 // assignment.  Updates parentAddr and fallbackAddrs on success.
 func (a *Agent) requestNewParent(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.cfg.ServerAddr, grpcDialOpts()...)
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, a.grpcDialOpts()...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
@@ -691,7 +727,7 @@ func (a *Agent) mainLoop(ctx context.Context) error {
 
 		case <-certCheckTicker.C:
 			// Re-read the cert from disk to check its current expiry.
-			dir := mtlsCertDir()
+			dir := a.mtlsCertDir()
 			certPEM, err := os.ReadFile(filepath.Join(dir, "mtls-client.crt"))
 			if err == nil && tlsutil.CertExpiresWithin(certPEM, 30*24*time.Hour) {
 				a.log.Info("periodic cert check: cert expires soon, renewing")
@@ -882,7 +918,7 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 
 	a.log.Info("executing query", "query_id", qr.QueryId, "modules", qr.Modules)
 
-	hostname, _ := os.Hostname()
+	hostname := a.hostname
 
 	// Extract name hints from filters for optimized collection.
 	// e.g., packages.name = 'kernel' → hints{"packages": ["kernel"]}
@@ -910,6 +946,13 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 	// Inject top-level "hostname" so WHERE hostname = 'foo' works
 	// without requiring the os_info. prefix.
 	collected["hostname"] = hostname
+
+	// Overlay our hostname onto os_info.hostname.  The module collects it via
+	// os.Hostname() which returns the physical host; virtual hosts sharing a
+	// process need to report their synthesized identity here too.
+	if osInfo, ok := collected["os_info"].(map[string]any); ok {
+		osInfo["hostname"] = hostname
+	}
 
 	// Apply agent-side filtering (array-aware: filters into packages, services, etc.)
 	if len(qr.Filters) > 0 {
@@ -983,10 +1026,13 @@ func (a *Agent) relayToDownstreams(msg *pb.ServerMessage) {
 // Relay server (for downstream peers)
 // ─────────────────────────────────────────────────────────
 
-func (a *Agent) startRelayServer(ctx context.Context) {
+// serveRelay runs the downstream gRPC server on the pre-bound listener. The
+// listener is bound synchronously in Run() so port-bind failures surface as
+// Run() errors.
+func (a *Agent) serveRelay(ctx context.Context, lis net.Listener) {
 	var serverOpts []grpc.ServerOption
-	if cachedTLSConfig != nil && cachedTLSConfig.Enabled() {
-		creds, err := tlsutil.ServerCredentials(*cachedTLSConfig)
+	if a.tlsConfig.Enabled() {
+		creds, err := tlsutil.ServerCredentials(a.tlsConfig)
 		if err != nil {
 			a.log.Error("relay TLS setup failed, using insecure", "error", err)
 		} else {
@@ -1002,13 +1048,6 @@ func (a *Agent) startRelayServer(ctx context.Context) {
 	)
 	a.grpcSv = grpc.NewServer(serverOpts...)
 	pb.RegisterDirQRelayServer(a.grpcSv, a)
-
-	lis, err := net.Listen("tcp", a.cfg.ListenAddr)
-	if err != nil {
-		a.log.Error("relay listen failed", "addr", a.cfg.ListenAddr, "error", err)
-		return
-	}
-	a.log.Info("relay server listening", "addr", a.cfg.ListenAddr)
 
 	go func() {
 		<-ctx.Done()

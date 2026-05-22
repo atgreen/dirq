@@ -12,6 +12,13 @@
 #
 # Defaults: 3 Linux (RHEL 8) + 2 Windows VMs. Override with:
 #   LINUX_COUNT=5 WIN_COUNT=3 ./deploy/aws-test-fleet.sh up
+#
+# Fleet emulation: set DIRQ_REPLICAS_PER_VM=N to have each Linux VM impersonate
+# N virtual hosts (each with its own agent_id, gRPC connection, mTLS cert, and
+# listen port).  Useful for testing at scale without paying for N VMs:
+#   DIRQ_REPLICAS_PER_VM=1000 LINUX_COUNT=50 ./deploy/aws-test-fleet.sh up
+#     → 50 VMs × 1000 = 50,000 emulated hosts
+# Windows VMs stay single-tenant (multi-VH is Linux-only).
 
 set -euo pipefail
 
@@ -27,6 +34,12 @@ KEY_NAME="${DIRQ_KEY_NAME:-dirq-test}"
 TAG_PREFIX="dirq-test"
 WIN_ADMIN_PASS="${DIRQ_WIN_PASSWORD:-DirQ-Test-2026!}"
 REGISTRATION_SECRET="${DIRQ_REGISTRATION_SECRET:-dirq-aws-test-secret}"
+REPLICAS_PER_VM="${DIRQ_REPLICAS_PER_VM:-1}"
+
+# Multi-VH listen-port range.  Each VH binds base+i, so with N replicas we
+# open base..base+N-1 in the security group.
+LISTEN_PORT_BASE=50052
+LISTEN_PORT_HIGH=$((LISTEN_PORT_BASE + REPLICAS_PER_VM - 1))
 
 # Version for RPM/MSI install. Uses latest GitHub release by default.
 DIRQ_VERSION="${DIRQ_VERSION:-}"
@@ -157,8 +170,16 @@ cmd_up() {
             "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=0.0.0.0/0}]" \
             "IpProtocol=tcp,FromPort=3389,ToPort=3389,IpRanges=[{CidrIp=0.0.0.0/0}]" \
             "IpProtocol=tcp,FromPort=8080,ToPort=8080,IpRanges=[{CidrIp=0.0.0.0/0}]" \
-            "IpProtocol=tcp,FromPort=50051,ToPort=50052,IpRanges=[{CidrIp=0.0.0.0/0}]" \
+            "IpProtocol=tcp,FromPort=50051,ToPort=$LISTEN_PORT_HIGH,IpRanges=[{CidrIp=0.0.0.0/0}]" \
             --output text > /dev/null
+    elif (( REPLICAS_PER_VM > 1 )); then
+        # SG already exists — widen the relay port range to cover all replicas.
+        # Duplicate-rule errors are non-fatal (the broader rule may already be in place).
+        log "Widening existing security group to ports 50051-$LISTEN_PORT_HIGH for $REPLICAS_PER_VM replicas/VM"
+        aws_ ec2 authorize-security-group-ingress --group-id "$sg_id" \
+            --ip-permissions \
+            "IpProtocol=tcp,FromPort=50051,ToPort=$LISTEN_PORT_HIGH,IpRanges=[{CidrIp=0.0.0.0/0}]" \
+            --output text > /dev/null 2>&1 || true
     fi
     save_state sg_id "$sg_id"
     log "Security group: $sg_id"
@@ -294,6 +315,16 @@ tags:
   fleet: aws-test
 CONF
 
+# Multi-VH emulation: spawn N virtual agents in one process, each presenting
+# itself to the server as a separate host.  Only enabled when DIRQ_REPLICAS_PER_VM>1.
+if [[ ${REPLICAS_PER_VM} -gt 1 ]]; then
+cat >> /etc/dirq/agent.conf <<MVH
+virtual_hosts: ${REPLICAS_PER_VM}
+hostname_prefix: ${name}
+listen: :${LISTEN_PORT_BASE}
+MVH
+fi
+
 # Start the agent.
 systemctl enable --now dirq-agent
 USERDATA
@@ -427,7 +458,14 @@ WINEOF
     log "Fleet deployed!"
     echo
     echo "  Server:  https://$srv_ip:8080"
-    echo "  Agents:  $LINUX_COUNT Linux (RHEL 8) + $WIN_COUNT Windows (Server 2022)"
+    if (( REPLICAS_PER_VM > 1 )); then
+        local emulated=$(( LINUX_COUNT * REPLICAS_PER_VM ))
+        echo "  Agents:  $LINUX_COUNT Linux VMs × $REPLICAS_PER_VM virtual hosts = $emulated emulated hosts"
+        echo "           + $WIN_COUNT Windows (Server 2022, single-tenant)"
+        echo "           Linux ports: 50052-$LISTEN_PORT_HIGH"
+    else
+        echo "  Agents:  $LINUX_COUNT Linux (RHEL 8) + $WIN_COUNT Windows (Server 2022)"
+    fi
     echo
     echo "  Setup (copy-paste):"
     echo "    cp $STATE_DIR/client.conf ~/.config/dirq/client.conf"
@@ -530,6 +568,8 @@ case "${1:-}" in
         echo "Environment variables:"
         echo "  LINUX_COUNT              Number of Linux VMs (default: 3)"
         echo "  WIN_COUNT                Number of Windows VMs (default: 2)"
+        echo "  DIRQ_REPLICAS_PER_VM     Virtual hosts per Linux VM (default: 1)"
+        echo "                             e.g., =1000 with LINUX_COUNT=50 → 50,000 emulated hosts"
         echo "  AWS_REGION               AWS region (default: us-east-1)"
         echo "  DIRQ_INSTANCE_TYPE       Instance type (default: t3.small)"
         echo "  DIRQ_KEY_NAME            EC2 key pair name (default: dirq-test)"

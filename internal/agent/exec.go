@@ -26,7 +26,7 @@ const maxFileSize = 100 * 1024 * 1024 // 100 MB
 
 // handleExecRequest runs a command on the agent and sends back an ExecResponse.
 func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
-	hostname, _ := os.Hostname()
+	hostname := a.hostname
 
 	a.log.Info("exec request received",
 		slog.String("request_id", req.GetRequestId()),
@@ -248,7 +248,7 @@ func buildCommandWindows(ctx context.Context, cmdStr string, become bool, become
 
 // handlePutFile writes content to a file on the agent.
 func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
-	hostname, _ := os.Hostname()
+	hostname := a.hostname
 
 	a.log.Info("put_file request received",
 		slog.String("request_id", req.GetRequestId()),
@@ -350,7 +350,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 
 // handleFetchFile reads a file from the agent and sends its content back.
 func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
-	hostname, _ := os.Hostname()
+	hostname := a.hostname
 
 	a.log.Info("fetch_file request received",
 		slog.String("request_id", req.GetRequestId()),
@@ -450,7 +450,7 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 // and sends a DeployResponse. Used by the broadcast deploy path — the package
 // binary travels through the mesh once (like a query) instead of once per host.
 func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
-	hostname, _ := os.Hostname()
+	hostname := a.hostname
 
 	a.log.Info("deploy request received",
 		slog.String("request_id", req.GetRequestId()),
