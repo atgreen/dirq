@@ -98,21 +98,22 @@ func (b *registrationBatcher) timerFire() {
 	}
 }
 
-// flushBatch assigns roles to a whole batch.  Single-item batches use
-// the existing per-agent assignment (no diversity gymnastics needed);
-// multi-item batches go through diversity-aware ZL selection.
+// flushBatch assigns roles to a whole batch through the diversity-aware
+// path.  An earlier version had a fast path for single-item batches
+// that bypassed IP diversity — but at registration-jitter rates of
+// ~1–2 arrivals per 200 ms window most batches are size 1, which meant
+// the fast path won the race and stacked 4 ZLs onto whichever VM's
+// VHs happened to arrive first.  No fast path now: every batch runs
+// through assignBatchDiverse, where a size-1 batch from a VM that
+// already has a ZL falls through to relay assignment (correct), and
+// a size-1 batch from a ZL-free VM gets promoted to ZL (correct).
 func (b *registrationBatcher) flushBatch(batch []*pendingReg) {
-	if len(batch) == 1 {
-		p := batch[0]
-		p.resp <- b.s.applyAssignment(p)
-		return
+	if len(batch) > 1 {
+		b.s.log.Info("registration batch flushing",
+			"batch_size", len(batch),
+			"distinct_source_ips", countDistinctIPs(batch),
+		)
 	}
-
-	b.s.log.Info("registration batch flushing",
-		"batch_size", len(batch),
-		"distinct_source_ips", countDistinctIPs(batch),
-	)
-
 	assignments := b.assignBatchDiverse(batch)
 	for i, p := range batch {
 		p.resp <- assignments[i]
@@ -200,25 +201,6 @@ func (b *registrationBatcher) assignBatchDiverse(batch []*pendingReg) []assignme
 	}
 
 	return out
-}
-
-// applyAssignment runs the existing per-agent assignRole + topology
-// commit for one registration.  Used for single-item batches where
-// diversity gymnastics don't apply.
-func (s *Server) applyAssignment(p *pendingReg) assignment {
-	a := s.assignRole(p.agentID)
-	switch a.Role {
-	case pb.AgentRole_AGENT_ROLE_ZONE_LEADER:
-		s.topology.AssignZoneLeader(p.agentID)
-	default:
-		if !s.topology.AssignChild(p.agentID, a.ParentID) {
-			s.log.Warn("topology: chosen parent full at commit, promoting to zone_leader",
-				"agent_id", p.agentID, "intended_parent", a.ParentID)
-			s.topology.AssignZoneLeader(p.agentID)
-			a = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
-		}
-	}
-	return a
 }
 
 // applyRelayAssignment is the relay-only commit path used by the
