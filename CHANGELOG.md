@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.22.2] - 2026-05-22
+
+### Fixed
+
+- **Dispatcher race that under-reported received counts on burst broadcasts.** The query/exec/deploy dispatchers exited their loop on `for Remaining() > 0`, but `ClaimAgent` decremented `Remaining` *before* the result was enqueued and consumed.  Under burst arrivals — many `ClaimAgent` calls firing concurrently while the loop was busy encoding — `Remaining()` could race to zero while real results still sat in the channel.  The loop exited and those late items got GC'd, so the CLI saw fewer encoded results than agents accounted for.  Observed in a 25-VH/VM back-to-back test as exec rounds finishing in 0.46–0.69 s with output like `1006/1248 responded; 242 host(s) did not reply` — the hard timeout was nowhere close to firing.  Fix: a non-blocking drain pass at the end of each dispatcher loop after `Remaining()` reaches zero, encoding anything left in the channel before returning.  Hard-timeout and `ctx.Done()` exits skip the drain (abnormal terminations where late items are genuinely unwanted).
+
 ## [0.22.1] - 2026-05-22
 
 ### Fixed
@@ -667,6 +673,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.22.2]: https://github.com/atgreen/dirq/releases/tag/v0.22.2
 [0.22.1]: https://github.com/atgreen/dirq/releases/tag/v0.22.1
 [0.22.0]: https://github.com/atgreen/dirq/releases/tag/v0.22.0
 [0.21.2]: https://github.com/atgreen/dirq/releases/tag/v0.21.2
