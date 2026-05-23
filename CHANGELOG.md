@@ -5,6 +5,18 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.22.4] - 2026-05-23
+
+### Fixed
+
+- **Agent dial paths fail closed on TLS credential errors.** `grpcDialOpts`, `registrationDialOpts`, and `peerDialOpts` in `internal/agent/agent.go` previously fell through to `insecure.NewCredentials()` whenever TLS was enabled but credential loading errored (bad CA file, expired cert, parser fault).  A misconfigured agent would silently switch to plaintext on the wire — wrong failure mode for "protect the agents."  All three helpers now return `([]grpc.DialOption, error)` and propagate cred-load failures to the six call sites (register, connectUpstream ZL path, connectUpstream relay path, connectToAddr, renewCert, requestNewParent), each of which surfaces the error rather than dialing insecurely.
+- **`RequestPeers` no longer marks healthy relay parents offline.** The pre-fix code used `s.streams[ParentID]` as the parent-liveness check, but that map only holds direct server streams — i.e., zone leaders.  For any relay parent the lookup was unconditionally `false`, and a single leaf calling `RequestPeers` because its relay-parent flapped would mark that relay offline in both `MeshTopology` and the DB, propagating false failure into routing decisions and broadcast accounting.  `RequestPeers` is now scope-limited to finding a new parent; actual parent death continues to be detected by stream-close (zone leaders), `PeerDisconnected` (relays), and the periodic reaper (server-restart / partition cases).
+- **Ghost-online agents during zone-leader failover.** When a ZL's `AgentStream` closed, only the ZL was marked offline, but `reassignOrphans` immediately rewrote each direct child's `parent_id` to a healthy ZL.  The reaper then treated those children as reachable via the new ZL's live stream — but they hadn't actually reattached yet.  New broadcasts targeted these ghosts and timed out as did-not-reply.  Two-part fix: (1) `AgentStream` close defer now marks the **entire subtree** offline so topology reflects the genuine unreachability until reattachment proof arrives; (2) `reassignOrphans` no longer commits speculative `parent_id` rewrites — promote-to-ZL still commits (it's committed truth) but reparent-hint now only delivers a `PeerUpdate` to direct-stream children.  Topology is committed when the child actually reattaches via the new `PeerConnected` upstream message (mirror of `PeerDisconnected`), emitted by the receiving relay's `RelayStream` after the child passes Hello verification.  Closes the prior gap where an agent that successfully reattached via a fallback parent stayed permanently offline in server topology — the primary→fallback→RequestPeers cascade only re-registers when *all* attempts fail.
+
+### Changed
+
+- **Removed dead code left over from the v0.22.0 rebalancer purge.** `Server.assignRole` (legacy per-agent role assignment, replaced by the IP-diverse batcher in v0.22.1) and `Server.sendToAgent` (helper for the removed proactive dispatch paths) had no callers and were tripping the unused-symbol lint on CI.  Both deleted; `assignment` struct remains in use by `registration_batcher.go`.
+
 ## [0.22.3] - 2026-05-22
 
 ### Changed
@@ -679,6 +691,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.22.4]: https://github.com/atgreen/dirq/releases/tag/v0.22.4
 [0.22.3]: https://github.com/atgreen/dirq/releases/tag/v0.22.3
 [0.22.2]: https://github.com/atgreen/dirq/releases/tag/v0.22.2
 [0.22.1]: https://github.com/atgreen/dirq/releases/tag/v0.22.1
