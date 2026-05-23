@@ -122,6 +122,19 @@ In-flight gRPC streams to the dead pod do **not** migrate. They break,
 the agent reconnects (with bounded exponential backoff), and the new
 leader accepts the fresh stream.
 
+### Topology state across failover
+
+The server holds the live mesh shape in memory (`MeshTopology` — see the
+in-memory topology change in 0.20.2) rather than reading it back from
+the DB on every assignment. On standby promotion, the new leader
+**rehydrates** that view from the DB's best-effort snapshot of
+`agents.role` / `agents.parent_id` (written every 30 s by the previous
+leader). Reconnecting agents then refresh it: registrations, `RequestPeers`,
+and stream open/close lifecycle events all write through to the in-memory
+maps. In practice this means the new leader has an accurate-enough tree
+during the few seconds before agents reconnect, and a live tree shortly
+after — without the full O(N²) DB walk the topology used to do under load.
+
 ## OpenShift deployment
 
 The OpenShift manifests below are illustrative — a Helm chart is the

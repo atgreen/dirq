@@ -54,6 +54,8 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 - [Execution Transport](#execution-transport) — run Ansible through the mesh
 - [Fleet Exec](#fleet-exec) — ad-hoc parallel command, script, and grep execution
 - [Topology Graph](#topology-graph) — visualize the agent mesh tree
+- [Fleet-Scale Emulation](#fleet-scale-emulation) — one agent process hosting N virtual hosts
+- [Debug & Diagnostics](#debug--diagnostics) — `dirq debug` subcommands for in-flight sessions and mesh reachability
 - [Security](#security) — TLS, authentication, exec safety
 - [High Availability](HA.md) — multi-pod deployment on OpenShift/Kubernetes
 - [Multi-Datacenter Deployment](#multi-datacenter-deployment) — isolated meshes, per-DC routing
@@ -120,6 +122,16 @@ The server holds a fixed number of zone leader connections (default 5). All othe
 | 625,000 | 4 | 5 |
 
 The server always holds exactly `DIRQ_MAX_ZONE_LEADERS` connections regardless of fleet size. The tree deepens — it never widens at the server.
+
+The live mesh shape is held **in memory** by the server (`MeshTopology`, RWMutex-protected maps for nodes, ZLs, parent/child links, depth cache). Registration, fan-out, and dispatch all read this directly — no DB round-trips on hot paths. `agents.role` and `agents.parent_id` are best-effort snapshots persisted every 30 s for operator visibility and rehydrated on restart. The CLI overlays the in-memory view onto DB records before serializing, so `dirq hosts list` always reflects live truth.
+
+Registration arrivals flow through a **burst-aware batcher** (default 200 ms window, 200 max batch). On flush, the assigner prefers one zone leader per distinct source IP — so a thundering herd from a single subnet can't fill all ZL slots from one host. There is no proactive rebalancer; reactive recovery (`reassignOrphans` on stream close, fallback parents + orphan promotion via `RequestPeers`) handles every churn case the old proactive paths used to.
+
+### Honest completion reporting
+
+Broadcast dispatchers (query, exec, deploy) use **per-target accounting** instead of an idle timeout. A session's loop runs until every target is accounted — either by a real response or a synthetic disconnect failure synthesized from one of four mesh-state signals (zone-leader stream close, `PeerDisconnected` from a relay, the periodic reaper, or a fanout-buffer-full at dispatch time). All four paths funnel through one first-terminal-wins gate (`ClaimAgent`) so no agent is counted twice.
+
+The hard timeout is `command_timeout + 30 s` and is a true safety net — rarely the actual completion driver. Practical consequence: `dirq exec --timeout 3600 -- yum upgrade -y` doesn't get cut off at 30 s of silence between fast and slow responders. When a dispatcher can't account for everyone, the CLI prints `Status: incomplete | Targets: N | Received: M | Missing: K` instead of claiming completion.
 
 ### Result Aggregation
 
@@ -539,7 +551,7 @@ Severity: Important
 Visualize the agent mesh tree:
 
 ```bash
-dirq graph
+dirq hosts graph
 ```
 
 ```
@@ -555,10 +567,10 @@ dirq-server
 
 `●` = online, `○` = offline, `[ZL]` = zone leader.
 
-Export to Graphviz DOT format for rendering:
+Export to Graphviz DOT format for rendering (left-to-right layout fits large fleet trees on screen):
 
 ```bash
-dirq graph --dot | dot -Tpng -o topology.png
+dirq hosts graph --dot | dot -Tpng -o topology.png
 ```
 
 ### Deployment health
@@ -573,10 +585,10 @@ dirq doctor
   DIRQ_SERVER_URL               ok   https://dirq.example.com:8080
   API token valid                ok   authenticated
   TLS certificate                ok   valid
-  PostgreSQL                     ok   connected
-  Agents online                  ok   47/50
-  Agent version skew             !!   3 agents on v0.2.0 (server is v0.3.0)
-  Relay tree                     ok   depth 3, 5 zone leader(s)
+  Database                       ok   postgres connected
+  Agents online                  ok   1247/1250
+  Agent version skew             !!   3 agents on v0.21.x (server is v0.22.3)
+  Relay tree                     ok   depth 4, 5 zone leader(s)
   Ansible installed              ok   ansible-playbook [core 2.20.5]
   Connection plugin              ok   /usr/local/ansible/connection_plugins
 
@@ -597,6 +609,48 @@ Other commands are **not** flattened. For `dirq exec`, the remote command goes a
 ```bash
 dirq exec WHERE tag.env = 'prod' -- ls -l   # everything after -- is the remote command
 ```
+
+---
+
+## Fleet-Scale Emulation
+
+For testing mesh behavior at fleet scale without provisioning one VM per host, a single `dirq-agent` process can host **N virtual hosts** in-process. Each VH presents itself to the server as an independent agent with its own ID, session token, mTLS client cert, upstream gRPC connection, and downstream relay listen port.
+
+```bash
+DIRQ_VIRTUAL_HOSTS=25 \
+DIRQ_HOSTNAME_PREFIX=dirq-test-linux-1 \
+DIRQ_REGISTRATION_JITTER_SECONDS=30 \
+./bin/dirq-agent
+```
+
+Synthesized hostnames are `<prefix>-NNNNN`. Per-instance mTLS material lives under `$DATA_DIR/tls/instances/<hostname>/` so siblings can't clobber each other. The relay listener binds synchronously in `Run()` before registration, so port collisions surface as a startup error instead of silently failing later.
+
+The AWS test fleet (`make aws`) exposes this via `DIRQ_REPLICAS_PER_VM`:
+
+```bash
+LINUX_COUNT=50 DIRQ_REPLICAS_PER_VM=1000 make aws    # 50,000 emulated hosts on 50 VMs
+```
+
+The userdata script auto-widens the SG relay port range to `50052..50051+N`, reserves the ephemeral-port block via `net.ipv4.ip_local_reserved_ports` so concurrent `dnf install` doesn't collide with VH listen sockets, and picks a sensible registration-jitter default (N/4 s, clamped to 5–60 s) when running with >1 VH.
+
+Multi-VH is **Linux-only** (Windows VMs stay single-tenant).
+
+**Per-VM density caveat:** every emulated VH runs its own gRPC stream + state, but they all share the host kernel, CPU, and memory. Running heavy workloads (a real `dnf install`, large package syncs) at 25 VHs/VM on a t3.small saturates the CPU enough that gRPC heartbeats time out and dirq honestly reports VHs as `peer disconnected`. That's a property of the emulation density, not the mesh — production deployments with 1 agent per real host don't have it. For heavy-workload emulation, prefer CPU-rich instance types (`c6i.large`+) or drop density to ~10 VHs/VM.
+
+---
+
+## Debug & Diagnostics
+
+`dirq debug` covers diagnostic tools used when something looks wrong in the mesh. All endpoints are admin-scoped.
+
+| Command | Purpose |
+|---|---|
+| `dirq debug inflight` | List every exec / query / deploy session the server is currently coordinating, with the still-missing agent set, arrivals-in-the-last-1/5/30 s, and a per-zone-leader breakdown (`subtree`, `pending`, `send_buf`). Marks the chokepoint ZL with `← bottleneck (send_buf full)` when its stream-send buffer is at capacity. |
+| `dirq debug path <hostname>` | Walk the agent's mesh parent chain from the DB snapshot. Flags broken links. Fastest, DB-only. |
+| `dirq debug stream <hostname>` | Show the server's in-memory view of how it would currently reach this agent (directly connected vs. routed through a zone leader). |
+| `dirq debug ping <hostname>` | Send a no-op exec through the mesh and report round-trip timing. Slowest of the three lookup tools but the only one that proves a message actually reaches the agent right now. |
+
+The three lookup tools form a hierarchy of trust — `path` (DB), then `stream` (live process state), then `ping` (end-to-end proof).
 
 ---
 
@@ -741,8 +795,10 @@ DIRQ_EXEC_ENABLED=true ./bin/dirq-agent
 
 Default exec timeout is 300 seconds (5 minutes), configurable via `dirq_exec_timeout`
 in the connection plugin. Long-running tasks like `yum update` work without special
-handling. Exec responses are forwarded immediately through the relay chain — they
-are not batched by the result aggregator.
+handling — the broadcast dispatcher has no idle timeout, so `--timeout 3600` against
+a slow fleet behaves as written rather than getting cut off after the first burst of
+fast responders. Exec responses are forwarded immediately through the relay chain —
+they are not batched by the result aggregator.
 
 ### Exec Audit Log
 
@@ -1167,6 +1223,10 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 | `max_children` | `DIRQ_MAX_CHILDREN` | `50` | Max children per node (fan-out) |
 | `auth_disabled` | `DIRQ_AUTH_DISABLED` | `false` | Disable API auth (not recommended) |
 | `registration_secret` | `DIRQ_REGISTRATION_SECRET` | | Pre-shared secret for agent registration (see [Security](#registration-authentication)) |
+| `leader_election` | `DIRQ_LEADER_ELECTION` | `false` | Enable Postgres advisory-lock leader election for multi-pod HA (see [HA.md](HA.md)) |
+| `fact_flush_interval` | `DIRQ_FACT_FLUSH_INTERVAL` | `250ms` | Fact-cache batch flush interval |
+| `fact_flush_size` | `DIRQ_FACT_FLUSH_SIZE` | `5000` | Distinct (agent_id, module) keys per flush |
+| `fact_stage_cap` | `DIRQ_FACT_STAGE_CAP` | `20000` | Hard cap on staged distinct keys (drops only new keys on saturation) |
 
 #### Agent
 
@@ -1177,6 +1237,10 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 | `exec_enabled` | `DIRQ_EXEC_ENABLED` | `false` | Enable remote execution |
 | `registration_secret` | `DIRQ_REGISTRATION_SECRET` | | Must match server's registration secret |
 | `tags:` block | `DIRQ_TAGS` | | Tags: `env=prod,dc=us-east` |
+| `hostname` | `DIRQ_HOSTNAME` | (autodetected) | Override the hostname the agent reports |
+| `virtual_hosts` | `DIRQ_VIRTUAL_HOSTS` | `0` | Spawn N in-process virtual hosts for fleet emulation (Linux only) |
+| `hostname_prefix` | `DIRQ_HOSTNAME_PREFIX` | | Prefix for synthesized virtual-host names (`<prefix>-NNNNN`) |
+| `registration_jitter_seconds` | `DIRQ_REGISTRATION_JITTER_SECONDS` | (auto for multi-VH) | Cap on random startup delay before first `Register`; smooths thundering-herd boot |
 
 Tags can be set in the config file as an indented block under `tags:`, or via the `DIRQ_TAGS` environment variable as comma-separated `key=value` pairs. Both sources are merged, with environment variables taking precedence for duplicate keys.
 
@@ -1271,7 +1335,10 @@ For `dirq ask`, if `DIRQ_LLM_*` is not configured, falls back to `ANTHROPIC_API_
 | `POST` | `/api/v1/put_file` | Write file |
 | `POST` | `/api/v1/fetch_file` | Read file |
 | `GET` | `/api/v1/exec_log` | Exec audit log |
-| `GET` | `/healthz` | Health check |
+| `GET` | `/api/v1/debug/inflight` | In-flight broadcast sessions with per-ZL breakdown (admin) |
+| `GET` | `/api/v1/status` | Fleet status (agent counts, ZLs, tree depth, database kind) |
+| `GET` | `/healthz` | Liveness — process is up |
+| `GET` | `/readyz` | Readiness — this pod is the active leader (200) or a standby (503); always 200 when leader election is disabled |
 
 ---
 

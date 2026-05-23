@@ -226,15 +226,23 @@ layers of protection:
 
 ## Rate Limiting
 
-The HTTP API uses per-token token-bucket rate limiting on broadcast
-endpoints (query, exec, exec_multi):
+The HTTP API uses per-token token-bucket rate limiting. Broadcast and
+single-host exec have separate buckets so that an Ansible run with
+`--forks N` against many hosts can't be starved by a slow trickle of
+broadcast queries:
 
-- **Rate:** 10 requests/second
-- **Burst:** 20 tokens
-- **Key:** API token (or remote IP if auth is disabled)
+| Endpoint family | Rate | Burst |
+|---|---|---|
+| Broadcast (`/api/v1/query`, `/api/v1/exec_multi`, `/api/v1/deploy`) | 10 req/s | 20 |
+| Single-host (`/api/v1/exec`, `/api/v1/put_file`, `/api/v1/fetch_file`) | 100 req/s | 500 |
 
-Exceeding the limit returns HTTP 429. Each API token has an independent
-bucket, so one client's traffic does not affect another's.
+**Key:** API token (or remote IP if auth is disabled). Each API token has
+an independent bucket per family, so one client's traffic does not affect
+another's. Exceeding the limit returns HTTP 429.
+
+Both the standalone Ansible connection plugin and the collection's shared
+client retry HTTP 429 with exponential backoff + jitter so transient
+rate-limit bursts don't fail a playbook task.
 
 ## LLM Security (`dirq ask`)
 
