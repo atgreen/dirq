@@ -817,6 +817,29 @@ func (a *Agent) notifyPeerDisconnected(peerID string) {
 	}
 }
 
+// notifyPeerConnected sends a PeerConnected message upstream so the
+// server can mark the agent back online and commit its new parent
+// assignment after a reattachment.  Without this signal, an agent that
+// reattaches via a fallback parent would stay erroneously offline in
+// server topology — there is no other upstream notification of the new
+// attachment outside of full re-registration.
+func (a *Agent) notifyPeerConnected(peerID string) {
+	if a.upstreamStream == nil {
+		return
+	}
+	err := a.upstreamStream.Send(&pb.AgentMessage{
+		Payload: &pb.AgentMessage_PeerConnected{
+			PeerConnected: &pb.PeerConnected{
+				AgentId:  peerID,
+				ParentId: a.agentID,
+			},
+		},
+	})
+	if err != nil {
+		a.log.Error("failed to send peer connected", "peer_id", peerID, "error", err)
+	}
+}
+
 func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) {
 	if err := a.verifyServerMessage(msg); err != nil {
 		a.log.Error("rejected unsigned or invalid server message", "error", err)
@@ -1154,6 +1177,12 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 	}
 
 	a.log.Info("downstream peer connected", "peer_id", peerID)
+
+	// Notify upstream so the server commits the new attachment and
+	// flips the peer back to online if it was in a detached state
+	// (e.g. left over from a ZL failover that marked the subtree
+	// offline pending proof of reattachment).
+	a.notifyPeerConnected(peerID)
 
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()

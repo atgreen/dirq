@@ -35,12 +35,34 @@ import (
 //     RequestPeers — which always either finds a parent or promotes
 //     the agent.
 
-// reassignOrphans moves all children of a dead parent to healthy
-// nodes.  Called from AgentStream's close defer when a zone leader
-// (or any node with a direct server stream) drops.  The direct
-// children are the only ones whose upstream is now broken — deeper
-// descendants stay connected to their depth-1 parent, which itself is
-// reassigning upstream.
+// reassignOrphans hints direct children of a dead parent toward a new
+// home.  Called from AgentStream's close defer when a node with a
+// direct server stream (typically a zone leader) drops.
+//
+// Two kinds of action, distinguished by what counts as "committed truth"
+// in the topology:
+//
+//   - Promote-to-ZL: when the tree has no room, the orphan IS now a
+//     zone leader; this is committed via AssignZoneLeader.  A PeerUpdate
+//     is best-effort dispatched to the agent so it knows to reconnect
+//     directly to the server.  (Agent might also discover the same via
+//     RequestPeers' tree-saturated path.)
+//
+//   - Reparent-hint: when a relay slot exists, the orphan is told via
+//     PeerUpdate to reconnect to that relay.  No topology rewrite —
+//     the relay's RelayStream emits PeerConnected upstream when the
+//     child actually attaches, which is what commits the new parent_id
+//     and flips the agent online.  Speculatively writing AssignChild
+//     here was the source of the "ghost online" failure mode: the
+//     reaper then treated reassigned-but-not-yet-attached children as
+//     reachable via the new ZL, and new broadcasts targeted them and
+//     timed out.
+//
+// The PeerUpdate is best-effort either way: it can only be delivered
+// to children with a live direct server stream.  Most depth-1 relay
+// children don't have one, and they re-home via their own connectLoop
+// (primary → fallback → RequestPeers) regardless of whether the hint
+// arrived.
 func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 	children := s.topology.ChildrenOf(deadParentID)
 	if len(children) == 0 {
@@ -52,8 +74,6 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 		if !ok || parentID == child.ID {
 			// Tree has no room to absorb this orphan — promote it to zone
 			// leader rather than leaving it dangling with no parent.
-			// The PeerUpdate is best-effort (delivered only if the orphan
-			// still has a live stream).
 			s.log.Info("reassignOrphans: no parent available, promoting orphan to zone_leader",
 				"child", child.Hostname)
 			s.topology.AssignZoneLeader(child.ID)
@@ -81,12 +101,10 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 		}
 
 		parentNode, _ := s.topology.Get(parentID)
-		s.topology.AssignChild(child.ID, parentID)
-		s.log.Info("reassignOrphans: moved child to new parent",
-			"child", child.Hostname, "new_parent", parentNode.Hostname)
+		s.log.Info("reassignOrphans: hinting child toward new parent",
+			"child", child.Hostname, "candidate_parent", parentNode.Hostname)
 
-		// If the child is connected directly to the server, tell it
-		// to reconnect to its new parent.
+		// Hint only — topology is updated when PeerConnected arrives.
 		var fallbacks []string
 		for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
 			fallbacks = append(fallbacks, fb.ListenAddr)

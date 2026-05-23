@@ -277,20 +277,23 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			return
 		}
 
-		// Snapshot the subtree under this agent BEFORE marking it
-		// offline; the agent's children (if any) lose their route to
-		// the server too because we forwarded broadcasts through this
-		// AgentStream.  Any in-flight broadcast that was waiting on
-		// the agent or its subtree needs synthetic failures so it can
-		// converge instead of waiting for the hard timeout.
-		subtree := s.topology.SubtreeIDs(agentID)
-
-		s.topology.MarkOffline(agentID)
-		if err := s.db.SetAgentOffline(context.Background(), agentID); err != nil {
-			s.log.Error("failed to mark agent offline", "agent_id", agentID, "error", err)
+		// Mark the entire subtree offline atomically.  The agent's
+		// children (if any) lose their route to the server too because
+		// we forwarded broadcasts through this AgentStream, and they
+		// can't actually answer until they've reattached to a new
+		// parent — which is signaled separately by PeerConnected.
+		// Marking only the ZL offline (the pre-fix behavior) left the
+		// children as "ghost online" in topology: reachable via the
+		// new ZL according to FindZoneLeader, but not actually
+		// connected through it yet, so new broadcasts targeted them
+		// and timed out.
+		subtree := s.topology.MarkSubtreeOffline(agentID)
+		if count, err := s.db.MarkAgentTreeOffline(context.Background(), agentID); err != nil {
+			s.log.Error("failed to mark agent tree offline", "agent_id", agentID, "error", err)
+		} else {
+			s.log.Info("agent stream closed, marked subtree offline",
+				"agent_id", agentID, "subtree_size", len(subtree), "db_count", count)
 		}
-		s.log.Info("agent stream closed, marked offline",
-			"agent_id", agentID, "subtree_size", len(subtree))
 
 		// Notify in-flight broadcast dispatchers so they stop waiting.
 		if len(subtree) > 0 {
@@ -299,8 +302,10 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			s.notifySessionsAgentGone("stream closed", agentID)
 		}
 
-		// If this was a zone leader, reassign its orphaned children to
-		// healthy parents so they don't stay stuck under a dead node.
+		// Hint direct-stream children where to reconnect.  The
+		// topology rewrite is deferred to PeerConnected when the
+		// children actually reattach — see reassignOrphans for the
+		// rationale.
 		go s.reassignOrphans(context.Background(), agentID)
 	}()
 
@@ -339,6 +344,24 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 		case *pb.AgentMessage_Heartbeat:
 			// Legacy heartbeat — ignored. Liveness is now tracked via
 			// stream presence and PeerDisconnected notifications.
+		case *pb.AgentMessage_PeerConnected:
+			// A relay accepted a new child via RelayStream. This is
+			// the proof-of-attachment we need to commit the new
+			// parent_id and flip the agent back to online — the only
+			// case where the server learns about a fallback-parent
+			// reattachment without the agent itself re-registering.
+			pc := p.PeerConnected
+			if pc.AgentId == "" || pc.ParentId == "" {
+				break
+			}
+			s.topology.AssignChild(pc.AgentId, pc.ParentId)
+			s.topology.MarkOnline(pc.AgentId)
+			if err := s.db.UpdateAgentHeartbeat(ctx, pc.AgentId); err != nil {
+				s.log.Error("PeerConnected: heartbeat update failed",
+					"agent_id", pc.AgentId, "error", err)
+			}
+			s.log.Info("peer reattached",
+				"agent_id", pc.AgentId, "new_parent", pc.ParentId)
 		case *pb.AgentMessage_PeerDisconnected:
 			// A relay agent detected a child disconnected. Mark the
 			// agent and its entire subtree offline.

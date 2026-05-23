@@ -145,6 +145,7 @@ message AgentMessage {
     AggregatedQueryResult aggregated_result = 7; // batched results from subtree
     PeerDisconnected peer_disconnected = 8;      // child peer lost — propagate up
     DeployResponse deploy_response = 9;          // broadcast deploy result
+    PeerConnected peer_connected = 10;           // child peer attached — propagate up
   }
 }
 
@@ -153,6 +154,17 @@ message AgentMessage {
 // offline immediately, instead of waiting for heartbeat expiry.
 message PeerDisconnected {
   string agent_id = 1; // the agent that disconnected
+}
+
+// PeerConnected is sent upstream when a relay accepts a new child via
+// RelayStream.  The server uses this to mark the agent back online and
+// commit its new parent assignment after a reattachment.  Without this
+// signal, an agent that succeeds via a fallback parent stays
+// erroneously offline in server topology because there is no other
+// upstream-bound notification of the new attachment.
+message PeerConnected {
+  string agent_id = 1;  // the agent that attached
+  string parent_id = 2; // the relay it attached to (the sender)
 }
 
 message ServerMessage {
