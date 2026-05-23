@@ -21,10 +21,6 @@ import (
 //     Deeper descendants don't lose their streams (their immediate
 //     parent is still alive, just reconnecting upstream).
 //
-//   - sendToAgent: shared dispatch helper used by exec, file ops, and
-//     PeerUpdate emissions.  Tries the agent's direct stream first,
-//     falls back to routing through its zone leader.
-//
 // Slot maintenance over time happens through three signal paths that
 // run without a ticker:
 //
@@ -38,40 +34,6 @@ import (
 //     trying its primary parent, then fallback addresses, then
 //     RequestPeers — which always either finds a parent or promotes
 //     the agent.
-
-// sendToAgent sends a message to an agent — tries direct stream first,
-// then routes through the agent's zone leader.
-func (s *Server) sendToAgent(_ context.Context, agentID string, msg *pb.ServerMessage) bool {
-	s.mu.RLock()
-	if as, ok := s.streams[agentID]; ok {
-		s.mu.RUnlock()
-		select {
-		case as.send <- msg:
-			return true
-		default:
-			return false
-		}
-	}
-	s.mu.RUnlock()
-
-	// Route through zone leader.
-	zlID, ok := s.topology.FindZoneLeader(agentID)
-	if !ok {
-		return false
-	}
-	s.mu.RLock()
-	as, ok := s.streams[zlID]
-	s.mu.RUnlock()
-	if !ok {
-		return false
-	}
-	select {
-	case as.send <- msg:
-		return true
-	default:
-		return false
-	}
-}
 
 // reassignOrphans moves all children of a dead parent to healthy
 // nodes.  Called from AgentStream's close defer when a zone leader
