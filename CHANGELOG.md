@@ -5,6 +5,17 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.23.0] - 2026-05-23
+
+### Added
+
+- **Prometheus `/metrics` endpoint.** Exposes Go runtime metrics plus a curated set of dirq-specific metrics covering server self-health (broadcasts, registrations, peer churn, fact-cache pipeline, TLS cert expiry, in-flight session counts and pending targets) and **fleet composition** (`dirq_fleet_count` keyed by `os, distro, distro_version, arch, cores_bucket, memory_gb_bucket, exec_enabled, online`).  Endpoint is unauthenticated by convention — restrict at the network layer.
+- **Fleet aggregator goroutine** (30 s refresh) walks `agents` + `os_info`/`cpu`/`memory` facts and rebuilds the `dirq_fleet_count` series.  Bucketed labels (e.g. `cores_bucket="9-16"`, `memory_gb_bucket="17-32"`, major-version-only for distros) keep the realistic series count at 50-500 even on a 50k-node fleet.
+- **Per-zone-leader subtree-size gauge** (`dirq_subtree_size{zone_leader=...}`) — surfaces fan-out imbalance without grepping `dirq debug inflight`.
+- **`dirq_server_cert_expiry_seconds`** updates every 60 s from the in-memory cert reloader — feeds the typical "alert if < 7d" rule.
+- **README "Observability" section** with PromQL snippets, scrape-config example, and the Postgres data-source SQL pattern for Grafana ad-hoc panels (slices the Prometheus labels can't cover: per-host kernel, package presence, exact disk pct).
+- **`make aws` now ships a working Grafana dashboard** alongside the test fleet.  Prometheus + Grafana run via podman on the dirq-server VM (no extra instances), pre-provisioned with a Prometheus datasource scraping `https://localhost:8080/metrics` and a single dashboard (`dirq-overview`) covering five panel groups: fleet overview (online/total/ZLs/cert-days), fleet composition (distro+version pie, cores bucket, memory bucket), broadcast health (rate, did-not-reply rate, p95 duration, in-flight sessions), mesh shape (subtree size per ZL, peer connect/disconnect rate), and server internals (fact-stage depth, fact-flush p95 by backend, goroutines, GC pause).  Exposed on port 3000; `admin` / `dirq` for edit, anonymous viewer access enabled for read-only links.  Provisioning files live under `demo/grafana/`.
+
 ## [0.22.4] - 2026-05-23
 
 ### Fixed
@@ -691,6 +702,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.23.0]: https://github.com/atgreen/dirq/releases/tag/v0.23.0
 [0.22.4]: https://github.com/atgreen/dirq/releases/tag/v0.22.4
 [0.22.3]: https://github.com/atgreen/dirq/releases/tag/v0.22.3
 [0.22.2]: https://github.com/atgreen/dirq/releases/tag/v0.22.2
