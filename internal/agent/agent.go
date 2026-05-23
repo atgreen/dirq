@@ -88,6 +88,13 @@ type Agent struct {
 	// RenewCert shortly after the upstream stream is established.
 	needsCertRenewal bool
 
+	// initialFactsPublished is true once we've pushed the static fact set
+	// (os_info / cpu / memory) upstream after the first successful attach.
+	// Those facts never change at runtime, so re-publishing on every
+	// reconnect is wasted bandwidth — the data is already in agent_facts
+	// on the server.
+	initialFactsPublished bool
+
 	// tlsConfig is this agent's view of the TLS configuration.  Each agent in
 	// a multi-tenant process holds its own copy so persistMTLSCert can repoint
 	// CertFile/KeyFile without trampling its siblings.
@@ -369,6 +376,15 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 			if err := a.renewCert(ctx); err != nil {
 				a.log.Warn("cert renewal failed, will retry later", "error", err)
 			}
+		}
+
+		// Push static-fact set once per agent lifetime so the server's
+		// fleet-composition metrics have data without waiting for a
+		// user query.  os_info / cpu / memory don't change at runtime;
+		// disk / packages / services / hotfixes still come on demand.
+		if !a.initialFactsPublished {
+			a.publishInitialFacts()
+			a.initialFactsPublished = true
 		}
 
 		// Run the main loop until the stream breaks.
@@ -1089,6 +1105,29 @@ func (a *Agent) sendQueryResult(queryID, hostname string, success bool, errMsg s
 	if err := a.upstreamStream.Send(msg); err != nil {
 		a.log.Error("failed to send query result", "error", err)
 	}
+}
+
+// publishInitialFacts collects os_info, cpu, and memory locally and pushes
+// them upstream as a single QueryResult so the server's fact cache (and
+// the fleet-composition metrics that read it) have data without waiting
+// for a user-initiated query.  Called once per agent lifetime, right
+// after the first upstream connect succeeds.  The synthetic QueryId is
+// not registered as a session anywhere; handleQueryResult ignores the
+// missing-session case and stages the facts regardless — see grpc.go.
+func (a *Agent) publishInitialFacts() {
+	collected := modules.CollectModules([]string{"os_info", "cpu", "memory"}, nil)
+	// Match executeQuery's hostname overlay so multi-VH agents report
+	// their synthesized identity rather than the shared host.
+	collected["hostname"] = a.hostname
+	if osInfo, ok := collected["os_info"].(map[string]any); ok {
+		osInfo["hostname"] = a.hostname
+	}
+	data, err := structpb.NewStruct(collected)
+	if err != nil {
+		a.log.Warn("publishInitialFacts: struct build failed", "error", err)
+		return
+	}
+	a.sendQueryResult("register-initial-"+a.agentID, a.hostname, true, "", data)
 }
 
 // relayToDownstreams sends any ServerMessage to all connected downstream peers.
