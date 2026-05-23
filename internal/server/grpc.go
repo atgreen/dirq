@@ -24,12 +24,16 @@ import (
 // Register handles agent registration. The agent connects once at bootstrap,
 // gets assigned an ID, role, and peer list, then disconnects.
 func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+	regStart := time.Now()
+	defer func() { metricRegisterDuration.Observe(time.Since(regStart).Seconds()) }()
+
 	s.log.Info("agent registering", "hostname", req.Hostname, "os", req.Os)
 
 	// Validate registration secret if configured.
 	if s.cfg.RegistrationSecret != "" {
 		if req.RegistrationSecret != s.cfg.RegistrationSecret {
 			s.log.Warn("registration rejected: invalid registration secret", "hostname", req.Hostname)
+			metricRegisterTotal.WithLabelValues("rejected_secret").Inc()
 			return nil, fmt.Errorf("invalid registration secret")
 		}
 	}
@@ -73,8 +77,10 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		ExecEnabled:  req.ExecEnabled,
 	})
 	if err != nil {
+		metricRegisterTotal.WithLabelValues("rejected_other").Inc()
 		return nil, fmt.Errorf("register agent: %w", err)
 	}
+	metricRegisterTotal.WithLabelValues("ok").Inc()
 
 	// Register the agent's identity with the in-memory topology so role
 	// assignment can pick a parent for it.
@@ -360,6 +366,7 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 				s.log.Error("PeerConnected: heartbeat update failed",
 					"agent_id", pc.AgentId, "error", err)
 			}
+			metricPeerConnectTotal.Inc()
 			s.log.Info("peer reattached",
 				"agent_id", pc.AgentId, "new_parent", pc.ParentId)
 		case *pb.AgentMessage_PeerDisconnected:
@@ -369,6 +376,7 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			if deadID == "" {
 				break
 			}
+			metricPeerDisconnectTotal.Inc()
 			// Snapshot the lost subtree from the in-memory topology
 			// BEFORE marking it offline.  PeerDisconnected propagates
 			// up the mesh when a relay loses one of its children — the
@@ -527,6 +535,25 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 	querySessions[qr.QueryId] = qs
 	querySessionsMu.Unlock()
 
+	// Outcome classification: set by exit path, read by the single defer.
+	// Defaults to "complete" because the clean drain at the end is the
+	// dominant exit and the hard_timeout / canceled cases override it.
+	outcomeLabel := "complete"
+	metricInflightSessions.WithLabelValues("query").Inc()
+	defer func() {
+		metricInflightSessions.WithLabelValues("query").Dec()
+		dur := time.Since(qs.startedAt).Seconds()
+		missing := len(targetIDs) - qs.AccountedCount()
+		if outcomeLabel == "complete" && missing > 0 {
+			outcomeLabel = "incomplete"
+		}
+		metricBroadcastTotal.WithLabelValues("query", outcomeLabel).Inc()
+		metricBroadcastDuration.WithLabelValues("query").Observe(dur)
+		if missing > 0 {
+			metricBroadcastMissingTotal.WithLabelValues("query").Add(float64(missing))
+		}
+	}()
+
 	defer func() {
 		querySessionsMu.Lock()
 		delete(querySessions, qr.QueryId)
@@ -608,10 +635,12 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 			outcome.Results = results
 			outcome.Responded = qs.AccountedCount()
 			outcome.HardTimedOut = true
+			outcomeLabel = "hard_timeout"
 			return outcome, nil
 		case <-ctx.Done():
 			outcome.Results = results
 			outcome.Responded = qs.AccountedCount()
+			outcomeLabel = "canceled"
 			return outcome, ctx.Err()
 		}
 	}
@@ -808,6 +837,9 @@ func (s *Server) flushFactStage(ctx context.Context) {
 	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	backend := s.db.Kind()
+	flushStart := time.Now()
+	flushOK := true
 	for start := 0; start < len(rows); start += factWriteChunk {
 		end := start + factWriteChunk
 		if end > len(rows) {
@@ -815,7 +847,14 @@ func (s *Server) flushFactStage(ctx context.Context) {
 		}
 		if err := s.db.BulkUpsertFacts(writeCtx, rows[start:end]); err != nil {
 			s.log.Error("bulk fact upsert failed", "error", err, "rows", end-start)
+			flushOK = false
 		}
 	}
+	if flushOK {
+		metricFactFlushTotal.WithLabelValues(backend, "ok").Inc()
+	} else {
+		metricFactFlushTotal.WithLabelValues(backend, "error").Inc()
+	}
+	metricFactFlushDuration.WithLabelValues(backend).Observe(time.Since(flushStart).Seconds())
 }
 

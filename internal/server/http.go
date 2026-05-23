@@ -15,6 +15,7 @@ import (
 	"github.com/atgreen/dirq/internal/db"
 	"github.com/atgreen/dirq/internal/query"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type contextKey string
@@ -83,6 +84,11 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+
+	// Prometheus scrape endpoint (no auth — typical convention for
+	// metrics; restrict at the network layer if needed).  Includes Go
+	// runtime metrics and dirq-specific metrics defined in metrics.go.
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	return mux
 }

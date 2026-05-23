@@ -674,3 +674,73 @@ func TestSanitizeGroupName(t *testing.T) {
 		}
 	}
 }
+
+func TestMetricsEndpoint(t *testing.T) {
+	s := newTestServer(&mockDB{}, true)
+	mux := s.setupHTTPRoutes()
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	// Spot-check that prometheus default Go runtime metrics are exposed.
+	if !strings.Contains(body, "go_goroutines") {
+		t.Errorf("expected go_goroutines in /metrics output")
+	}
+	// Spot-check that at least one dirq_ metric appears (definitions are
+	// registered at package init via promauto, so they're present even
+	// before any code runs).
+	if !strings.Contains(body, "dirq_broadcast_total") &&
+		!strings.Contains(body, "dirq_agents_total") &&
+		!strings.Contains(body, "dirq_register_total") {
+		t.Errorf("no dirq_* metrics found in /metrics output")
+	}
+}
+
+func TestBucketingHelpers(t *testing.T) {
+	t.Run("coresBucket", func(t *testing.T) {
+		cases := map[int64]string{
+			0: "unknown", 1: "1", 2: "2", 3: "3-4", 4: "3-4",
+			5: "5-8", 8: "5-8", 9: "9-16", 16: "9-16",
+			17: "17-32", 32: "17-32", 33: "33-64", 64: "33-64",
+			65: "65+", 128: "65+",
+		}
+		for in, want := range cases {
+			if got := coresBucket(in); got != want {
+				t.Errorf("coresBucket(%d) = %q, want %q", in, got, want)
+			}
+		}
+	})
+	t.Run("memoryGBBucket", func(t *testing.T) {
+		gb := func(n int64) int64 { return n * 1024 * 1024 * 1024 }
+		cases := map[int64]string{
+			0: "unknown", gb(1): "<2", gb(2): "2-4", gb(4): "2-4",
+			gb(8): "5-8", gb(16): "9-16", gb(32): "17-32",
+			gb(64): "33-64", gb(128): "65-128", gb(256): "129+",
+		}
+		for in, want := range cases {
+			if got := memoryGBBucket(in); got != want {
+				t.Errorf("memoryGBBucket(%d) = %q, want %q", in, got, want)
+			}
+		}
+	})
+	t.Run("majorVersion", func(t *testing.T) {
+		cases := []struct{ fact, fallback, want string }{
+			{"8.10", "", "8"},
+			{"9.4.1", "", "9"},
+			{"", "7", "7"},
+			{"", "", "unknown"},
+			{"NoSeparators", "", "NoSeparators"},
+			{"_leadingsep", "", "unknown"},
+		}
+		for _, c := range cases {
+			if got := majorVersion(c.fact, c.fallback); got != c.want {
+				t.Errorf("majorVersion(%q,%q) = %q, want %q", c.fact, c.fallback, got, c.want)
+			}
+		}
+	})
+}

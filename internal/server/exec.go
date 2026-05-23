@@ -780,6 +780,25 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 	execBroadcastSessions[requestID] = bs
 	execBroadcastSessionsMu.Unlock()
 
+	// Outcome classification: set by exit path, read by the single defer.
+	// Defaults to "complete" because the clean drain at the end of the
+	// function is the dominant exit and an unset outcome means we got
+	// there without a timeout / cancellation.
+	outcome := "complete"
+	metricInflightSessions.WithLabelValues("exec").Inc()
+	defer func() {
+		metricInflightSessions.WithLabelValues("exec").Dec()
+		dur := time.Since(bs.startedAt).Seconds()
+		missing := bs.Total() - bs.AccountedCount()
+		if outcome == "complete" && missing > 0 {
+			outcome = "incomplete"
+		}
+		metricBroadcastTotal.WithLabelValues("exec", outcome).Inc()
+		metricBroadcastDuration.WithLabelValues("exec").Observe(dur)
+		if missing > 0 {
+			metricBroadcastMissingTotal.WithLabelValues("exec").Add(float64(missing))
+		}
+	}()
 	defer func() {
 		execBroadcastSessionsMu.Lock()
 		delete(execBroadcastSessions, requestID)
@@ -898,8 +917,10 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 				"targets", bs.Total(),
 				"still_pending", bs.Remaining(),
 			)
+			outcome = "hard_timeout"
 			return
 		case <-ctx.Done():
+			outcome = "canceled"
 			return
 		}
 	}

@@ -147,6 +147,7 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 		factFlushSignal: make(chan struct{}, 1),
 	}
 	srv.regBatch = newRegistrationBatcher(srv)
+	SetBuildInfo(database.Kind())
 	return srv
 }
 
@@ -398,6 +399,8 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.startReaper(ctx)
 	go s.runFactBatcher(ctx)
 	go s.runTopologySnapshotter(ctx)
+	s.startFleetMetricsRefresher(ctx)
+	s.startServerCertExpiryRefresher(ctx)
 
 	capacity := s.topoCfg.MaxZoneLeaders * s.topoCfg.MaxChildrenPerNode * s.topoCfg.MaxChildrenPerNode
 	s.log.Info("DirQ server starting",

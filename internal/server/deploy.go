@@ -197,6 +197,22 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 	deploySessions[requestID] = ds
 	deploySessionsMu.Unlock()
 
+	outcomeLabel := "complete"
+	metricInflightSessions.WithLabelValues("deploy").Inc()
+	defer func() {
+		metricInflightSessions.WithLabelValues("deploy").Dec()
+		dur := time.Since(ds.startedAt).Seconds()
+		missing := ds.Total() - ds.AccountedCount()
+		if outcomeLabel == "complete" && missing > 0 {
+			outcomeLabel = "incomplete"
+		}
+		metricBroadcastTotal.WithLabelValues("deploy", outcomeLabel).Inc()
+		metricBroadcastDuration.WithLabelValues("deploy").Observe(dur)
+		if missing > 0 {
+			metricBroadcastMissingTotal.WithLabelValues("deploy").Add(float64(missing))
+		}
+	}()
+
 	defer func() {
 		deploySessionsMu.Lock()
 		delete(deploySessions, requestID)
@@ -294,8 +310,10 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 				"targets", ds.Total(),
 				"still_pending", ds.Remaining(),
 			)
+			outcomeLabel = "hard_timeout"
 			return
 		case <-ctx.Done():
+			outcomeLabel = "canceled"
 			return
 		}
 	}
