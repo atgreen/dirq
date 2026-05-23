@@ -5,6 +5,13 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.23.1] - 2026-05-23
+
+### Fixed
+
+- **`dirq_fleet_count` showed `distro="unknown"` until someone ran a query.** The fleet-composition gauge reads the `os_info` / `cpu` / `memory` fact rows from `agent_facts`, but agents only collect facts in response to broadcast queries — so a freshly-booted fleet with no operator traffic produced an empty fact table and the metric labeled every host `unknown`.  Agents now publish the static-fact set (os_info / cpu / memory; these don't change at runtime) once per agent lifetime, right after the first successful upstream attach.  The push reuses the existing `sendQueryResult` path with a synthetic `register-initial-<agent_id>` query id; `handleQueryResult` stages them whether or not a session matches.  Disk / packages / services / hotfixes still come on demand — this push is scoped to the fields the fleet-composition metric actually reads.
+- **`wait_ssh` in `demo/aws-test-fleet.sh` raced cloud-init.** The previous implementation declared the server ready after one successful `ssh true` plus a 2 s sleep, but the RHEL 8 AMI's cloud-init keeps sshd flapping for 20–30 s after the first connection succeeds.  The install heredoc that immediately followed would intermittently die with `Connection timed out` (observed on a fresh `make aws` of v0.23.0).  Now requires two consecutive successful sshs plus a 15 s settle pause before returning.
+
 ## [0.23.0] - 2026-05-23
 
 ### Added
@@ -702,6 +709,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.23.1]: https://github.com/atgreen/dirq/releases/tag/v0.23.1
 [0.23.0]: https://github.com/atgreen/dirq/releases/tag/v0.23.0
 [0.22.4]: https://github.com/atgreen/dirq/releases/tag/v0.22.4
 [0.22.3]: https://github.com/atgreen/dirq/releases/tag/v0.22.3
