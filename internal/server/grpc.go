@@ -404,20 +404,16 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 
 	s.log.Info("agent requesting peers", "agent_id", req.AgentId)
 
-	// The agent's current parent may be unreachable. Only mark it offline
-	// if the server doesn't have an active stream for it (i.e., it's
-	// genuinely dead, not just slow). This avoids accidentally killing
-	// healthy nodes that the agent was just reassigned to.
-	if n, ok := s.topology.Get(req.AgentId); ok && n.ParentID != "" {
-		s.mu.RLock()
-		_, parentAlive := s.streams[n.ParentID]
-		s.mu.RUnlock()
-		if !parentAlive {
-			s.topology.MarkOffline(n.ParentID)
-			s.db.SetAgentOffline(ctx, n.ParentID)
-			s.log.Info("marked failed parent offline", "parent_id", n.ParentID)
-		}
-	}
+	// RequestPeers does not infer parent liveness. The previous
+	// implementation used s.streams[ParentID] as the liveness check, but
+	// that map only contains direct server streams (zone leaders) — for
+	// any relay parent the lookup is always false and the relay was
+	// falsely marked offline whenever any of its leaves rerouted.  Actual
+	// parent death is detected via:
+	//   - AgentStream close defer  (zone leaders)
+	//   - PeerDisconnected upstream (relays)
+	//   - The periodic reaper      (server-restart / partition cases)
+	// RequestPeers only finds a new parent; it never edits parent state.
 
 	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
 	if !ok || parentID == req.AgentId {
