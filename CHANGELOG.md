@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.23.2] - 2026-05-23
+
+### Fixed
+
+- **Grafana dashboard's "By CPU cores", "By memory (GB)", and "Subtree size per zone leader" panels rendered blank** even when `/metrics` clearly carried the underlying series.  Grafana's `barchart` panel expects categorical-axis data and won't render Prometheus time-series shape without an explicit transform; switched all three panels to `bargauge` (horizontal gradient mode), which consumes `sum by (label) (metric)` output directly.  Live fleets can hot-patch by copying `demo/grafana/dashboards/dirq-overview.json` to `/opt/dirq-monitoring/grafana/dashboards/` on the dirq-server VM; Grafana's provisioning provider re-scans every 30 s, no restart needed.
+
 ## [0.23.1] - 2026-05-23
 
 ### Fixed
@@ -709,6 +715,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.23.2]: https://github.com/atgreen/dirq/releases/tag/v0.23.2
 [0.23.1]: https://github.com/atgreen/dirq/releases/tag/v0.23.1
 [0.23.0]: https://github.com/atgreen/dirq/releases/tag/v0.23.0
 [0.22.4]: https://github.com/atgreen/dirq/releases/tag/v0.22.4
