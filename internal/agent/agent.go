@@ -110,7 +110,9 @@ type downstreamPeer struct {
 var tlsBootstrapMu sync.Mutex
 
 // grpcDialOpts returns the standard gRPC dial options including TLS.
-func (a *Agent) grpcDialOpts() []grpc.DialOption {
+// When TLS is enabled, fails closed on credential-load errors rather than
+// silently downgrading to plaintext.
+func (a *Agent) grpcDialOpts() ([]grpc.DialOption, error) {
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
@@ -121,20 +123,21 @@ func (a *Agent) grpcDialOpts() []grpc.DialOption {
 
 	if a.tlsConfig.Enabled() {
 		creds, err := tlsutil.ClientCredentials(a.tlsConfig)
-		if err == nil {
-			opts = append(opts, grpc.WithTransportCredentials(creds))
-			return opts
+		if err != nil {
+			return nil, fmt.Errorf("load TLS credentials: %w", err)
 		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		return opts, nil
 	}
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	return opts
+	return opts, nil
 }
 
 // registrationDialOpts returns gRPC dial options for the Register RPC.
 // Unlike grpcDialOpts, this does NOT present a client certificate — the agent
 // doesn't have a server-issued cert yet. Only the CA is loaded so the agent
 // can verify the server's identity.
-func (a *Agent) registrationDialOpts() []grpc.DialOption {
+func (a *Agent) registrationDialOpts() ([]grpc.DialOption, error) {
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
@@ -149,19 +152,20 @@ func (a *Agent) registrationDialOpts() []grpc.DialOption {
 		regCfg.CertFile = ""
 		regCfg.KeyFile = ""
 		creds, err := tlsutil.ClientCredentials(regCfg)
-		if err == nil {
-			opts = append(opts, grpc.WithTransportCredentials(creds))
-			return opts
+		if err != nil {
+			return nil, fmt.Errorf("load TLS credentials: %w", err)
 		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		return opts, nil
 	}
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	return opts
+	return opts, nil
 }
 
 // peerDialOpts returns gRPC dial options for connecting to a peer agent's
 // relay server.  Peer certs contain "localhost" as a SAN but not the peer's
 // IP, so we override ServerName to "localhost" for TLS verification.
-func (a *Agent) peerDialOpts() []grpc.DialOption {
+func (a *Agent) peerDialOpts() ([]grpc.DialOption, error) {
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
@@ -174,13 +178,14 @@ func (a *Agent) peerDialOpts() []grpc.DialOption {
 		peerCfg := a.tlsConfig
 		peerCfg.ServerName = "localhost"
 		creds, err := tlsutil.ClientCredentials(peerCfg)
-		if err == nil {
-			opts = append(opts, grpc.WithTransportCredentials(creds))
-			return opts
+		if err != nil {
+			return nil, fmt.Errorf("load TLS credentials: %w", err)
 		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		return opts, nil
 	}
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	return opts
+	return opts, nil
 }
 
 // New creates a new agent.
@@ -385,7 +390,11 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 }
 
 func (a *Agent) register(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.cfg.ServerAddr, a.registrationDialOpts()...)
+	dialOpts, err := a.registrationDialOpts()
+	if err != nil {
+		return fmt.Errorf("build TLS dial options: %w", err)
+	}
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
@@ -484,7 +493,11 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 	// Zone leaders connect to the server's AgentStream RPC.
 	// Relays and leafs connect to their parent's RelayStream RPC.
 	if a.role == pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
-		conn, err := grpc.NewClient(target, a.grpcDialOpts()...)
+		dialOpts, err := a.grpcDialOpts()
+		if err != nil {
+			return fmt.Errorf("build TLS dial options: %w", err)
+		}
+		conn, err := grpc.NewClient(target, dialOpts...)
 		if err != nil {
 			return fmt.Errorf("connect upstream: %w", err)
 		}
@@ -498,7 +511,11 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 		a.upstreamStream = stream
 	} else {
 		// Use peer dial options (ServerName override) for relay connections.
-		conn, err := grpc.NewClient(target, a.peerDialOpts()...)
+		dialOpts, err := a.peerDialOpts()
+		if err != nil {
+			return fmt.Errorf("build TLS dial options: %w", err)
+		}
+		conn, err := grpc.NewClient(target, dialOpts...)
 		if err != nil {
 			return fmt.Errorf("connect upstream: %w", err)
 		}
@@ -519,7 +536,11 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 
 // connectToAddr connects to a specific address as a relay peer (for fallbacks).
 func (a *Agent) connectToAddr(ctx context.Context, addr string) error {
-	conn, err := grpc.NewClient(addr, a.peerDialOpts()...)
+	dialOpts, err := a.peerDialOpts()
+	if err != nil {
+		return fmt.Errorf("build TLS dial options: %w", err)
+	}
+	conn, err := grpc.NewClient(addr, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -612,7 +633,11 @@ func (a *Agent) persistMTLSCert(certPEM, keyPEM, caCertPEM []byte) error {
 // certificate without a full re-registration.  It persists the new cert to
 // disk and updates the agent's tlsConfig.
 func (a *Agent) renewCert(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.cfg.ServerAddr, a.grpcDialOpts()...)
+	dialOpts, err := a.grpcDialOpts()
+	if err != nil {
+		return fmt.Errorf("build TLS dial options: %w", err)
+	}
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("connect to server for cert renewal: %w", err)
 	}
@@ -687,7 +712,11 @@ func (a *Agent) loadExistingMTLSCert() {
 // server can't find a parent with room it may promote this agent to zone
 // leader instead, in which case we reconnect directly to the server.
 func (a *Agent) requestNewParent(ctx context.Context) error {
-	conn, err := grpc.NewClient(a.cfg.ServerAddr, a.grpcDialOpts()...)
+	dialOpts, err := a.grpcDialOpts()
+	if err != nil {
+		return fmt.Errorf("build TLS dial options: %w", err)
+	}
+	conn, err := grpc.NewClient(a.cfg.ServerAddr, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("connect to server: %w", err)
 	}
