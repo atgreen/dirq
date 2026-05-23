@@ -90,27 +90,27 @@
     },
     {
       "id": 21,
-      "type": "barchart",
+      "type": "bargauge",
       "title": "By CPU cores",
       "gridPos": { "x": 8, "y": 6, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "dirq-prometheus" },
       "targets": [
-        { "expr": "sum by (cores_bucket) (dirq_fleet_count{online=\"true\"})", "refId": "A", "legendFormat": "{{cores_bucket}}" }
+        { "expr": "sum by (cores_bucket) (dirq_fleet_count{online=\"true\"})", "refId": "A", "legendFormat": "{{cores_bucket}}", "instant": true }
       ],
-      "options": { "orientation": "horizontal", "legend": { "displayMode": "hidden" }, "xTickLabelRotation": 0, "showValue": "always" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true, "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "decimals": 0 } }
     },
     {
       "id": 22,
-      "type": "barchart",
+      "type": "bargauge",
       "title": "By memory (GB)",
       "gridPos": { "x": 16, "y": 6, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "dirq-prometheus" },
       "targets": [
-        { "expr": "sum by (memory_gb_bucket) (dirq_fleet_count{online=\"true\"})", "refId": "A", "legendFormat": "{{memory_gb_bucket}}" }
+        { "expr": "sum by (memory_gb_bucket) (dirq_fleet_count{online=\"true\"})", "refId": "A", "legendFormat": "{{memory_gb_bucket}}", "instant": true }
       ],
-      "options": { "orientation": "horizontal", "legend": { "displayMode": "hidden" }, "xTickLabelRotation": 0, "showValue": "always" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true, "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "decimals": 0 } }
     },
 
     {
@@ -179,15 +179,15 @@
     },
     {
       "id": 40,
-      "type": "barchart",
+      "type": "bargauge",
       "title": "Subtree size per zone leader",
       "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "dirq-prometheus" },
       "targets": [
-        { "expr": "dirq_subtree_size", "refId": "A", "legendFormat": "{{zone_leader}}" }
+        { "expr": "dirq_subtree_size", "refId": "A", "legendFormat": "{{zone_leader}}", "instant": true }
       ],
-      "options": { "orientation": "horizontal", "legend": { "displayMode": "hidden" }, "showValue": "always" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true, "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "decimals": 0 } }
     },
     {
       "id": 41,
