@@ -180,6 +180,7 @@ cmd_up() {
         aws_ ec2 authorize-security-group-ingress --group-id "$sg_id" \
             --ip-permissions \
             "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=0.0.0.0/0}]" \
+            "IpProtocol=tcp,FromPort=3000,ToPort=3000,IpRanges=[{CidrIp=0.0.0.0/0}]" \
             "IpProtocol=tcp,FromPort=3389,ToPort=3389,IpRanges=[{CidrIp=0.0.0.0/0}]" \
             "IpProtocol=tcp,FromPort=8080,ToPort=8080,IpRanges=[{CidrIp=0.0.0.0/0}]" \
             "IpProtocol=tcp,FromPort=50051,ToPort=$LISTEN_PORT_HIGH,IpRanges=[{CidrIp=0.0.0.0/0}]" \
@@ -283,6 +284,69 @@ SERVER_SETUP
     sed -i "s|^server: .*|server: ${srv_priv_ip}:50051|" "$STATE_DIR/agent.conf"
 
     log "  Server running at https://$srv_ip:8080"
+
+    # ── Grafana + Prometheus stack ────────────────────────
+    # Colocated on the server VM via podman.  Prometheus scrapes
+    # https://localhost:8080/metrics (insecure_skip_verify because the
+    # server cert is self-signed); Grafana is pre-provisioned with the
+    # Prometheus datasource and the dirq-overview dashboard.  Exposed
+    # on :3000 — credentials below.
+    local grafana_dir
+    grafana_dir="$(cd "$(dirname "$0")/grafana" && pwd)"
+    if [[ -d "$grafana_dir" ]]; then
+        log "  Installing Grafana + Prometheus stack"
+        # Push the grafana config tree to the server.
+        scp_cmd -r "$grafana_dir" "ec2-user@$srv_ip:/tmp/dirq-grafana" > /dev/null
+
+        ssh_cmd "ec2-user@$srv_ip" bash <<MONITORING_SETUP
+            set -e
+            sudo dnf install -y podman > /dev/null
+
+            # Lay out config tree at /opt/dirq-monitoring/.
+            sudo rm -rf /opt/dirq-monitoring
+            sudo mkdir -p /opt/dirq-monitoring/{prometheus,grafana/provisioning/{datasources,dashboards},grafana/dashboards,prometheus-data,grafana-data}
+            sudo cp /tmp/dirq-grafana/prometheus.yml /opt/dirq-monitoring/prometheus/
+            sudo cp /tmp/dirq-grafana/grafana-datasource.yml /opt/dirq-monitoring/grafana/provisioning/datasources/datasource.yml
+            sudo cp /tmp/dirq-grafana/grafana-dashboards.yml /opt/dirq-monitoring/grafana/provisioning/dashboards/dashboards.yml
+            sudo cp /tmp/dirq-grafana/dashboards/*.json /opt/dirq-monitoring/grafana/dashboards/
+            sudo chown -R 472:0 /opt/dirq-monitoring/grafana-data           # grafana container user
+            sudo chown -R 65534:65534 /opt/dirq-monitoring/prometheus-data  # prom container user (nobody)
+            sudo chmod -R a+rX /opt/dirq-monitoring/{prometheus,grafana}
+
+            # Clean up any previous run.
+            sudo podman rm -f dirq-prometheus dirq-grafana 2>/dev/null || true
+
+            # Prometheus on :9090.  --network=host so host.containers.internal
+            # works for scraping localhost:8080.
+            sudo podman run -d --name dirq-prometheus --restart=always \
+                --network=host \
+                --add-host host.containers.internal:host-gateway \
+                -v /opt/dirq-monitoring/prometheus:/etc/prometheus:ro,z \
+                -v /opt/dirq-monitoring/prometheus-data:/prometheus:z \
+                docker.io/prom/prometheus:latest \
+                --config.file=/etc/prometheus/prometheus.yml \
+                --storage.tsdb.path=/prometheus \
+                --storage.tsdb.retention.time=30d \
+                --web.listen-address=:9090 > /dev/null
+
+            # Grafana on :3000.
+            sudo podman run -d --name dirq-grafana --restart=always \
+                --network=host \
+                --add-host host.containers.internal:host-gateway \
+                -e GF_SECURITY_ADMIN_PASSWORD=dirq \
+                -e GF_USERS_ALLOW_SIGN_UP=false \
+                -e GF_AUTH_ANONYMOUS_ENABLED=true \
+                -e GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer \
+                -e GF_SERVER_HTTP_PORT=3000 \
+                -v /opt/dirq-monitoring/grafana/provisioning:/etc/grafana/provisioning:ro,z \
+                -v /opt/dirq-monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro,z \
+                -v /opt/dirq-monitoring/grafana-data:/var/lib/grafana:z \
+                docker.io/grafana/grafana:latest > /dev/null
+MONITORING_SETUP
+        log "  Grafana dashboard at http://$srv_ip:3000 (user: admin, pass: dirq; anonymous view enabled)"
+    else
+        log "  (demo/grafana/ not found; skipping monitoring stack)"
+    fi
 
     # ── Linux agent instances ─────────────────────────────
     # Base64-encode the agent.conf for embedding in UserData.
@@ -489,6 +553,8 @@ WINEOF
     else
         echo "  Agents:  $LINUX_COUNT Linux (RHEL 8) + $WIN_COUNT Windows (Server 2022)"
     fi
+    echo
+    echo "  Grafana dashboard: http://$srv_ip:3000  (user: admin, pass: dirq; anonymous view enabled)"
     echo
     echo "  Setup (copy-paste):"
     echo "    cp $STATE_DIR/client.conf ~/.config/dirq/client.conf"

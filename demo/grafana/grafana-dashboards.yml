@@ -1,0 +1,14 @@
+# Grafana dashboard provider — mounted into the container as
+# /etc/grafana/provisioning/dashboards/dashboards.yml.  Points
+# Grafana at /var/lib/grafana/dashboards/ where the JSON file lives.
+apiVersion: 1
+providers:
+  - name: dirq
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

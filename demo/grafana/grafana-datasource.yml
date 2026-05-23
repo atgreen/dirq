@@ -1,0 +1,15 @@
+# Grafana datasource provisioning — mounted into the container as
+# /etc/grafana/provisioning/datasources/datasource.yml.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: dirq-prometheus
+    access: proxy
+    # Prometheus is running on the same VM; from inside the grafana
+    # container we reach it via the special host gateway alias.
+    url: http://host.containers.internal:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s

@@ -1,0 +1,23 @@
+# Prometheus scrape config for the dirq AWS test fleet.
+# Mounted into the prometheus container as /etc/prometheus/prometheus.yml.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    fleet: dirq-aws-test
+
+scrape_configs:
+  - job_name: dirq-server
+    metrics_path: /metrics
+    # /metrics on the dirq-server is served over HTTPS in the AWS demo.
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets: ['host.containers.internal:8080']
+        labels:
+          instance: dirq-server
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

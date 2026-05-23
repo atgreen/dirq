@@ -110,7 +110,7 @@ demo-down:  ## Stop the demo fleet
 demo-logs:  ## Tail demo server logs
 	podman logs -f dirq-server-server
 
-aws:  ## Deploy test fleet on AWS (3 RHEL + 2 Windows; DIRQ_REPLICAS_PER_VM=N for emulation)
+aws:  ## Deploy test fleet on AWS (3 RHEL + 2 Windows + Grafana on server :3000)
 	./demo/aws-test-fleet.sh up
 
 aws-status:  ## Show AWS test fleet status
