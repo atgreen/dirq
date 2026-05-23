@@ -129,10 +129,24 @@ scp_cmd() {
 }
 
 wait_ssh() {
+    # Require two consecutive successful sshs before declaring ready, then
+    # wait an extra 15 s — cloud-init on the RHEL AMI keeps sshd flapping
+    # for 20-30 s after the first successful connection, so a single hit
+    # races the install heredoc into a half-up sshd.
     local user="$1" ip="$2"
     log "  Waiting for SSH on $ip..."
+    local successes=0
     for i in $(seq 1 60); do
-        ssh_cmd -o BatchMode=yes "$user@$ip" true 2>/dev/null && { sleep 2; return 0; }
+        if ssh_cmd -o BatchMode=yes "$user@$ip" true 2>/dev/null; then
+            successes=$((successes + 1))
+            if (( successes >= 2 )); then
+                sleep 15
+                return 0
+            fi
+            sleep 3
+            continue
+        fi
+        successes=0
         sleep 5
     done
     die "SSH timeout for $ip"
