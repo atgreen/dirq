@@ -17,6 +17,14 @@ and the platform-side wiring required to make it work.
 That's it. There is no cross-pod request routing, no per-agent
 stickiness, no gossip layer. The leader serves; the standbys wait.
 
+> The [Production Deployment](README.md#production-deployment) fundamentals
+> still apply — most importantly, the server must observe each agent's **real
+> source IP** at registration or it advertises unroutable relay addresses and
+> the mesh can't connect. On Kubernetes/OpenShift that means the gRPC path to
+> the pods must preserve the client source IP (e.g. `externalTrafficPolicy:
+> Local`, or a passthrough `Route` / L4 load balancer) rather than SNAT it to
+> a cluster-internal address.
+
 ## Why active/standby (and not active/active)
 
 The DirQ server doesn't hold a connection per managed host — it only
