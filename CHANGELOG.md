@@ -5,6 +5,18 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Agent-side OPA/Rego policy.** Optional, defense-in-depth enforcement evaluated *on the agent* before any `exec` / `put_file` / `fetch_file` / `deploy` side effect — even a validly-authorized, server-signed request can be refused locally by the host. The policy is compiled once at startup (syntax errors surface before the agent advertises ready), fails closed by default once configured (fail-open optional for a discovery period), and is a no-op when no `policy_file` is set, so existing agents behave exactly as before. Policy input is a stable, documented JSON contract decoupled from the protobuf wire shape, and it is redacted: policies see commands and cleaned absolute paths but only sizes, SHA-256 hashes, and env-var *key names* — never file content, script bodies, stdin, or env values. Configured via `policy_file` / `policy_fail_closed` / `policy_query` (env or `agent.conf`). Example policies (minimal allowlist, file-path restrictions, production AAP-only, AAP least-privilege/segregation-of-duties, and a regulated-bank policy) plus a full input reference ship under `examples/policy/`. Uses the embedded `github.com/open-policy-agent/opa` evaluator.
+- **Server-side AAP user binding.** API tokens can be bound to an `aap_user` allowlist (`api_tokens.aap_users`); when set, the write endpoints reject a request whose `aap_user` the token isn't authorized to assert with HTTP 403 **before** the message is signed or dispatched. This turns the signed `aap_user` an agent policy evaluates into an authenticated identity rather than a self-asserted claim, making segregation-of-duties policies load-bearing. Opt-in via `require_aap_binding` (`DIRQ_REQUIRE_AAP_BINDING`, default `false`); when enabled, unbound tokens cannot perform write operations at all. `exec_multi` and `deploy` gained AAP attribution fields (`exec_multi` threads `aap_user` through to the agent in the `ExecRequest` proto; `deploy` enforces the binding server-side), and `dirq token create --aap-user` mints bound tokens.
+
+### Security
+
+- **Agents can no longer self-assign reserved `ansible_*` tag keys at registration.** Those keys become `ansible_*` Ansible inventory host variables (including `ansible_connection` and `ansible_python_interpreter`) when the CLI inventory generator and collection inventory plugin render the fleet — a rogue agent that self-reported them could hijack how the Ansible control node connects to and executes against its host, up to command execution on the controller. The server now drops reserved keys at registration (logging a warning); operators still set them per host through the trusted admin tag API.
+- **Generated Ansible inventory values are emitted as escaped, quoted YAML scalars.** An agent-controlled tag value, hostname, or agent ID can no longer break out of its line to inject additional inventory keys.
+
 ## [0.23.2] - 2026-05-23
 
 ### Fixed
