@@ -46,6 +46,7 @@ func main() {
 		MaxZoneLeaders:     cfgInt("DIRQ_MAX_ZONE_LEADERS", fileCfg, "max_zone_leaders", 0),
 		MaxChildrenPerNode: cfgInt("DIRQ_MAX_CHILDREN", fileCfg, "max_children", 0),
 		AuthDisabled:       config.EnvOr("DIRQ_AUTH_DISABLED", fileCfg, "auth_disabled", "false") == "true",
+		RequireAAPBinding:  config.EnvOr("DIRQ_REQUIRE_AAP_BINDING", fileCfg, "require_aap_binding", "false") == "true",
 		RegistrationSecret: config.EnvOr("DIRQ_REGISTRATION_SECRET", fileCfg, "registration_secret", ""),
 		LeaderElection:     config.EnvOr("DIRQ_LEADER_ELECTION", fileCfg, "leader_election", "false") == "true",
 		FactFlushInterval:  cfgDur("DIRQ_FACT_FLUSH_INTERVAL", fileCfg, "fact_flush_interval", 0),
@@ -108,7 +109,7 @@ func main() {
 	if !cfg.AuthDisabled {
 		tokens, _ := database.ListTokens(ctx)
 		if len(tokens) == 0 {
-			plaintext, err := database.CreateToken(ctx, "bootstrap", "admin")
+			plaintext, err := database.CreateToken(ctx, "bootstrap", "admin", nil)
 			if err != nil {
 				log.Error("failed to create bootstrap token", "error", err)
 			} else {

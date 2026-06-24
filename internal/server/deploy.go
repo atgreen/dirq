@@ -66,6 +66,13 @@ type deployRequest struct {
 	Become         bool   `json:"become"`
 	BecomeUser     string `json:"become_user"`
 	Timeout        int    `json:"timeout"`
+	// AAP attribution. Used for the server-side aap_user binding check. The
+	// DeployRequest proto does not yet carry these fields to the agent, so an
+	// agent-side deploy policy cannot see aap_user — the server binding is the
+	// authoritative attribution check for deploy until the proto is extended.
+	AAPJobID       string `json:"aap_job_id"`
+	AAPJobTemplate string `json:"aap_job_template"`
+	AAPUser        string `json:"aap_user"`
 }
 
 type deployResultLine struct {
@@ -95,6 +102,11 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "install_command is required")
 		return
 	}
+	if err := s.bindAAP(r, req.AAPUser); err != nil {
+		httpError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	if req.DestPath == "" {
 		httpError(w, http.StatusBadRequest, "dest_path is required")
 		return

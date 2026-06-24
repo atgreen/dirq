@@ -163,6 +163,46 @@ On the agent side, remote execution is independently gated by the
 reject exec, put_file, and fetch_file requests regardless of the
 caller's authorization.
 
+### AAP user binding
+
+Write operations may carry AAP attribution (`aap_user`, `aap_job_template`,
+`aap_job_id`). By default these are self-asserted by the API caller. To make
+`aap_user` an *authenticated* identity, an API token can be bound to an
+allowlist of `aap_user` values it is permitted to assert:
+
+```
+dirq token create svc-ansible-prod --scope admin --aap-user svc-ansible-prod
+```
+
+When a request's `aap_user` is not in the token's allowlist, the server rejects
+it with HTTP 403 **before** signing or dispatching anything. This is enforced on
+all five write endpoints: `exec`, `exec_multi`, `put_file`, `fetch_file`, and
+`deploy`.
+
+The server config `require_aap_binding` (`DIRQ_REQUIRE_AAP_BINDING`,
+**default `false`**) controls unbound tokens:
+
+- `false` (default) — unbound tokens (empty allowlist) are unrestricted; bound
+  tokens are still enforced. Binding is opt-in per token.
+- `true` — an unbound token is refused on every write endpoint. Every operation
+  must carry an `aap_user` the token is authorized for. This is the
+  regulated-deployment posture: no operation without an authenticated AAP
+  identity. Set this in production environments that require segregation of
+  duties.
+
+Bootstrap note: when you enable the gate, the auto-created `bootstrap` token is
+unbound, so it can manage tokens and run read queries but **cannot** exec, put,
+fetch, or deploy. Use it to mint bound, per-service-account tokens, then operate
+with those.
+
+This binding makes agent-side policies that key on `input.aap_user` (see
+[Agent-Side Policy](#agent-side-policy-oparego)) load-bearing: the signed
+`aap_user` the agent evaluates is one the server authenticated. Caveats: it
+authenticates the *automation account / token*, not the human behind AAP; the
+`deploy` proto does not yet carry `aap_user` to the agent, so for deploy the
+server binding is the sole attribution check; and `auth_disabled` mode skips
+binding entirely (dev only).
+
 ## Message Signing
 
 The server signs all control messages (queries, exec requests, topology
@@ -223,6 +263,47 @@ layers of protection:
    than 100 MB
 9. **Audit logging** — all exec operations are logged with request ID,
    agent ID, command, and outcome
+10. **Agent-side policy** — an optional OPA/Rego policy on the agent can
+    deny any operation locally, even one the server validly authorized
+    (see below)
+
+### Agent-Side Policy (OPA/Rego)
+
+Server-side controls answer "is this request validly authorized and routed
+by DirQ?" Agent-side policy answers a different question: "Even if the
+request is valid, is this host willing to perform this local action?" It is
+**defense in depth** — it does not replace API authorization, token scopes,
+message signing, or mTLS.
+
+When `policy_file` is set, the agent compiles the Rego policy at startup and
+evaluates it before any local side effect for `exec`, `put_file`,
+`fetch_file`, and `deploy`. A denied operation returns a terminal response
+with an error prefixed `policy denied:` and performs no side effect — no
+command runs, no temp script is written, no file is read or written.
+
+Key properties:
+
+- **Default unchanged** — with no `policy_file`, the agent behaves exactly as
+  before (`exec_enabled` alone gates operations).
+- **Fail-closed by default** — once configured, a policy that fails to load
+  (`policy_fail_closed=true`, the default when `policy_file` is set) prevents
+  the agent from starting; an evaluation error denies the operation. Set
+  `policy_fail_closed=false` for a discovery period on lab hosts, where load
+  and eval failures fall open instead.
+- **Bounded evaluation** — each evaluation has a short timeout; a hung policy
+  is treated as an evaluation error (fail-open/closed per configuration).
+- **No secrets in policy input** — the policy sees command and path strings
+  (the subject of policy), but file content, script bodies, and stdin are
+  reduced to sizes and SHA-256 hashes, and environment variables to key names
+  only. Paths are the agent's cleaned absolute paths.
+- **Denials are audit events** — logged at WARN with request ID, operation,
+  reason, and policy file, so break-glass and blocked operations are easy to
+  detect.
+
+Rego is not a shell parser. High-assurance policies should allowlist exact
+commands, approved AAP templates, paths, hashes, or operation types rather
+than rely on broad string-pattern matching. Example policies ship under
+`examples/policy/`.
 
 ## Rate Limiting
 

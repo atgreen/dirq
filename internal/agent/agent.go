@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/atgreen/dirq/internal/agent/policy"
 	"github.com/atgreen/dirq/internal/config"
 	"github.com/atgreen/dirq/internal/modules"
 	"github.com/atgreen/dirq/internal/query"
@@ -44,6 +45,12 @@ type Config struct {
 	ExecEnabled        bool         // Phase 2: whether this agent accepts exec/file requests
 	RegistrationSecret string       // pre-shared secret for registration authentication
 	FileCfg            *config.File // parsed config file (for TLS/signing fallback)
+
+	// Agent-side OPA/Rego policy (optional, defense in depth). When PolicyFile
+	// is empty the engine is a no-op and behavior is unchanged.
+	PolicyFile       string // path to a local Rego policy file
+	PolicyFailClosed bool   // deny when policy load/eval fails (default true when policy is set)
+	PolicyQuery      string // Rego decision query (default data.dirq.agent.allow)
 
 	// Hostname overrides os.Hostname() when reporting identity to the server
 	// and when answering queries.  Used by emulation harnesses that run many
@@ -66,12 +73,12 @@ type Config struct {
 type Agent struct {
 	pb.UnimplementedDirQRelayServer
 
-	cfg          Config
-	log          *slog.Logger
-	hostname     string // resolved at New(); used in registration and query results
-	agentID      string
-	role         pb.AgentRole
-	sessionToken string   // from RegisterResponse, presented in AgentHello
+	cfg           Config
+	log           *slog.Logger
+	hostname      string // resolved at New(); used in registration and query results
+	agentID       string
+	role          pb.AgentRole
+	sessionToken  string   // from RegisterResponse, presented in AgentHello
 	parentAddr    string   // where to connect upstream (server addr or parent's listen_addr)
 	fallbackAddrs []string // backup parent addresses, tried before server on failure
 
@@ -99,6 +106,11 @@ type Agent struct {
 	// a multi-tenant process holds its own copy so persistMTLSCert can repoint
 	// CertFile/KeyFile without trampling its siblings.
 	tlsConfig tlsutil.Config
+
+	// policyEngine evaluates agent-side OPA/Rego policy before any local side
+	// effect.  Compiled once at startup in Run().  Never nil after Run begins —
+	// a no-op engine stands in when no policy is configured.
+	policyEngine policy.Engine
 
 	// Connected downstream peers
 	mu          sync.RWMutex
@@ -226,6 +238,30 @@ func (a *Agent) Run(ctx context.Context) error {
 		return fmt.Errorf("TLS setup: %w", err)
 	}
 	a.tlsConfig = tlsCfg
+
+	// Build the policy engine before registering so a malformed policy is
+	// caught here — before the agent advertises itself as ready for exec —
+	// rather than on the first operation.  A compile failure is fatal when
+	// fail-closed; otherwise we log and fall back to a no-op (fail-open).
+	pe, perr := policy.New(ctx, policy.Config{
+		File:       a.cfg.PolicyFile,
+		Query:      a.cfg.PolicyQuery,
+		FailClosed: a.cfg.PolicyFailClosed,
+	})
+	if perr != nil {
+		if a.cfg.PolicyFailClosed {
+			return fmt.Errorf("policy load failed (fail-closed, refusing to start): %w", perr)
+		}
+		a.log.Warn("policy load failed; continuing without policy (fail-open)", "error", perr)
+		pe = policy.Nop()
+	}
+	a.policyEngine = pe
+	if pe.Enabled() {
+		a.log.Info("agent policy loaded",
+			"file", a.cfg.PolicyFile,
+			"fail_closed", a.cfg.PolicyFailClosed,
+		)
+	}
 
 	// Load an existing mTLS cert from a previous registration (if valid).
 	a.loadExistingMTLSCert()

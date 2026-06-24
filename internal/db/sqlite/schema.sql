@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     token_prefix TEXT NOT NULL DEFAULT '',
     token_hash   TEXT NOT NULL,
     scope        TEXT NOT NULL DEFAULT 'admin',
+    aap_users    TEXT NOT NULL DEFAULT '',  -- comma-separated allowlist of aap_user values this token may assert; empty = unrestricted
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     last_used    TEXT
 );

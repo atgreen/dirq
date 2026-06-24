@@ -19,6 +19,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/atgreen/dirq/internal/agent/policy"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -53,6 +54,40 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 	}
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// Policy gate: evaluate before any command construction or temp-script
+	// creation so a denied operation has no local side effect.
+	in := policy.Input{
+		Operation:       "exec",
+		RequestID:       req.GetRequestId(),
+		Command:         req.GetCommand(),
+		StdinSize:       len(req.GetStdin()),
+		EnvironmentKeys: policy.SortedKeys(req.GetEnvironment()),
+		TimeoutSeconds:  req.GetTimeoutSeconds(),
+		AAPJobID:        req.GetAapJobId(),
+		AAPJobTemplate:  req.GetAapJobTemplate(),
+		AAPUser:         req.GetAapUser(),
+		Become:          req.GetBecome(),
+		BecomeUser:      req.GetBecomeUser(),
+		BecomeMethod:    req.GetBecomeMethod(),
+	}
+	if len(req.GetScript()) > 0 {
+		in.Script = true
+		in.ScriptName = req.GetScriptName()
+		in.ScriptSize = len(req.GetScript())
+		in.ScriptSHA256 = policy.SHA256Hex(req.GetScript())
+	}
+	if dec := a.evalPolicy(execCtx, in); !dec.Allow {
+		a.sendExecResponse(&pb.ExecResponse{
+			RequestId: req.GetRequestId(),
+			AgentId:   a.agentID,
+			Hostname:  hostname,
+			Success:   false,
+			Rc:        -1,
+			Error:     policyDeniedError(dec.Reason),
+		})
+		return
+	}
 
 	// If a script was provided, write it to a temp file and execute it.
 	var cmd *exec.Cmd
@@ -293,6 +328,31 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		return
 	}
 
+	// Policy gate: evaluate on the cleaned absolute path before any directory
+	// creation or write.
+	if dec := a.evalPolicy(ctx, policy.Input{
+		Operation:      "put_file",
+		RequestID:      req.GetRequestId(),
+		DestPath:       destPath,
+		ContentSize:    len(content),
+		ContentSHA256:  policy.SHA256Hex(content),
+		Mode:           uint32(req.GetMode()),
+		AAPJobID:       req.GetAapJobId(),
+		AAPJobTemplate: req.GetAapJobTemplate(),
+		AAPUser:        req.GetAapUser(),
+		Become:         req.GetBecome(),
+		BecomeUser:     req.GetBecomeUser(),
+	}); !dec.Allow {
+		a.sendFileChunk(&pb.FileChunk{
+			RequestId: req.GetRequestId(),
+			AgentId:   a.agentID,
+			Hostname:  hostname,
+			Success:   false,
+			Error:     policyDeniedError(dec.Reason),
+		})
+		return
+	}
+
 	var writeErr error
 
 	if req.GetBecome() && runtime.GOOS != "windows" {
@@ -377,6 +437,29 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 			Hostname:  hostname,
 			Success:   false,
 			Error:     fmt.Sprintf("src_path must be absolute, got: %s", req.GetSrcPath()),
+		})
+		return
+	}
+
+	// Policy gate: evaluate on the cleaned absolute path before any stat or
+	// read. File reads are the primary exfiltration risk, so this denies
+	// before the path is ever touched.
+	if dec := a.evalPolicy(ctx, policy.Input{
+		Operation:      "fetch_file",
+		RequestID:      req.GetRequestId(),
+		SrcPath:        srcPath,
+		AAPJobID:       req.GetAapJobId(),
+		AAPJobTemplate: req.GetAapJobTemplate(),
+		AAPUser:        req.GetAapUser(),
+		Become:         req.GetBecome(),
+		BecomeUser:     req.GetBecomeUser(),
+	}); !dec.Allow {
+		a.sendFetchFileResponse(&pb.FetchFileResponse{
+			RequestId: req.GetRequestId(),
+			AgentId:   a.agentID,
+			Hostname:  hostname,
+			Success:   false,
+			Error:     policyDeniedError(dec.Reason),
 		})
 		return
 	}
@@ -489,6 +572,31 @@ func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
 			Success:   false,
 			Phase:     "write",
 			Error:     fmt.Sprintf("dest_path must be absolute, got: %s", destPath),
+		})
+		return
+	}
+
+	// Policy gate: evaluate on the cleaned absolute path and install command
+	// before writing the package or creating directories.
+	if dec := a.evalPolicy(deployCtx, policy.Input{
+		Operation:      "deploy",
+		RequestID:      req.GetRequestId(),
+		DestPath:       destPath,
+		ContentSize:    len(req.GetContent()),
+		ContentSHA256:  policy.SHA256Hex(req.GetContent()),
+		Mode:           uint32(req.GetMode()),
+		InstallCommand: req.GetInstallCommand(),
+		TimeoutSeconds: req.GetTimeoutSeconds(),
+		Become:         req.GetBecome(),
+		BecomeUser:     req.GetBecomeUser(),
+	}); !dec.Allow {
+		a.sendDeployResponse(&pb.DeployResponse{
+			RequestId: req.GetRequestId(),
+			AgentId:   a.agentID,
+			Hostname:  hostname,
+			Success:   false,
+			Phase:     "policy",
+			Error:     policyDeniedError(dec.Reason),
 		})
 		return
 	}

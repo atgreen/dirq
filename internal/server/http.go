@@ -20,7 +20,9 @@ import (
 
 type contextKey string
 
-const tokenScopeKey contextKey = "tokenScope"
+// tokenCtxKey carries the validated db.Token for the request. Absent when auth
+// is disabled.
+const tokenCtxKey contextKey = "apiToken"
 
 func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -119,25 +121,57 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			httpError(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
-		ctx := context.WithValue(r.Context(), tokenScopeKey, t.Scope)
+		ctx := context.WithValue(r.Context(), tokenCtxKey, t)
 		next(w, r.WithContext(ctx))
 	}
 }
 
 func requireScope(scope string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s, ok := r.Context().Value(tokenScopeKey).(string)
+		tok, ok := r.Context().Value(tokenCtxKey).(db.Token)
 		if !ok {
-			// No scope in context — auth was disabled, allow through.
+			// No token in context — auth was disabled, allow through.
 			next(w, r)
 			return
 		}
-		if s != "admin" && s != scope {
+		if tok.Scope != "admin" && tok.Scope != scope {
 			httpError(w, http.StatusForbidden, "this endpoint requires "+scope+" or admin scope")
 			return
 		}
 		next(w, r)
 	}
+}
+
+// checkAAPBinding authorizes a token to assert the given aap_user. A token with
+// no allowlist is unrestricted unless requireBinding is set, in which case it is
+// refused outright — that is the regulated-deployment posture where every
+// operation must carry an authenticated AAP identity.
+func checkAAPBinding(t db.Token, aapUser string, requireBinding bool) error {
+	if len(t.AAPUsers) == 0 {
+		if requireBinding {
+			return fmt.Errorf("token %q is not bound to an aap_user; create a bound token (aap_users) or set require_aap_binding=false", t.Name)
+		}
+		return nil
+	}
+	if aapUser == "" {
+		return fmt.Errorf("aap_user is required: token %q is restricted to %v", t.Name, t.AAPUsers)
+	}
+	for _, u := range t.AAPUsers {
+		if u == aapUser {
+			return nil
+		}
+	}
+	return fmt.Errorf("token %q may not act as aap_user %q", t.Name, aapUser)
+}
+
+// bindAAP enforces the token's aap_user binding for a write operation. It is a
+// no-op when auth is disabled (no token in context — dev mode only).
+func (s *Server) bindAAP(r *http.Request, aapUser string) error {
+	tok, ok := r.Context().Value(tokenCtxKey).(db.Token)
+	if !ok {
+		return nil
+	}
+	return checkAAPBinding(tok, aapUser, s.cfg.RequireAAPBinding)
 }
 
 // ─────────────────────────────────────────────────────────
@@ -499,8 +533,9 @@ func (s *Server) handleListQueries(w http.ResponseWriter, r *http.Request) {
 // ─────────────────────────────────────────────────────────
 
 type createTokenRequest struct {
-	Name  string `json:"name"`
-	Scope string `json:"scope"`
+	Name     string   `json:"name"`
+	Scope    string   `json:"scope"`
+	AAPUsers []string `json:"aap_users"` // optional allowlist of aap_user values this token may assert
 }
 
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
@@ -517,15 +552,16 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		req.Scope = "admin"
 	}
 
-	plaintext, err := s.db.CreateToken(r.Context(), req.Name, req.Scope)
+	plaintext, err := s.db.CreateToken(r.Context(), req.Name, req.Scope, req.AAPUsers)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "failed to create token: "+err.Error())
 		return
 	}
-	jsonResponse(w, http.StatusCreated, map[string]string{
-		"name":  req.Name,
-		"token": plaintext,
-		"scope": req.Scope,
+	jsonResponse(w, http.StatusCreated, map[string]any{
+		"name":      req.Name,
+		"token":     plaintext,
+		"scope":     req.Scope,
+		"aap_users": db.ParseAAPUsers(db.EncodeAAPUsers(req.AAPUsers)),
 	})
 }
 

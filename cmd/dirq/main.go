@@ -527,30 +527,38 @@ func tokenCmd() *cobra.Command {
 	}
 
 	var scope string
+	var aapUsers []string
 	createCmd := &cobra.Command{
 		Use:   "create [name]",
 		Short: "Create a new API token",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body, _ := json.Marshal(map[string]string{
-				"name":  args[0],
-				"scope": scope,
+			body, _ := json.Marshal(map[string]any{
+				"name":      args[0],
+				"scope":     scope,
+				"aap_users": aapUsers,
 			})
 			resp, err := apiRequest("POST", "/api/v1/tokens", bytes.NewReader(body))
 			if err != nil {
 				return err
 			}
 			var result struct {
-				Name  string `json:"name"`
-				Token string `json:"token"`
-				Scope string `json:"scope"`
+				Name     string   `json:"name"`
+				Token    string   `json:"token"`
+				Scope    string   `json:"scope"`
+				AAPUsers []string `json:"aap_users"`
 			}
 			json.Unmarshal(resp, &result)
-			fmt.Printf("Token created:\n  Name:  %s\n  Scope: %s\n  Token: %s\n\nSave this token — it cannot be retrieved later.\n", result.Name, result.Scope, result.Token)
+			bound := "(unrestricted)"
+			if len(result.AAPUsers) > 0 {
+				bound = strings.Join(result.AAPUsers, ", ")
+			}
+			fmt.Printf("Token created:\n  Name:      %s\n  Scope:     %s\n  AAP users: %s\n  Token:     %s\n\nSave this token — it cannot be retrieved later.\n", result.Name, result.Scope, bound, result.Token)
 			return nil
 		},
 	}
 	createCmd.Flags().StringVar(&scope, "scope", "admin", "token scope (admin or readonly)")
+	createCmd.Flags().StringSliceVar(&aapUsers, "aap-user", nil, "restrict this token to the given aap_user value(s); repeatable. Required for write ops when the server has require_aap_binding=true")
 
 	listCmd := &cobra.Command{
 		Use:   "list",
@@ -4080,6 +4088,34 @@ func persistPythonInterpreterTags(discovered map[string]string) {
 	wg.Wait()
 }
 
+// yamlScalar renders s as a double-quoted YAML scalar with metacharacters
+// escaped, so an attacker-controlled value (an agent-supplied tag, hostname,
+// or agent ID) cannot break out of its line and inject additional inventory
+// keys such as ansible_connection or ansible_python_interpreter.
+func yamlScalar(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 // writeInventory creates a temporary YAML inventory file for Ansible.
 func writeInventory(hosts []queryHost) (string, error) {
 	tmpInv, err := os.CreateTemp("", "dirq-inventory-*.yml")
@@ -4089,9 +4125,13 @@ func writeInventory(hosts []queryHost) (string, error) {
 
 	fmt.Fprintf(tmpInv, "all:\n  hosts:\n")
 	for _, h := range hosts {
-		fmt.Fprintf(tmpInv, "    %s:\n", h.hostname)
-		fmt.Fprintf(tmpInv, "      dirq_agent_id: %s\n", h.agentID)
-		fmt.Fprintf(tmpInv, "      dirq_server_url: %s\n", serverURL)
+		// hostname, agent_id and tag values originate from agent-supplied
+		// data. Emit them as quoted YAML scalars so a malicious value cannot
+		// break out of its line and inject inventory host vars such as
+		// ansible_connection or ansible_python_interpreter.
+		fmt.Fprintf(tmpInv, "    %s:\n", yamlScalar(h.hostname))
+		fmt.Fprintf(tmpInv, "      dirq_agent_id: %s\n", yamlScalar(h.agentID))
+		fmt.Fprintf(tmpInv, "      dirq_server_url: %s\n", yamlScalar(serverURL))
 		fmt.Fprintf(tmpInv, "      ansible_connection: dirq\n")
 
 		isWindows := strings.EqualFold(h.os, "windows")
@@ -4102,20 +4142,24 @@ func writeInventory(hosts []queryHost) (string, error) {
 			if v, ok := h.tags["ansible_shell_type"]; ok {
 				shellType = v
 			}
-			fmt.Fprintf(tmpInv, "      ansible_shell_type: %s\n", shellType)
+			fmt.Fprintf(tmpInv, "      ansible_shell_type: %s\n", yamlScalar(shellType))
 		} else {
 			// Use ansible_python_interpreter from tag or auto-detected value.
 			pythonInterp := "/usr/bin/python3"
 			if v, ok := h.tags["ansible_python_interpreter"]; ok {
 				pythonInterp = v
 			}
-			fmt.Fprintf(tmpInv, "      ansible_python_interpreter: %s\n", pythonInterp)
+			fmt.Fprintf(tmpInv, "      ansible_python_interpreter: %s\n", yamlScalar(pythonInterp))
 		}
 
-		// Pass through any other ansible_* tags as host vars.
+		// Pass through any other ansible_* tags as host vars. Keys are
+		// constrained to the ansible_ prefix; values are quoted to prevent
+		// YAML/host-var injection. The server already strips agent
+		// self-reported ansible_* tags at registration, so these reach here
+		// only when set by an operator through the admin tag API.
 		for k, v := range h.tags {
 			if strings.HasPrefix(k, "ansible_") && k != "ansible_python_interpreter" && k != "ansible_shell_type" {
-				fmt.Fprintf(tmpInv, "      %s: %s\n", k, v)
+				fmt.Fprintf(tmpInv, "      %s: %s\n", k, yamlScalar(v))
 			}
 		}
 	}

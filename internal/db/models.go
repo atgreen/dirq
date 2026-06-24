@@ -5,8 +5,39 @@ package db
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
+
+// EncodeAAPUsers serializes an aap_user allowlist into the comma-separated form
+// stored in the api_tokens.aap_users column. Entries are trimmed and empties
+// dropped; a nil/empty list encodes to "" (an unrestricted token).
+func EncodeAAPUsers(users []string) string {
+	cleaned := make([]string, 0, len(users))
+	for _, u := range users {
+		if u = strings.TrimSpace(u); u != "" {
+			cleaned = append(cleaned, u)
+		}
+	}
+	return strings.Join(cleaned, ",")
+}
+
+// ParseAAPUsers is the inverse of EncodeAAPUsers. An empty column yields nil
+// (unrestricted).
+func ParseAAPUsers(col string) []string {
+	col = strings.TrimSpace(col)
+	if col == "" {
+		return nil
+	}
+	parts := strings.Split(col, ",")
+	users := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			users = append(users, p)
+		}
+	}
+	return users
+}
 
 // Agent represents a registered agent in the system.
 type Agent struct {
@@ -73,6 +104,7 @@ type Token struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
 	Scope     string     `json:"scope"`
+	AAPUsers  []string   `json:"aap_users,omitempty"` // allowlist of aap_user values this token may assert; empty = unrestricted
 	CreatedAt time.Time  `json:"created_at"`
 	LastUsed  *time.Time `json:"last_used,omitempty"`
 }
