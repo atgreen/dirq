@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,16 @@ import (
 	"github.com/atgreen/dirq/internal/tlsutil"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
+
+// isReservedAgentTagKey reports whether a tag key is reserved for operator
+// use and must be rejected when supplied by an agent at registration.
+// ansible_* tags become ansible_* Ansible inventory host variables; letting
+// an agent self-assign them (e.g. ansible_connection=local,
+// ansible_python_interpreter=<command>) is a control-node command-execution
+// vector. Operators set these per host through the admin tag API instead.
+func isReservedAgentTagKey(key string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "ansible_")
+}
 
 // Register handles agent registration. The agent connects once at bootstrap,
 // gets assigned an ID, role, and peer list, then disconnects.
@@ -38,8 +49,23 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		}
 	}
 
+	// Agents must not be able to self-assign reserved tag keys at
+	// registration. ansible_* tags are turned into ansible_* Ansible
+	// inventory host variables by the CLI inventory generator
+	// (writeInventory) and the collection inventory plugin — including
+	// ansible_connection and ansible_python_interpreter. A rogue agent
+	// that self-reported them could hijack how the Ansible control node
+	// connects to and executes against its host, up to command execution
+	// on the controller. Operators can still set these per host via the
+	// admin tag API (PUT/PATCH /api/v1/hosts/{id}/tags), which is the
+	// trusted channel.
 	tags := make(map[string]string)
 	for k, v := range req.Tags {
+		if isReservedAgentTagKey(k) {
+			s.log.Warn("ignoring reserved tag key from agent registration",
+				"hostname", req.Hostname, "tag_key", k)
+			continue
+		}
 		tags[k] = v
 	}
 
