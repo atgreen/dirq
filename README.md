@@ -50,6 +50,7 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 
 - [Architecture](#architecture) — how the mesh works, scaling
 - [Quick Start](#quick-start-podman-on-laptop) — run locally in 5 minutes
+- [Production Deployment](#production-deployment) — running a real multi-host fleet
 - [Query DSL](#query-dsl) — the fleet query language
 - [Ansible Integration](#ansible-integration) — inventory, groups, facts, query-based targeting
 - [Execution Transport](#execution-transport) — run Ansible through the mesh
@@ -173,6 +174,16 @@ immediately reassigns its orphaned children to other healthy nodes.
 
 ## Quick Start (Podman on Laptop)
 
+> **This is a single-host development setup — do not use it as-is for a
+> multi-host fleet.** The `podman-compose` server publishes its gRPC port
+> through podman's NAT, so the server sees every agent's source IP as a
+> podman-bridge address (`10.89.0.x`) instead of the agent's real host IP. It
+> then advertises those unroutable addresses to other agents as relay parents,
+> and the mesh fails to connect across hosts (`dial tcp 10.89.0.x:50052: i/o
+> timeout`, agents stuck re-registering, `dirq debug ping` timing out). It
+> works on one machine only because every container shares one bridge. For a
+> real fleet, see [Production Deployment](#production-deployment).
+
 ### Prerequisites
 
 - Go 1.26+
@@ -262,6 +273,69 @@ GOOS=windows GOARCH=amd64 go build -o bin/dirq-agent.exe ./cmd/dirq-agent
 .\bin\dirq-agent.exe install
 sc start DirQAgent
 ```
+
+---
+
+## Production Deployment
+
+The [podman quick start](#quick-start-podman-on-laptop) is a single-host
+laptop convenience. A real multi-host fleet has two hard requirements it does
+not meet — getting either wrong leaves agents stuck re-registering with the
+mesh unable to route between hosts.
+
+### 1. The server must observe each agent's real, routable IP
+
+During registration the server records the **source IP** of the agent's gRPC
+connection and advertises it to the rest of the mesh as that agent's relay
+address (so other agents know where to attach). If the server runs **behind
+NAT** — most commonly a `podman`/`docker` container with **published ports**
+(`-p 50051:50051`) — it sees a bridge address (`10.89.0.x`) instead of the
+agent's host IP and hands that unroutable address to everyone. The symptom is
+`dial tcp 10.89.0.x:50052: i/o timeout` in agent logs and `dirq debug ping`
+timing out even though `dirq hosts list` shows the agent "online" (it
+registered, but never actually attached to its parent — a *ghost-online*
+node).
+
+Run the server so it sees real client IPs:
+
+- **Native (recommended).** Install the `dirq-server` package and run it as a
+  systemd service on a host with a routable address. This is what the RPM/DEB
+  packaging targets.
+- **Containerized.** Give the container **host networking**
+  (`network_mode: host` in compose, or `--network=host`) so it shares the
+  host's network namespace. Do **not** publish the gRPC port with `-p` — that
+  is what masks the source IP. With host networking, point `DIRQ_DB_URL` at the
+  host (`@127.0.0.1:5432`, not a compose service name) and bind the HTTP/gRPC
+  listeners directly (`DIRQ_HTTP_ADDR`, `DIRQ_GRPC_ADDR`).
+
+Either way, open `50052/tcp` **host-to-host** between agents (so they can reach
+their relay parents) and `50051/tcp` from agents to the server.
+
+### 2. Persist server state across restarts
+
+The server's Ed25519 **signing key**, **CA**, and **bootstrap token** live in
+`/var/lib/dirq`. If that directory is ephemeral (a container with no volume),
+recreating or rebuilding the server **regenerates the signing key**, and every
+already-registered agent then rejects the server's signed messages until you
+re-distribute the new `agent.conf`. Mount `/var/lib/dirq` on a persistent
+volume, and persist the Postgres data directory too. After any signing-key
+change, re-copy the freshly generated `agent.conf` to the agents.
+
+### 3. Agents
+
+Install the `dirq-agent` package (native systemd service) and drop in the
+server-generated config — see [Deploy agents](#2-deploy-agents). Prefer the
+packaged unit over a hand-rolled one so config paths, the data directory, and
+restart behavior match the docs.
+
+### 4. Enable TLS and authentication
+
+The quick start sets `DIRQ_TLS_DISABLED=true` and `DIRQ_AUTH_DISABLED=true`
+for convenience. **In production both must be enabled** — with them off, API
+tokens and remote-exec payloads cross the network in cleartext, and any host
+that can reach the gRPC port can register or run commands. Distribute the
+server's CA to agents (via `agent.conf`) so TLS verifies, and set a
+[registration secret](#registration-authentication). See [Security](#security).
 
 ---
 
@@ -653,6 +727,14 @@ Multi-VH is **Linux-only** (Windows VMs stay single-tenant).
 | `dirq debug ping <hostname>` | Send a no-op exec through the mesh and report round-trip timing. Slowest of the three lookup tools but the only one that proves a message actually reaches the agent right now. |
 
 The three lookup tools form a hierarchy of trust — `path` (DB), then `stream` (live process state), then `ping` (end-to-end proof).
+
+### Common symptoms
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Agents show **online** in `dirq hosts list` but `dirq debug ping` times out; agent logs loop on `dial tcp 10.89.0.x:50052: i/o timeout` | The server is advertising an unroutable relay address — it observed a NAT/bridge source IP at registration (typically the server running in a container with **published ports**). The agent registered but never attached to its parent (*ghost-online*). | Run the server so it sees real agent IPs (native or host networking, no `-p` on the gRPC port) and open `50052/tcp` host-to-host. See [Production Deployment](#production-deployment). |
+| Exec / query / ping to agents start timing out **after a server restart**; agent logs show `rejected unsigned or invalid server message` | The server's signing key changed — an ephemeral `/var/lib/dirq` regenerated it on restart while agents still trust the old key. | Persist `/var/lib/dirq`; re-distribute the regenerated `agent.conf` and restart the affected agents. See [Production Deployment](#production-deployment). |
+| Registration never succeeds: `tls: first record does not look like a TLS handshake` | TLS mode mismatch — one side speaks TLS, the other plaintext. `DIRQ_TLS_INSECURE` skips cert verification but **still uses TLS**; `DIRQ_TLS_DISABLED` turns TLS off entirely. | Make the mode identical on the server and every agent. |
 
 ---
 
@@ -1120,6 +1202,10 @@ Session tokens issued during registration are Ed25519-signed and time-stamped. T
 ---
 
 ## Multi-Datacenter Deployment
+
+> The [Production Deployment](#production-deployment) fundamentals apply to
+> every server below — each must observe agents' real source IPs and persist
+> `/var/lib/dirq`.
 
 Run one DirQ server per datacenter. Meshes never span DC boundaries.
 

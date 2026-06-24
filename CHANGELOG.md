@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Agents can no longer self-assign reserved `ansible_*` tag keys at registration.** Those keys become `ansible_*` Ansible inventory host variables (including `ansible_connection` and `ansible_python_interpreter`) when the CLI inventory generator and collection inventory plugin render the fleet — a rogue agent that self-reported them could hijack how the Ansible control node connects to and executes against its host, up to command execution on the controller. The server now drops reserved keys at registration (logging a warning); operators still set them per host through the trusted admin tag API.
 - **Generated Ansible inventory values are emitted as escaped, quoted YAML scalars.** An agent-controlled tag value, hostname, or agent ID can no longer break out of its line to inject additional inventory keys.
 
+### Documentation
+
+- **New "Production Deployment" section** distinguishing the single-host podman quick start from a real multi-host fleet. It documents the two requirements the quick start does not meet: the server must observe each agent's **real source IP** at registration (running behind container-published ports makes it advertise unroutable `10.89.0.x` relay addresses, leaving agents *ghost-online* and looping on `dial tcp 10.89.0.x:50052: i/o timeout`), and **`/var/lib/dirq` must be persisted** (an ephemeral signing key regenerated on restart makes every already-registered agent reject the server's signed messages). Adds a Debug & Diagnostics troubleshooting table mapping those symptoms — plus the `tls: first record does not look like a TLS handshake` TLS-mode mismatch — to cause and fix, a single-host-only callout on the quick start, cross-links from Multi-Datacenter Deployment and `HA.md` (with the Kubernetes client-source-IP-preservation nuance), and a development-only warning header on `podman-compose.yml`.
+
 ## [0.23.2] - 2026-05-23
 
 ### Fixed

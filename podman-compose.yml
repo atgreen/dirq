@@ -1,5 +1,16 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Anthony Green <green@moxielogic.com>
+#
+# DEVELOPMENT / SINGLE-HOST ONLY — not a fleet deployment.
+#
+# This stack publishes the server's gRPC port through podman's NAT, so the
+# server sees agents' source IPs as podman-bridge addresses (10.89.0.x) and
+# advertises those unroutable addresses to the mesh. That is fine on one
+# machine (every container shares one bridge) but breaks a multi-host fleet:
+# agents get a parent address they can't dial and loop on
+# "dial tcp 10.89.0.x:50052: i/o timeout". For a real fleet, run the server
+# natively or with host networking and persist /var/lib/dirq — see
+# "Production Deployment" in README.md.
 
 version: "3"
 
