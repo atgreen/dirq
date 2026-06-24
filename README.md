@@ -44,6 +44,7 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 - **Structured query model:** modules return normalized data instead of raw command output.
 - **Ansible compatibility:** DirQ acts as query engine, inventory source, and execution transport — existing playbooks work without modification.
 - **Inventory and execution in one system:** the same platform that knows the fleet can also target it.
+- **Agent-side policy enforcement ([OPA/Rego](#agent-side-policy-oparego)):** each host can locally allow or deny exec/file/deploy operations with a Rego policy — defense in depth even for validly-authorized requests. Express segregation of duties, break-glass, and per-AAP-user authorization for regulated fleets.
 
 ## Table of Contents
 
@@ -57,7 +58,7 @@ DirQ is useful when traditional fleet access patterns start breaking down:
 - [Fleet-Scale Emulation](#fleet-scale-emulation) — one agent process hosting N virtual hosts
 - [Debug & Diagnostics](#debug--diagnostics) — `dirq debug` subcommands for in-flight sessions and mesh reachability
 - [Observability](#observability) — Prometheus `/metrics` and Grafana
-- [Security](#security) — TLS, authentication, exec safety
+- [Security](#security) — TLS, authentication, exec safety, agent-side OPA/Rego policy
 - [High Availability](HA.md) — multi-pod deployment on OpenShift/Kubernetes
 - [Multi-Datacenter Deployment](#multi-datacenter-deployment) — isolated meshes, per-DC routing
 - [AAP Integration](#aap-integration) — collection, EE, credentials, setup checklist
