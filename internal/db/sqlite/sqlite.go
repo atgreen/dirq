@@ -76,10 +76,22 @@ func (d *DB) Kind() string {
 	return "sqlite"
 }
 
-// RunMigrations executes the embedded schema.sql against the database.
+// RunMigrations executes the embedded schema.sql against the database, then
+// applies idempotent column additions for databases created by older versions.
 func (d *DB) RunMigrations(ctx context.Context) error {
-	_, err := d.db.ExecContext(ctx, schemaSQL)
-	return err
+	if _, err := d.db.ExecContext(ctx, schemaSQL); err != nil {
+		return err
+	}
+	// SQLite lacks ADD COLUMN IF NOT EXISTS, so run each addition and tolerate
+	// the duplicate-column error when the column already exists.
+	for _, stmt := range []string{
+		`ALTER TABLE api_tokens ADD COLUMN aap_users TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := d.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	return nil
 }
 
 // generateUUID creates a random UUID v4 string.

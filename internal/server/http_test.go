@@ -22,12 +22,13 @@ var _ db.DB = (*mockDB)(nil)
 
 // mockDB implements the DB interface for testing.
 type mockDB struct {
-	tokens     []mockToken
-	agents     []db.Agent
-	execLogs   []db.ExecLog
-	queries    []db.Query
-	facts      map[string][]db.Fact
-	lastDelete string
+	tokens             []mockToken
+	agents             []db.Agent
+	execLogs           []db.ExecLog
+	queries            []db.Query
+	facts              map[string][]db.Fact
+	lastDelete         string
+	lastCreateAAPUsers []string
 }
 
 type mockToken struct {
@@ -53,7 +54,8 @@ func (m *mockDB) ValidateToken(_ context.Context, plaintext string) (db.Token, e
 	return db.Token{}, pgx.ErrNoRows
 }
 
-func (m *mockDB) CreateToken(_ context.Context, name, scope string) (string, error) {
+func (m *mockDB) CreateToken(_ context.Context, name, scope string, aapUsers []string) (string, error) {
+	m.lastCreateAAPUsers = aapUsers
 	return "mock-token-plaintext", nil
 }
 
@@ -264,7 +266,9 @@ func TestAuthMiddleware_ValidToken_SetsScope(t *testing.T) {
 
 	var gotScope string
 	handler := s.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		gotScope, _ = r.Context().Value(tokenScopeKey).(string)
+		if tok, ok := r.Context().Value(tokenCtxKey).(db.Token); ok {
+			gotScope = tok.Scope
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -313,7 +317,7 @@ func TestRequireScope_AdminAllowed(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/test", nil)
-	ctx := context.WithValue(req.Context(), tokenScopeKey, "admin")
+	ctx := context.WithValue(req.Context(), tokenCtxKey, db.Token{Scope: "admin"})
 	rec := httptest.NewRecorder()
 	handler(rec, req.WithContext(ctx))
 
@@ -328,7 +332,7 @@ func TestRequireScope_ReadonlyOnReadEndpoint(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/test", nil)
-	ctx := context.WithValue(req.Context(), tokenScopeKey, "readonly")
+	ctx := context.WithValue(req.Context(), tokenCtxKey, db.Token{Scope: "readonly"})
 	rec := httptest.NewRecorder()
 	handler(rec, req.WithContext(ctx))
 
@@ -343,7 +347,7 @@ func TestRequireScope_ReadonlyOnAdminEndpoint(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("POST", "/test", nil)
-	ctx := context.WithValue(req.Context(), tokenScopeKey, "readonly")
+	ctx := context.WithValue(req.Context(), tokenCtxKey, db.Token{Scope: "readonly"})
 	rec := httptest.NewRecorder()
 	handler(rec, req.WithContext(ctx))
 
@@ -373,7 +377,7 @@ func TestRequireScope_UnknownScope(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/test", nil)
-	ctx := context.WithValue(req.Context(), tokenScopeKey, "bogus")
+	ctx := context.WithValue(req.Context(), tokenCtxKey, db.Token{Scope: "bogus"})
 	rec := httptest.NewRecorder()
 	handler(rec, req.WithContext(ctx))
 

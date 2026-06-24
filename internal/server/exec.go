@@ -205,6 +205,11 @@ func (s *Server) handleExecCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.bindAAP(r, req.AAPUser); err != nil {
+		httpError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	// Verify agent exists and has exec enabled.
 	agent, err := s.db.GetAgent(r.Context(), req.AgentID)
 	if err != nil {
@@ -327,6 +332,11 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.bindAAP(r, req.AAPUser); err != nil {
+		httpError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	if req.AgentID == "" || req.DestPath == "" {
 		httpError(w, http.StatusBadRequest, "agent_id and dest_path are required")
 		return
@@ -436,6 +446,11 @@ func (s *Server) handleFetchFile(w http.ResponseWriter, r *http.Request) {
 
 	if req.AgentID == "" || req.SrcPath == "" {
 		httpError(w, http.StatusBadRequest, "agent_id and src_path are required")
+		return
+	}
+
+	if err := s.bindAAP(r, req.AAPUser); err != nil {
+		httpError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -562,6 +577,10 @@ type execMultiRequest struct {
 	BecomeMethod string            `json:"become_method"`
 	Environment  map[string]string `json:"environment"`
 	Timeout      int               `json:"timeout"`
+	// AAP attribution
+	AAPJobID       string `json:"aap_job_id"`
+	AAPJobTemplate string `json:"aap_job_template"`
+	AAPUser        string `json:"aap_user"`
 }
 
 // execMultiResult is each NDJSON line streamed as agents respond.
@@ -639,6 +658,11 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Query == "" {
 		httpError(w, http.StatusBadRequest, "query is required (used to select target agents)")
+		return
+	}
+
+	if err := s.bindAAP(r, req.AAPUser); err != nil {
+		httpError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -820,6 +844,9 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 				BecomeMethod:   req.BecomeMethod,
 				Environment:    req.Environment,
 				TimeoutSeconds: int32(timeout),
+				AapJobId:       req.AAPJobID,
+				AapJobTemplate: req.AAPJobTemplate,
+				AapUser:        req.AAPUser,
 			},
 		},
 	}

@@ -32,7 +32,7 @@ type DB interface {
 
 	// Tokens
 	ValidateToken(ctx context.Context, plaintext string) (Token, error)
-	CreateToken(ctx context.Context, name, scope string) (string, error)
+	CreateToken(ctx context.Context, name, scope string, aapUsers []string) (string, error)
 	ListTokens(ctx context.Context) ([]Token, error)
 	DeleteToken(ctx context.Context, name string) error
 

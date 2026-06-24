@@ -22,7 +22,7 @@ const (
 
 // CreateToken generates a random API token, stores its bcrypt hash and a
 // non-secret prefix for fast lookup, and returns the plaintext token.
-func (d *DB) CreateToken(ctx context.Context, name, scope string) (string, error) {
+func (d *DB) CreateToken(ctx context.Context, name, scope string, aapUsers []string) (string, error) {
 	raw := make([]byte, tokenByteLength)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("generate token: %w", err)
@@ -38,9 +38,9 @@ func (d *DB) CreateToken(ctx context.Context, name, scope string) (string, error
 	id := generateUUID()
 
 	_, err = d.db.ExecContext(ctx, `
-		INSERT INTO api_tokens (id, name, token_prefix, token_hash, scope)
-		VALUES (?, ?, ?, ?, ?)`,
-		id, name, prefix, string(hash), scope,
+		INSERT INTO api_tokens (id, name, token_prefix, token_hash, scope, aap_users)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		id, name, prefix, string(hash), scope, db.EncodeAAPUsers(aapUsers),
 	)
 	if err != nil {
 		return "", err
@@ -57,7 +57,7 @@ func (d *DB) ValidateToken(ctx context.Context, plaintext string) (db.Token, err
 	prefix := plaintext[:tokenPrefixChars]
 
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, name, token_hash, scope, created_at, last_used
+		SELECT id, name, token_hash, scope, aap_users, created_at, last_used
 		FROM api_tokens
 		WHERE token_prefix = ?`, prefix)
 	if err != nil {
@@ -68,11 +68,13 @@ func (d *DB) ValidateToken(ctx context.Context, plaintext string) (db.Token, err
 	for rows.Next() {
 		var t db.Token
 		var hash string
+		var aapUsers string
 		var createdAt string
 		var lastUsed sql.NullString
-		if err := rows.Scan(&t.ID, &t.Name, &hash, &t.Scope, &createdAt, &lastUsed); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &hash, &t.Scope, &aapUsers, &createdAt, &lastUsed); err != nil {
 			return db.Token{}, err
 		}
+		t.AAPUsers = db.ParseAAPUsers(aapUsers)
 		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		if lastUsed.Valid {
 			lu, _ := time.Parse(time.RFC3339, lastUsed.String)
@@ -95,7 +97,7 @@ func (d *DB) ValidateToken(ctx context.Context, plaintext string) (db.Token, err
 // ListTokens returns all API tokens (without hashes).
 func (d *DB) ListTokens(ctx context.Context) ([]db.Token, error) {
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, name, scope, created_at, last_used
+		SELECT id, name, scope, aap_users, created_at, last_used
 		FROM api_tokens
 		ORDER BY created_at`)
 	if err != nil {
@@ -106,11 +108,13 @@ func (d *DB) ListTokens(ctx context.Context) ([]db.Token, error) {
 	var tokens []db.Token
 	for rows.Next() {
 		var t db.Token
+		var aapUsers string
 		var createdAt string
 		var lastUsed sql.NullString
-		if err := rows.Scan(&t.ID, &t.Name, &t.Scope, &createdAt, &lastUsed); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Scope, &aapUsers, &createdAt, &lastUsed); err != nil {
 			return nil, err
 		}
+		t.AAPUsers = db.ParseAAPUsers(aapUsers)
 		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		if lastUsed.Valid {
 			lu, _ := time.Parse(time.RFC3339, lastUsed.String)

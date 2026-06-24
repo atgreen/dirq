@@ -527,30 +527,38 @@ func tokenCmd() *cobra.Command {
 	}
 
 	var scope string
+	var aapUsers []string
 	createCmd := &cobra.Command{
 		Use:   "create [name]",
 		Short: "Create a new API token",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body, _ := json.Marshal(map[string]string{
-				"name":  args[0],
-				"scope": scope,
+			body, _ := json.Marshal(map[string]any{
+				"name":      args[0],
+				"scope":     scope,
+				"aap_users": aapUsers,
 			})
 			resp, err := apiRequest("POST", "/api/v1/tokens", bytes.NewReader(body))
 			if err != nil {
 				return err
 			}
 			var result struct {
-				Name  string `json:"name"`
-				Token string `json:"token"`
-				Scope string `json:"scope"`
+				Name     string   `json:"name"`
+				Token    string   `json:"token"`
+				Scope    string   `json:"scope"`
+				AAPUsers []string `json:"aap_users"`
 			}
 			json.Unmarshal(resp, &result)
-			fmt.Printf("Token created:\n  Name:  %s\n  Scope: %s\n  Token: %s\n\nSave this token — it cannot be retrieved later.\n", result.Name, result.Scope, result.Token)
+			bound := "(unrestricted)"
+			if len(result.AAPUsers) > 0 {
+				bound = strings.Join(result.AAPUsers, ", ")
+			}
+			fmt.Printf("Token created:\n  Name:      %s\n  Scope:     %s\n  AAP users: %s\n  Token:     %s\n\nSave this token — it cannot be retrieved later.\n", result.Name, result.Scope, bound, result.Token)
 			return nil
 		},
 	}
 	createCmd.Flags().StringVar(&scope, "scope", "admin", "token scope (admin or readonly)")
+	createCmd.Flags().StringSliceVar(&aapUsers, "aap-user", nil, "restrict this token to the given aap_user value(s); repeatable. Required for write ops when the server has require_aap_binding=true")
 
 	listCmd := &cobra.Command{
 		Use:   "list",

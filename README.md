@@ -1332,6 +1332,7 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 | `max_zone_leaders` | `DIRQ_MAX_ZONE_LEADERS` | `5` | Max direct server connections |
 | `max_children` | `DIRQ_MAX_CHILDREN` | `50` | Max children per node (fan-out) |
 | `auth_disabled` | `DIRQ_AUTH_DISABLED` | `false` | Disable API auth (not recommended) |
+| `require_aap_binding` | `DIRQ_REQUIRE_AAP_BINDING` | `false` | When true, reject write ops whose `aap_user` the token isn't bound to, and forbid unbound tokens from write ops (see [Security](#aap-user-binding)) |
 | `registration_secret` | `DIRQ_REGISTRATION_SECRET` | | Pre-shared secret for agent registration (see [Security](#registration-authentication)) |
 | `leader_election` | `DIRQ_LEADER_ELECTION` | `false` | Enable Postgres advisory-lock leader election for multi-pod HA (see [HA.md](HA.md)) |
 | `fact_flush_interval` | `DIRQ_FACT_FLUSH_INTERVAL` | `250ms` | Fact-cache batch flush interval |
@@ -1351,8 +1352,58 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 | `virtual_hosts` | `DIRQ_VIRTUAL_HOSTS` | `0` | Spawn N in-process virtual hosts for fleet emulation (Linux only) |
 | `hostname_prefix` | `DIRQ_HOSTNAME_PREFIX` | | Prefix for synthesized virtual-host names (`<prefix>-NNNNN`) |
 | `registration_jitter_seconds` | `DIRQ_REGISTRATION_JITTER_SECONDS` | (auto for multi-VH) | Cap on random startup delay before first `Register`; smooths thundering-herd boot |
+| `policy_file` | `DIRQ_POLICY_FILE` | | Path to a local OPA/Rego policy evaluated before exec/file/deploy side effects (see [Agent-side policy](#agent-side-policy-oparego)) |
+| `policy_fail_closed` | `DIRQ_POLICY_FAIL_CLOSED` | `true` when `policy_file` is set | Deny if the policy fails to load or evaluate |
+| `policy_query` | `DIRQ_POLICY_QUERY` | `data.dirq.agent.allow` | Rego decision query |
 
 Tags can be set in the config file as an indented block under `tags:`, or via the `DIRQ_TAGS` environment variable as comma-separated `key=value` pairs. Both sources are merged, with environment variables taking precedence for duplicate keys.
+
+#### Agent-side policy (OPA/Rego)
+
+An optional Rego policy lets each agent refuse local operations even when the
+server validly authorized them — defense in depth, not a replacement for
+server-side authorization. Set `policy_file` and the agent compiles the policy
+at startup and evaluates it before every `exec`, `put_file`, `fetch_file`, and
+`deploy` side effect. Denied operations return a terminal `policy denied: …`
+error and run nothing locally.
+
+```
+exec_enabled: true
+policy_file: /etc/dirq/policy.rego
+policy_fail_closed: true
+```
+
+The policy queries `data.dirq.agent.allow` (boolean) and an optional
+`data.dirq.agent.reason` (string). Input is a stable, documented JSON document
+per operation — never raw file content, script bodies, or environment values
+(those are reduced to sizes, SHA-256 hashes, and key names). For example:
+
+```rego
+package dirq.agent
+
+default allow := false
+default reason := "denied by default"
+
+# Prod hosts: only an approved AAP template may restart nginx.
+allow if {
+	input.operation == "exec"
+	input.tags.env == "prod"
+	input.aap_job_template == "restart-nginx"
+	input.command == "systemctl restart nginx"
+}
+
+# Writes limited to one app's config directory.
+allow if {
+	input.operation == "put_file"
+	startswith(input.dest_path, "/etc/myapp/")
+	input.content_size <= 1048576
+}
+```
+
+Ready-to-adapt examples (minimal allowlist, production AAP-only, file-path
+restrictions) ship under [`examples/policy/`](examples/policy/). With no
+`policy_file` configured, agent behavior is unchanged. See
+[SECURITY.md](SECURITY.md#agent-side-policy-oparego) for the full model.
 
 #### TLS (server and agent)
 

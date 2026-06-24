@@ -79,9 +79,13 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     token_prefix TEXT NOT NULL DEFAULT '',  -- first 8 hex chars for indexed lookup
     token_hash   TEXT NOT NULL,             -- bcrypt hash
     scope        TEXT NOT NULL DEFAULT 'admin', -- 'admin' or 'readonly'
+    aap_users    TEXT NOT NULL DEFAULT '',      -- comma-separated allowlist of aap_user values this token may assert; empty = unrestricted
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used    TIMESTAMPTZ
 );
+
+-- Backfill for databases created before aap_users existed.
+ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS aap_users TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens (token_prefix);
 

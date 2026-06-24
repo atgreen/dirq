@@ -46,6 +46,17 @@ func main() {
 		jitterSecs = 0
 	}
 
+	// Agent-side policy (optional). Fail-closed defaults to true once a policy
+	// file is configured, so a misconfigured production agent denies rather
+	// than silently allows.
+	policyFile := config.EnvOr("DIRQ_POLICY_FILE", fileCfg, "policy_file", "")
+	failClosedDefault := "false"
+	if policyFile != "" {
+		failClosedDefault = "true"
+	}
+	policyFailClosed := config.EnvOr("DIRQ_POLICY_FAIL_CLOSED", fileCfg, "policy_fail_closed", failClosedDefault) == "true"
+	policyQuery := config.EnvOr("DIRQ_POLICY_QUERY", fileCfg, "policy_query", "")
+
 	baseCfg := agent.Config{
 		ServerAddr:         config.EnvOr("DIRQ_SERVER", fileCfg, "server", "localhost:50051"),
 		ListenAddr:         config.EnvOr("DIRQ_LISTEN", fileCfg, "listen", ":50052"),
@@ -56,6 +67,9 @@ func main() {
 		FileCfg:            fileCfg,
 		Hostname:           config.EnvOr("DIRQ_HOSTNAME", fileCfg, "hostname", ""),
 		RegistrationJitter: time.Duration(jitterSecs) * time.Second,
+		PolicyFile:         policyFile,
+		PolicyFailClosed:   policyFailClosed,
+		PolicyQuery:        policyQuery,
 	}
 
 	// Emulation mode: spawn N virtual-host agents in this process.  Each one
