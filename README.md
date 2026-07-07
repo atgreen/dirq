@@ -130,11 +130,11 @@ The live mesh shape is held **in memory** by the server (`MeshTopology`, RWMutex
 
 Registration arrivals flow through a **burst-aware batcher** (default 200 ms window, 200 max batch). On flush, the assigner prefers one zone leader per distinct source IP — so a thundering herd from a single subnet can't fill all ZL slots from one host. There is no proactive rebalancer; reactive recovery (`reassignOrphans` on stream close, fallback parents + orphan promotion via `RequestPeers`) handles every churn case the old proactive paths used to.
 
-### Honest completion reporting
+### Completion Reporting
 
-Broadcast dispatchers (query, exec, deploy) use **per-target accounting** instead of an idle timeout. A session's loop runs until every target is accounted — either by a real response or a synthetic disconnect failure synthesized from one of four mesh-state signals (zone-leader stream close, `PeerDisconnected` from a relay, the periodic reaper, or a fanout-buffer-full at dispatch time). All four paths funnel through one first-terminal-wins gate (`ClaimAgent`) so no agent is counted twice.
+Broadcast operations (query, exec, deploy) track completion **per target**, not by watching for silence. A session ends when every target has either responded or been positively identified as disconnected — so `dirq exec --timeout 3600 -- yum upgrade -y` runs the full hour even if fast and slow responders leave long gaps between replies. A hard timeout of `command_timeout + 30 s` remains as a safety net.
 
-The hard timeout is `command_timeout + 30 s` and is a true safety net — rarely the actual completion driver. Practical consequence: `dirq exec --timeout 3600 -- yum upgrade -y` doesn't get cut off at 30 s of silence between fast and slow responders. When a dispatcher can't account for everyone, the CLI prints `Status: incomplete | Targets: N | Received: M | Missing: K` instead of claiming completion.
+If some targets can't be accounted for, the CLI reports it rather than claiming success: `Status: incomplete | Targets: N | Received: M | Missing: K`.
 
 ### Result Aggregation
 
