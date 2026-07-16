@@ -5,7 +5,7 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.24.0] - 2026-07-16
 
 ### Added
 
@@ -731,6 +731,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.24.0]: https://github.com/atgreen/dirq/releases/tag/v0.24.0
 [0.23.2]: https://github.com/atgreen/dirq/releases/tag/v0.23.2
 [0.23.1]: https://github.com/atgreen/dirq/releases/tag/v0.23.1
 [0.23.0]: https://github.com/atgreen/dirq/releases/tag/v0.23.0
