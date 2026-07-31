@@ -5,6 +5,20 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.25.0] - 2026-07-31
+
+### Added
+
+- **Reboot-aware mesh placement.** The topology builder now treats a client that has recently rebooted as more likely to reboot again, and places it accordingly — because reboots cluster in time (a flapping host tends to keep flapping) and in space (a rack or hypervisor drops together), and a parent's failure orphans its entire subtree. Each node carries a time-decayed *flap score* (bumped on every offline→online re-registration, decaying as `exp(-elapsed/FlapWindow)`); once it crosses `FlapThreshold` the host goes on probation — capped at `ProbationChildCap` children (default `0`, so it stays a leaf), deprioritized in parent selection, and never promoted to zone leader while a stabler candidate exists. Correlated failures are handled by bucketing hosts into network-prefix *failure domains*: when enough members of a domain flap, the whole domain is treated as hot and fallback parents are steered to a different domain, while each host's personal child cap stays hard so the domain signal never starves the tree. New observability surfaces the behavior: `flap_score`, `on_probation`, and `failure_domain` on the hosts API, plus `dirq_agents_on_probation` / `dirq_failure_domains_hot` gauges and a `dirq_orphan_reassign_total{action}` counter. All knobs are opt-in via env/config — `DIRQ_FLAP_WINDOW`, `DIRQ_FLAP_THRESHOLD`, `DIRQ_PROBATION_CHILD_CAP`, `DIRQ_FAILURE_DOMAIN_PREFIX_V4`/`_V6`, `DIRQ_DOMAIN_FLAP_MIN_NODES` — with `FlapThreshold=0` reverting to the previous pure breadth-first fill, so existing fleets behave exactly as before until the feature is turned on.
+
+### Security
+
+- **Bumped `google.golang.org/grpc` to v1.83.0** (GHSA-hrxh-6v49-42gf — gRPC-Go xDS RBAC and HTTP/2 vulnerabilities).
+
+### Documentation
+
+- **Documentation moved to a hosted MkDocs site** published via GitHub Pages, restructured along the [Diátaxis](https://diataxis.fr/) framework (tutorials / how-to / reference / explanation) with a new design & architecture overview extracted from the README.
+
 ## [0.24.0] - 2026-07-16
 
 ### Added
@@ -731,6 +745,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.25.0]: https://github.com/atgreen/dirq/releases/tag/v0.25.0
 [0.24.0]: https://github.com/atgreen/dirq/releases/tag/v0.24.0
 [0.23.2]: https://github.com/atgreen/dirq/releases/tag/v0.23.2
 [0.23.1]: https://github.com/atgreen/dirq/releases/tag/v0.23.1
