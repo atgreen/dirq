@@ -52,7 +52,16 @@ func main() {
 		FactFlushInterval:  cfgDur("DIRQ_FACT_FLUSH_INTERVAL", fileCfg, "fact_flush_interval", 0),
 		FactFlushSize:      cfgInt("DIRQ_FACT_FLUSH_SIZE", fileCfg, "fact_flush_size", 0),
 		FactStageCap:       cfgInt("DIRQ_FACT_STAGE_CAP", fileCfg, "fact_stage_cap", 0),
-		FileCfg:            fileCfg,
+		// Reboot-aware placement. Fallback -1 means "unset — keep the built-in
+		// default"; an explicit 0 is honored (e.g. DIRQ_FLAP_THRESHOLD=0 turns
+		// reliability-aware placement off).
+		FlapWindow:            cfgDur("DIRQ_FLAP_WINDOW", fileCfg, "flap_window", -1),
+		FlapThreshold:         cfgFloat("DIRQ_FLAP_THRESHOLD", fileCfg, "flap_threshold", -1),
+		ProbationChildCap:     cfgInt("DIRQ_PROBATION_CHILD_CAP", fileCfg, "probation_child_cap", -1),
+		FailureDomainPrefixV4: cfgInt("DIRQ_FAILURE_DOMAIN_PREFIX_V4", fileCfg, "failure_domain_prefix_v4", -1),
+		FailureDomainPrefixV6: cfgInt("DIRQ_FAILURE_DOMAIN_PREFIX_V6", fileCfg, "failure_domain_prefix_v6", -1),
+		DomainFlapMinNodes:    cfgInt("DIRQ_DOMAIN_FLAP_MIN_NODES", fileCfg, "domain_flap_min_nodes", -1),
+		FileCfg:               fileCfg,
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -159,6 +168,17 @@ func cfgDur(env string, fileCfg *config.File, fileKey string, fallback time.Dura
 	if s != "" {
 		if d, err := time.ParseDuration(s); err == nil {
 			return d
+		}
+	}
+	return fallback
+}
+
+// cfgFloat parses a float from env, then config file, then fallback.
+func cfgFloat(env string, fileCfg *config.File, fileKey string, fallback float64) float64 {
+	s := config.EnvOr(env, fileCfg, fileKey, "")
+	if s != "" {
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

@@ -113,6 +113,11 @@ func (s *Server) refreshFleetMetrics(ctx context.Context) {
 	}
 	metricTreeDepthMax.Set(float64(maxDepth))
 
+	// Reboot-aware placement signals.
+	relStats := s.topology.ReliabilitySnapshot()
+	metricAgentsProbation.Set(float64(relStats.OnProbation))
+	metricFailureDomainsHot.Set(float64(relStats.HotDomains))
+
 	for _, zlID := range zlIDs {
 		size := len(s.topology.SubtreeIDs(zlID))
 		label := zlHostnameByID[zlID]

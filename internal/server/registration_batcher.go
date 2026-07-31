@@ -151,11 +151,17 @@ func (b *registrationBatcher) assignBatchDiverse(batch []*pendingReg) []assignme
 	}
 
 	// Skip IPs that already host a zone leader so we never stack a new
-	// ZL on top of an existing one in the same source.
+	// ZL on top of an existing one in the same source.  Track failure
+	// domains too, so we can prefer spreading ZLs across racks/subnets and
+	// not just distinct IPs within one rack.
 	ipHasZL := make(map[string]bool)
+	domainHasZL := make(map[string]bool)
 	for _, zlID := range b.s.topology.ZoneLeaderIDs() {
 		if n, ok := b.s.topology.Get(zlID); ok && n.Online {
 			ipHasZL[ipOfListen(n.ListenAddr)] = true
+			if n.Domain != "" {
+				domainHasZL[n.Domain] = true
+			}
 		}
 	}
 
@@ -168,22 +174,69 @@ func (b *registrationBatcher) assignBatchDiverse(batch []*pendingReg) []assignme
 	// IPs will fill them; the rebalancer's "promote a relay with
 	// children" path covers the steady-state case if no new IPs ever
 	// arrive.
+	// For each IP group pick a representative that is NOT on reboot
+	// probation.  A zone leader is the most expensive slot to lose — its
+	// entire subtree goes offline (MarkSubtreeOffline) on every reboot — so
+	// we never crown a repeat-rebooter here.  rep == -1 means the whole
+	// group just flapped; those groups are skipped and their agents fall
+	// through to relay/leaf placement below.
+	reps := make([]int, len(groups))
+	domainOfGroup := make([]string, len(groups))
+	for gi, g := range groups {
+		reps[gi] = -1
+		for _, idx := range g.indices {
+			if !b.s.topology.IsFlaky(batch[idx].agentID) {
+				reps[gi] = idx
+				break
+			}
+		}
+		domainOfGroup[gi] = b.s.topology.domainOf(batch[g.indices[0]].listenAddr)
+	}
+
 	promoted := make(map[int]bool)
+	promote := func(gi int) {
+		rep := reps[gi]
+		p := batch[rep]
+		b.s.topology.AssignZoneLeader(p.agentID)
+		out[rep] = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
+		promoted[rep] = true
+		ipHasZL[groups[gi].ip] = true
+		if d := domainOfGroup[gi]; d != "" {
+			domainHasZL[d] = true
+		}
+		openZL--
+	}
+
+	// Pass 1 — spread across failure domains: promote one rep per group
+	// whose IP *and* failure domain are both still unrepresented.  This
+	// biases the scarce ZL slots toward distinct racks/subnets first.
 	if openZL > 0 {
-		for _, g := range groups {
+		for gi := range groups {
 			if openZL <= 0 {
 				break
 			}
-			if ipHasZL[g.ip] {
+			if reps[gi] < 0 || ipHasZL[groups[gi].ip] || domainHasZL[domainOfGroup[gi]] {
 				continue
 			}
-			rep := g.indices[0]
-			p := batch[rep]
-			b.s.topology.AssignZoneLeader(p.agentID)
-			out[rep] = assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
-			promoted[rep] = true
-			ipHasZL[g.ip] = true
-			openZL--
+			promote(gi)
+		}
+	}
+
+	// Pass 2 — fill any remaining slots across still-distinct IPs, even if
+	// their domain already hosts a ZL.  This preserves the original
+	// exact-IP anti-stacking behaviour (a single-subnet fleet still gets up
+	// to MaxZoneLeaders leaders spread over distinct hosts); domain
+	// diversity is a preference layered on top, never a hard cap that would
+	// starve a one-rack deployment of zone leaders.
+	if openZL > 0 {
+		for gi := range groups {
+			if openZL <= 0 {
+				break
+			}
+			if reps[gi] < 0 || ipHasZL[groups[gi].ip] {
+				continue
+			}
+			promote(gi)
 		}
 	}
 
