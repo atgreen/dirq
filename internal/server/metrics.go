@@ -82,6 +82,25 @@ var (
 	}, []string{"zone_leader"})
 
 	// ─────────────────────────────────────────────────────────
+	// Reboot-aware placement (reliability signals)
+	// ─────────────────────────────────────────────────────────
+
+	metricAgentsProbation = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "dirq_agents_on_probation",
+		Help: "Number of agents currently on reboot probation (decayed flap score >= threshold).",
+	})
+
+	metricFailureDomainsHot = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "dirq_failure_domains_hot",
+		Help: "Number of failure domains currently flagged as correlated-hot (>= DomainFlapMinNodes flapping members).",
+	})
+
+	metricOrphanReassign = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "dirq_orphan_reassign_total",
+		Help: "Orphaned children re-homed after a parent dropped, by action taken.",
+	}, []string{"action"}) // action: "reparent" | "promote"
+
+	// ─────────────────────────────────────────────────────────
 	// Broadcast dispatcher (counters + histograms)
 	// ─────────────────────────────────────────────────────────
 
@@ -173,13 +192,13 @@ var (
 		Name: "dirq_fleet_count",
 		Help: "Number of registered agents grouped by collected facts. Use sum by(<label>)(dirq_fleet_count) in PromQL to project on any dimension. Major distro_version only (drop minor to bound cardinality); minor version live in the agents/agent_facts tables for ad-hoc SQL queries.",
 	}, []string{
-		"os",                // linux, windows, ...
-		"distro",            // rhel, fedora, ubuntu, ...
-		"distro_version",    // major version only (8, 9, ...)
-		"arch",              // amd64, arm64, ...
-		"cores_bucket",      // 1, 2, 3-4, 5-8, 9-16, 17-32, 33-64, 65+
-		"memory_gb_bucket",  // <2, 2-4, 5-8, 9-16, 17-32, 33-64, 65-128, 129+
-		"exec_enabled",      // true, false
-		"online",            // true, false
+		"os",               // linux, windows, ...
+		"distro",           // rhel, fedora, ubuntu, ...
+		"distro_version",   // major version only (8, 9, ...)
+		"arch",             // amd64, arm64, ...
+		"cores_bucket",     // 1, 2, 3-4, 5-8, 9-16, 17-32, 33-64, 65+
+		"memory_gb_bucket", // <2, 2-4, 5-8, 9-16, 17-32, 33-64, 65-128, 129+
+		"exec_enabled",     // true, false
+		"online",           // true, false
 	})
 )

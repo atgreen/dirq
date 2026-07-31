@@ -33,17 +33,29 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	GRPCAddr            string // e.g. ":50051"
-	HTTPAddr            string // e.g. ":8080"
-	DBURL               string // PostgreSQL connection string
-	PodID               string // unique identifier for this server pod
-	MaxZoneLeaders      int    // topology: max zone leaders (default 50)
-	MaxChildrenPerNode  int    // topology: max children per node (default 50)
-	AuthDisabled        bool   // DIRQ_AUTH_DISABLED=true to allow anonymous API access
-	RequireAAPBinding   bool   // opt-in (default false): when true, write endpoints reject tokens not bound to the asserted aap_user
-	RegistrationSecret  string // pre-shared secret for agent registration
-	LeaderElection      bool   // when true, only the elected leader marks itself ready
-	FileCfg             *config.File // parsed config file (for TLS/signing fallback)
+	GRPCAddr           string // e.g. ":50051"
+	HTTPAddr           string // e.g. ":8080"
+	DBURL              string // PostgreSQL connection string
+	PodID              string // unique identifier for this server pod
+	MaxZoneLeaders     int    // topology: max zone leaders (default 50)
+	MaxChildrenPerNode int    // topology: max children per node (default 50)
+
+	// Reboot-aware placement knobs. A negative value means "unset — use the
+	// DefaultTopologyConfig() value"; 0 is honored as an explicit setting
+	// (e.g. FlapThreshold=0 disables reliability-aware placement entirely).
+	// Callers that don't set these must initialize them to -1 (the server
+	// main does); the zero value would otherwise read as "disable".
+	FlapWindow            time.Duration // topology: flap-score decay constant (default 1h)
+	FlapThreshold         float64       // topology: probation threshold (default 1.5; 0 disables)
+	ProbationChildCap     int           // topology: max children a flaky node may hold (default 0)
+	FailureDomainPrefixV4 int           // topology: IPv4 failure-domain prefix bits (default 24)
+	FailureDomainPrefixV6 int           // topology: IPv6 failure-domain prefix bits (default 64)
+	DomainFlapMinNodes    int           // topology: flaky members before a domain is hot (default 2; 0 disables)
+	AuthDisabled          bool          // DIRQ_AUTH_DISABLED=true to allow anonymous API access
+	RequireAAPBinding     bool          // opt-in (default false): when true, write endpoints reject tokens not bound to the asserted aap_user
+	RegistrationSecret    string        // pre-shared secret for agent registration
+	LeaderElection        bool          // when true, only the elected leader marks itself ready
+	FileCfg               *config.File  // parsed config file (for TLS/signing fallback)
 
 	// Fact batcher knobs. Zero means use defaults.
 	FactFlushInterval time.Duration // default 250ms
@@ -55,15 +67,15 @@ type Config struct {
 type Server struct {
 	pb.UnimplementedDirQServerServer
 
-	cfg       Config
-	topoCfg   TopologyConfig
-	topology  *MeshTopology         // in-memory authoritative mesh state (see meshtopology.go)
-	regBatch  *registrationBatcher  // burst-aware ZL-diverse role assignment
-	db        db.DB
-	log       *slog.Logger
-	grpcSv    *grpc.Server
-	httpSv    *http.Server
-	signer    *signutil.Signer
+	cfg      Config
+	topoCfg  TopologyConfig
+	topology *MeshTopology        // in-memory authoritative mesh state (see meshtopology.go)
+	regBatch *registrationBatcher // burst-aware ZL-diverse role assignment
+	db       db.DB
+	log      *slog.Logger
+	grpcSv   *grpc.Server
+	httpSv   *http.Server
+	signer   *signutil.Signer
 
 	// oldSignerPubKeys holds raw Ed25519 public keys from previous signing keys.
 	// Populated when DIRQ_SIGNING_PUB_OLD / signing_pub_old is configured.
@@ -99,10 +111,10 @@ type Server struct {
 	// flush window collapses to a single row. A batcher goroutine
 	// flushes the snapshot via db.BulkUpsertFacts on size or time
 	// thresholds — see runFactBatcher.
-	factStageMu      sync.Mutex
-	factStage        map[factKey]db.FactRow
-	factFlushSignal  chan struct{}
-	factDropLogged   time.Time // rate-limits the "stage full, dropping" warning
+	factStageMu     sync.Mutex
+	factStage       map[factKey]db.FactRow
+	factFlushSignal chan struct{}
+	factDropLogged  time.Time // rate-limits the "stage full, dropping" warning
 
 	// Leader election. When LeaderElection is disabled, this stays nil
 	// and /readyz unconditionally returns 200 (single-instance mode).
@@ -133,6 +145,26 @@ func New(cfg Config, database db.DB, log *slog.Logger) *Server {
 	}
 	if cfg.MaxChildrenPerNode > 0 {
 		topoCfg.MaxChildrenPerNode = cfg.MaxChildrenPerNode
+	}
+	// Reboot-aware knobs: negative == unset (keep default); 0 is a real value
+	// (e.g. disable the feature), so guard on >= 0, not > 0.
+	if cfg.FlapWindow >= 0 {
+		topoCfg.FlapWindow = cfg.FlapWindow
+	}
+	if cfg.FlapThreshold >= 0 {
+		topoCfg.FlapThreshold = cfg.FlapThreshold
+	}
+	if cfg.ProbationChildCap >= 0 {
+		topoCfg.ProbationChildCap = cfg.ProbationChildCap
+	}
+	if cfg.FailureDomainPrefixV4 >= 0 {
+		topoCfg.FailureDomainPrefixV4 = cfg.FailureDomainPrefixV4
+	}
+	if cfg.FailureDomainPrefixV6 >= 0 {
+		topoCfg.FailureDomainPrefixV6 = cfg.FailureDomainPrefixV6
+	}
+	if cfg.DomainFlapMinNodes >= 0 {
+		topoCfg.DomainFlapMinNodes = cfg.DomainFlapMinNodes
 	}
 
 	srv := &Server{

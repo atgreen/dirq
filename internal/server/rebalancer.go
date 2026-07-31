@@ -77,6 +77,7 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 			s.log.Info("reassignOrphans: no parent available, promoting orphan to zone_leader",
 				"child", child.Hostname)
 			s.topology.AssignZoneLeader(child.ID)
+			metricOrphanReassign.WithLabelValues("promote").Inc()
 			promoteMsg := &pb.ServerMessage{
 				Payload: &pb.ServerMessage_PeerUpdate{
 					PeerUpdate: &pb.PeerUpdate{
@@ -103,6 +104,7 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 		parentNode, _ := s.topology.Get(parentID)
 		s.log.Info("reassignOrphans: hinting child toward new parent",
 			"child", child.Hostname, "candidate_parent", parentNode.Hostname)
+		metricOrphanReassign.WithLabelValues("reparent").Inc()
 
 		// Hint only — topology is updated when PeerConnected arrives.
 		var fallbacks []string

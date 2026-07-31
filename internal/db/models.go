@@ -57,6 +57,14 @@ type Agent struct {
 	ExecEnabled  bool              `json:"exec_enabled"`
 	RegisteredAt time.Time         `json:"registered_at"`
 	LastSeenAt   time.Time         `json:"last_seen_at"`
+
+	// Reboot-aware placement signals. These are NOT persisted — they are
+	// overlaid live from the in-memory MeshTopology (see enrichWithTopology)
+	// for operator visibility into why an agent is being kept near the
+	// leaves. Zero/empty on any code path that doesn't consult the topology.
+	FlapScore     float64 `json:"flap_score,omitempty"`     // decayed reboot-propensity score
+	OnProbation   bool    `json:"on_probation,omitempty"`   // personally over the flap threshold
+	FailureDomain string  `json:"failure_domain,omitempty"` // network-prefix bucket of listen_addr
 }
 
 // RegisterAgentParams holds the parameters for registering a new agent.
@@ -74,11 +82,11 @@ type RegisterAgentParams struct {
 
 // ListAgentsFilter controls which agents are returned by ListAgents.
 type ListAgentsFilter struct {
-	Online   *bool   `json:"online,omitempty"`
-	Role     string  `json:"role,omitempty"`
-	ParentID string  `json:"parent_id,omitempty"`
-	Tag      string  `json:"tag,omitempty"`    // key to match in tags JSONB
-	TagValue string  `json:"tag_value,omitempty"` // value for the tag key
+	Online   *bool  `json:"online,omitempty"`
+	Role     string `json:"role,omitempty"`
+	ParentID string `json:"parent_id,omitempty"`
+	Tag      string `json:"tag,omitempty"`       // key to match in tags JSONB
+	TagValue string `json:"tag_value,omitempty"` // value for the tag key
 }
 
 // Fact represents a cached fact collected from an agent.

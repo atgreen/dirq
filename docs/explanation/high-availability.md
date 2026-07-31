@@ -1,4 +1,4 @@
-# DirQ High Availability
+# High availability
 
 This document describes how to run the DirQ server in a highly
 available configuration on Kubernetes / OpenShift. It covers the
@@ -17,7 +17,7 @@ and the platform-side wiring required to make it work.
 That's it. There is no cross-pod request routing, no per-agent
 stickiness, no gossip layer. The leader serves; the standbys wait.
 
-> The [Production Deployment](README.md#production-deployment) fundamentals
+> The [Production Deployment](../how-to/production-deployment.md) fundamentals
 > still apply — most importantly, the server must observe each agent's **real
 > source IP** at registration or it advertises unroutable relay addresses and
 > the mesh can't connect. On Kubernetes/OpenShift that means the gRPC path to

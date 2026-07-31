@@ -33,3 +33,6 @@ certs/
 
 # Claude Code workspace artifacts
 .claude/
+
+# MkDocs build output
+site/

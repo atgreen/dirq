@@ -185,7 +185,7 @@ type queryRequest struct {
 
 type queryResponse struct {
 	QueryID      string        `json:"query_id"`
-	Status       string        `json:"status"`           // "completed" iff every target answered; "incomplete" if idle/hard timeout fired first
+	Status       string        `json:"status"` // "completed" iff every target answered; "incomplete" if idle/hard timeout fired first
 	TotalTargets int           `json:"total_targets"`
 	Received     int           `json:"received"`
 	Missing      int           `json:"missing,omitempty"` // total_targets - received (>0 only when status != "completed")
@@ -411,6 +411,9 @@ func (s *Server) enrichWithTopology(agents []db.Agent) {
 			pid := n.ParentID
 			agents[i].ParentID = &pid
 		}
+		agents[i].FlapScore = n.FlapScore
+		agents[i].OnProbation = n.Flaky
+		agents[i].FailureDomain = n.Domain
 	}
 }
 
@@ -810,17 +813,23 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := map[string]any{
-		"database":         dbOK,
-		"database_kind":    s.db.Kind(),
-		"agents_total":     len(allAgents),
-		"agents_online":    len(onlineAgents),
-		"zone_leaders":     zoneLeaders,
-		"max_tree_depth":   maxDepth,
-		"orphaned_agents":  orphans,
-		"agent_versions":   versions,
+		"database":        dbOK,
+		"database_kind":   s.db.Kind(),
+		"agents_total":    len(allAgents),
+		"agents_online":   len(onlineAgents),
+		"zone_leaders":    zoneLeaders,
+		"max_tree_depth":  maxDepth,
+		"orphaned_agents": orphans,
+		"agent_versions":  versions,
 		"topology": map[string]any{
-			"max_zone_leaders":     s.topoCfg.MaxZoneLeaders,
-			"max_children_per_node": s.topoCfg.MaxChildrenPerNode,
+			"max_zone_leaders":         s.topoCfg.MaxZoneLeaders,
+			"max_children_per_node":    s.topoCfg.MaxChildrenPerNode,
+			"flap_window":              s.topoCfg.FlapWindow.String(),
+			"flap_threshold":           s.topoCfg.FlapThreshold,
+			"probation_child_cap":      s.topoCfg.ProbationChildCap,
+			"failure_domain_prefix_v4": s.topoCfg.FailureDomainPrefixV4,
+			"failure_domain_prefix_v6": s.topoCfg.FailureDomainPrefixV6,
+			"domain_flap_min_nodes":    s.topoCfg.DomainFlapMinNodes,
 		},
 	}
 
@@ -833,8 +842,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 type rotateRequest struct {
 	Type           string `json:"type"`            // "agent_cert", "signing_key", or "ca"
-	Reason         string `json:"reason"`           // optional human-readable reason
-	StaggerSeconds int32  `json:"stagger_seconds"`  // agents wait random [0, N) seconds before acting
+	Reason         string `json:"reason"`          // optional human-readable reason
+	StaggerSeconds int32  `json:"stagger_seconds"` // agents wait random [0, N) seconds before acting
 }
 
 // handleRotate handles POST /api/v1/rotate.
@@ -872,7 +881,6 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		"zone_leaders": sent,
 	})
 }
-
 
 // sanitizeGroupName replaces characters that aren't valid in Ansible group
 // names with underscores.
