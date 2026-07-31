@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+<!--
+  Homepage-only analytics. The Happening tracker is injected into <head> only
+  on the site's landing page (page.is_homepage), not across the whole site.
+-->
+{% block extrahead %}
+  {{ super() }}
+  {% if page and page.is_homepage %}
+  <script>
+    window.HAPPENING_SITE_ID='r4CkaUt3p0U8';
+  </script>
+  <script src="https://happening.labdroid.net/js/tracker.js" defer></script>
+  {% endif %}
+{% endblock %}

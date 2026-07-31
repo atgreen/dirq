@@ -633,52 +633,57 @@ jobs:
           path: /tmp/debs/dirq-archive-keyring.gpg
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Deploy package repos to GitHub Pages.
+  # Publish package repos to the gh-pages branch. The MkDocs docs site lives on
+  # the same branch (deployed by .github/workflows/docs.yml); keep_files: true
+  # keeps the two from clobbering each other. Pages source = gh-pages / (root).
   # ─────────────────────────────────────────────────────────────────────────────
   deploy-pages:
-    name: Deploy Package Repos
+    name: Publish Package Repos
     needs: [build-rpm-repo, build-deb-repo]
     runs-on: ubuntu-latest
     permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      contents: write # peaceiris pushes rpm-repo/ + deb-repo/ to the gh-pages branch
     steps:
       - uses: actions/checkout@v4
 
+      # Assemble the same rpm-repo/ + deb-repo/ tree the site has always served.
+      # (RPMs are fetched from GitHub Release URLs rewritten into primary.xml, so
+      # only repodata + the GPG key live here; the DEB artifact carries the full
+      # pool/ + dists/ tree plus its keyring.)
       - name: Download RPM repo artifact
         uses: actions/download-artifact@v4
         with:
           name: rpm-repo
-          path: docs/rpm-repo/repodata
+          path: public/rpm-repo/repodata
 
       - name: Download RPM GPG key
         uses: actions/download-artifact@v4
         with:
           name: rpm-repo-key
-          path: docs/rpm-repo
+          path: public/rpm-repo
         continue-on-error: true
 
       - name: Download DEB repo artifact
         uses: actions/download-artifact@v4
         with:
           name: deb-repo
-          path: docs/deb-repo
+          path: public/deb-repo
 
       - name: Download DEB keyring
         uses: actions/download-artifact@v4
         with:
           name: deb-repo-key
-          path: docs/deb-repo
+          path: public/deb-repo
         continue-on-error: true
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      # keep_files: true → write ONLY rpm-repo/ and deb-repo/; never delete the
+      # MkDocs site that .github/workflows/docs.yml publishes to the same branch.
+      - name: Publish package repos to gh-pages (preserving the docs site)
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: docs/
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          keep_files: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'release: publish package repos ${{ github.ref_name }}'

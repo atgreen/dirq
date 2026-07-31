@@ -1,0 +1,97 @@
+site_name: DirQ
+site_description: Direct Query Platform for Fleet Management & Ansible Execution
+site_url: https://atgreen.github.io/dirq/
+repo_url: https://github.com/atgreen/dirq
+repo_name: atgreen/dirq
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; Anthony Green — MIT License
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  custom_dir: overrides
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.tracking
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Tutorials:
+      - Quick start — a mesh on your laptop: tutorials/quick-start.md
+  - How-to guides:
+      - Deploy a production fleet: how-to/production-deployment.md
+      - Build query-based Ansible inventories: how-to/ansible-inventories.md
+      - Run playbooks through the mesh: how-to/run-playbooks.md
+      - Run ad-hoc fleet commands: how-to/fleet-exec.md
+      - Deploy packages: how-to/deploy-packages.md
+      - Scan for CVEs: how-to/cve-scanning.md
+      - Manage tags: how-to/tag-management.md
+      - Enable TLS & authentication: how-to/tls-and-auth.md
+      - Enable exec & OPA/Rego policy: how-to/agent-exec-policy.md
+      - Set up MCP integration: how-to/mcp.md
+      - Set up AAP integration: how-to/aap.md
+      - Multi-datacenter deployment: how-to/multi-datacenter.md
+      - Diagnose the mesh: how-to/diagnostics.md
+      - Emulate a large fleet: how-to/fleet-scale-emulation.md
+  - Reference:
+      - Query DSL: reference/query-dsl.md
+      - Built-in query modules: reference/query-modules.md
+      - Configuration: reference/configuration.md
+      - REST API: reference/rest-api.md
+      - CLI: reference/cli.md
+      - Metrics & observability: reference/observability.md
+      - Ansible integration: reference/ansible.md
+  - Explanation:
+      - Why DirQ?: explanation/why-dirq.md
+      - Architecture: explanation/architecture.md
+      - Reboot-aware placement: explanation/reboot-aware-placement.md
+      - Completion reporting & aggregation: explanation/completion-and-aggregation.md
+      - Redundant parents & recovery: explanation/redundant-parents.md
+      - Security model: explanation/security.md
+      - High availability: explanation/high-availability.md

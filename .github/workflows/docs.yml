@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: MIT
+#
+# Builds the MkDocs documentation site and publishes it to the `gh-pages`
+# branch. Uses keep_files: true so it NEVER deletes the package repositories
+# (rpm-repo/ and deb-repo/) that release.yml publishes to the same branch —
+# the two workflows update disjoint subtrees of one Pages site.
+#
+# ACTIVATION (one-time, see docs/CONTRIBUTING or the PR description):
+#   1. Let this workflow run once so the `gh-pages` branch exists with the docs.
+#   2. Seed rpm-repo/ and deb-repo/ onto gh-pages (cut a release, or copy them
+#      from the current Actions-method deployment) so package URLs keep working.
+#   3. Switch the repo's Pages source to: Deploy from a branch -> gh-pages -> /(root).
+#   4. Point release.yml's package-repo deploy at gh-pages with keep_files: true
+#      (so a release refreshes the repos without wiping the docs).
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'overrides/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write # peaceiris pushes the built site to the gh-pages branch
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install MkDocs
+        run: pip install mkdocs-material
+
+      - name: Build (strict — fail on broken links)
+        run: mkdocs build --strict
+
+      - name: Publish to gh-pages (preserving package repos)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          keep_files: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'docs: deploy ${{ github.sha }}'
