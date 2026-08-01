@@ -2,122 +2,122 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://atgreen.github.io/dirq/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/explanation/architecture/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/explanation/completion-and-aggregation/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/explanation/high-availability/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/explanation/reboot-aware-placement/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/explanation/redundant-parents/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/explanation/security/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/explanation/why-dirq/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/aap/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/agent-exec-policy/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/ansible-inventories/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/cve-scanning/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/deploy-packages/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/diagnostics/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/fleet-exec/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/fleet-scale-emulation/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/mcp/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/multi-datacenter/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/production-deployment/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/run-playbooks/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/tag-management/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/how-to/tls-and-auth/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/reference/ansible/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/reference/cli/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/reference/configuration/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/reference/observability/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/reference/query-dsl/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/reference/query-modules/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/reference/rest-api/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
     <url>
          <loc>https://atgreen.github.io/dirq/tutorials/quick-start/</loc>
-         <lastmod>2026-07-31</lastmod>
+         <lastmod>2026-08-01</lastmod>
     </url>
 </urlset>
