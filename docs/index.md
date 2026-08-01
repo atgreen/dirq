@@ -33,7 +33,8 @@ execution through the mesh as an alternative to SSH/WinRM.
 
 ## Install the agent
 
-DirQ publishes signed RPM and DEB packages.
+DirQ publishes signed RPM and DEB packages for Linux, and signed installers for
+Windows.
 
 === "Fedora / RHEL / AlmaLinux"
 
@@ -64,6 +65,29 @@ DirQ publishes signed RPM and DEB packages.
     sudo apt install dirq-agent
     ```
 
-After installing, edit `/etc/dirq/agent.conf` and restart with
+=== "Windows"
+
+    Download and run the latest signed installer from the
+    [releases page](https://github.com/atgreen/dirq/releases/latest):
+
+    - **`dirq-agent-<version>.msi`** — for unattended / GPO deployment:
+
+        ```powershell
+        msiexec /i dirq-agent-<version>.msi /qn
+        ```
+
+    - **`dirq-agent-<version>-setup.exe`** — interactive installer.
+
+    Prefer a standalone binary? Download `dirq-agent-windows-amd64.exe`
+    (or `dirq-agent-windows-arm64.exe`) and register it as a Windows Service:
+
+    ```powershell
+    .\dirq-agent-windows-amd64.exe install
+    ```
+
+    The agent runs as a Windows Service (SYSTEM). After installing, edit
+    `C:\ProgramData\dirq\agent.conf` and restart the **dirq-agent** service.
+
+After installing on Linux, edit `/etc/dirq/agent.conf` and restart with
 `sudo systemctl restart dirq-agent`. See
 [Deploy a production fleet](how-to/production-deployment.md) for the full setup.

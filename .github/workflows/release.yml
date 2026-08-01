@@ -676,6 +676,25 @@ jobs:
           path: public/deb-repo
         continue-on-error: true
 
+      # Landing pages so browsing the bare repo URLs isn't a 404 (the package
+      # managers hit repodata/ and dists/ directly; these are just for humans).
+      - name: Write repo landing pages
+        run: |
+          cat > public/rpm-repo/index.html <<'EOF'
+          <!doctype html><meta charset="utf-8"><title>DirQ RPM repository</title>
+          <h1>DirQ RPM repository</h1>
+          <p>This is a signed dnf/yum repository, not a browsable page.
+          See the <a href="https://atgreen.github.io/dirq/#install-the-agent">install
+          instructions</a> for how to add it and <code>dnf install dirq-agent</code>.</p>
+          EOF
+          cat > public/deb-repo/index.html <<'EOF'
+          <!doctype html><meta charset="utf-8"><title>DirQ APT repository</title>
+          <h1>DirQ APT repository</h1>
+          <p>This is a signed apt repository, not a browsable page.
+          See the <a href="https://atgreen.github.io/dirq/#install-the-agent">install
+          instructions</a> for how to add it and <code>apt install dirq-agent</code>.</p>
+          EOF
+
       # keep_files: true → write ONLY rpm-repo/ and deb-repo/; never delete the
       # MkDocs site that .github/workflows/docs.yml publishes to the same branch.
       - name: Publish package repos to gh-pages (preserving the docs site)

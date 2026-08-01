@@ -25,7 +25,8 @@ The docs follow the [Diátaxis](https://diataxis.fr/) framework:
 
 ## Install the agent
 
-DirQ publishes signed RPM and DEB packages — see the
+DirQ publishes signed RPM and DEB packages for Linux, and signed MSI/EXE
+installers for Windows — see the
 [install instructions](https://atgreen.github.io/dirq/#install-the-agent). In short:
 
 ```bash
@@ -40,6 +41,10 @@ enabled=1
 EOF
 sudo dnf install dirq-agent
 ```
+
+On **Windows**, download `dirq-agent-<version>.msi` (or the `-setup.exe`
+installer, or the standalone `dirq-agent-windows-amd64.exe`) from the
+[latest release](https://github.com/atgreen/dirq/releases/latest).
 
 ## Building from source
 
