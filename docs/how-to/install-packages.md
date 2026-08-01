@@ -19,23 +19,9 @@ The server uses an embedded **SQLite** database by default, so you can stand up 
 working control plane with no external database. Point `db_url` at PostgreSQL when
 you need multiple server pods or durability guarantees SQLite can't give you.
 
-## Ports and connectivity
-
-DirQ agents are **outbound-first** — a managed host needs **no inbound SSH or
-WinRM**. But DirQ builds a relay tree, so any agent can be a *parent* for others,
-and a parent must accept an inbound gRPC connection from its children. Plan for:
-
-| Connection | Port | Who initiates | Notes |
-|------------|------|---------------|-------|
-| Agent → Server | `50051/tcp` | agent | gRPC control channel (TLS) |
-| Agent → Agent (relay) | `50052/tcp` | child agent | host-to-host within the fleet; a relay parent listens here |
-| Admin/CLI → Server | `8080/tcp` | CLI | REST API (TLS) |
-| Server → PostgreSQL | `5432/tcp` | server | only if you use external Postgres instead of SQLite |
-
-So: managed hosts open **no** inbound SSH/WinRM, but the fleet must allow
-`50052/tcp` **host-to-host** between agents, and `50051/tcp` from agents to the
-server. See [Diagnose the mesh](diagnostics.md) for the `dial tcp 10.89.0.x:50052:
-i/o timeout` symptom when this is wrong.
+Managed hosts need **no inbound SSH or WinRM**. The fleet does need a couple of
+ports open between hosts — see [Network and ports](#network-and-ports) below when
+you set up firewalls.
 
 ## 1. Add the package repository
 
@@ -222,6 +208,22 @@ dirq select hostname, cpu.logical_cores WHERE hostname = '<hostname>'
 *ghost-online* host registered but never attached to a relay parent. `dirq debug
 ping` is the real proof. If it times out, see
 [Diagnose the mesh](diagnostics.md).
+
+## Network and ports
+
+DirQ builds a relay tree, so any agent can be a *parent* for others and must
+accept an inbound gRPC connection from its children. Open these between hosts:
+
+| Connection | Port | Who initiates | Notes |
+|------------|------|---------------|-------|
+| Agent → Server | `50051/tcp` | agent | gRPC control channel (TLS) |
+| Agent → Agent (relay) | `50052/tcp` | child agent | host-to-host within the fleet; a relay parent listens here |
+| Admin/CLI → Server | `8080/tcp` | CLI | REST API (TLS) |
+| Server → PostgreSQL | `5432/tcp` | server | only if you use external Postgres instead of SQLite |
+
+Managed hosts still need **no** inbound SSH/WinRM. If an agent shows online but
+`dirq debug ping` times out, `50052/tcp` host-to-host is usually the culprit —
+see [Diagnose the mesh](diagnostics.md).
 
 ## Pin a version or upgrade
 

@@ -2,8 +2,7 @@
 
 In this tutorial you will stand up a complete DirQ mesh — server, database, an agent, and the CLI — on a single machine using Podman. By the end you will have a working control plane you can query, and you will have run a playbook against your first agent. Follow the steps in order; each one builds on the last.
 
-!!! warning "This is a single-host development setup — do not use it as-is for a multi-host fleet."
-    The `podman-compose` server publishes its gRPC port through podman's NAT, so the server sees every agent's source IP as a podman-bridge address (`10.89.0.x`) instead of the agent's real host IP. It then advertises those unroutable addresses to other agents as relay parents, and the mesh fails to connect across hosts (`dial tcp 10.89.0.x:50052: i/o timeout`, agents stuck re-registering, `dirq debug ping` timing out). It works on one machine only because every container shares one bridge. For a real fleet, see [Production Deployment](../how-to/production-deployment.md).
+This runs everything on one machine so you can learn DirQ quickly. When you're ready for a real multi-host fleet, follow [Install DirQ from packages](../how-to/install-packages.md).
 
 ## Prerequisites
 
@@ -33,29 +32,14 @@ Keep that token handy — you will use it to authenticate the CLI in a moment.
 
 ## Step 2: Deploy an agent
 
-The server writes ready-to-copy config files on startup:
-
-- **`/var/lib/dirq/agent.conf`** — agent config with server address, registration secret, and inline TLS certs (base64-encoded). Copy to `/etc/dirq/agent.conf` on each agent host.
-- **`/var/lib/dirq/client.conf`** — CLI config with server URL and bootstrap token. Copy to `/etc/dirq/client.conf` or `~/.config/dirq/client.conf` on any workstation.
-
-On a real host you would copy the generated config and start the service:
-
-```bash
-# On the server, copy the generated agent config to a remote host:
-scp /var/lib/dirq/agent.conf agent-host:/etc/dirq/agent.conf
-
-# On the agent host:
-sudo systemctl enable --now dirq-agent
-```
-
-For local dev, build and run the agent directly:
+The server writes ready-to-copy config files on startup — `/var/lib/dirq/agent.conf` for agents and `/var/lib/dirq/client.conf` for the CLI. For this laptop run, just build and start the agent directly:
 
 ```bash
 go build -o bin/dirq-agent ./cmd/dirq-agent
 ./bin/dirq-agent
 ```
 
-The agent auto-generates TLS certs into the same directory as the server (`/var/lib/dirq/tls`). When both run on the same machine, they share the auto-generated CA and verify each other automatically.
+Because the agent and server share the same machine, they also share the auto-generated CA and verify each other automatically. (On real hosts you copy `agent.conf` to each machine instead — that's what [Install DirQ from packages](../how-to/install-packages.md) walks through.)
 
 ## Step 3: Build and use the CLI
 
