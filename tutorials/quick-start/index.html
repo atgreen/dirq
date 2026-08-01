@@ -574,6 +574,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#installing-on-real-hosts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1682,6 +1693,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#installing-on-real-hosts" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1734,8 +1756,9 @@
 </ul>
 <h2 id="step-1-start-the-server-and-database">Step 1: Start the server and database<a class="headerlink" href="#step-1-start-the-server-and-database" title="Permanent link">&para;</a></h2>
 <p>Bring up the stack with a single command:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>podman-compose<span class="w"> </span>up<span class="w"> </span>-d
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>podman-compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
+<p>The <code>--build</code> matters: without it, <code>podman-compose</code> reuses whatever <code>dirq-server</code> image it built last time, so after pulling a new version you'd silently run stale code.</p>
 <p>This starts PostgreSQL and the DirQ server and runs the DB migrations. For convenience the dev stack runs with <strong>TLS and authentication disabled</strong> (<code>DIRQ_TLS_DISABLED</code> and <code>DIRQ_AUTH_DISABLED</code> in <code>podman-compose.yml</code>), so there's no token to copy and no certs to manage — you can talk to the server right away. The REST API is on <code>http://localhost:8090</code> and the agent gRPC port on <code>localhost:50051</code>.</p>
 <p>Check it started cleanly:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>podman<span class="w"> </span>logs<span class="w"> </span>dirq_dirq-server_1<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tail
@@ -1762,6 +1785,13 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">cd</span><span class="w"> </span>test-playbook
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">DIRQ_SERVER_URL</span><span class="o">=</span>http://localhost:8090<span class="w"> </span>ansible-playbook<span class="w"> </span>test.yml<span class="w"> </span>-v
 </code></pre></div>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<p>If a step misbehaves, it's usually leftover state from a previous DirQ install on this machine:</p>
+<ul>
+<li><strong>The agent connects to a server other than <code>localhost:50051</code></strong> (its log shows a different <code>server=…</code>). It found an existing <code>/etc/dirq/agent.conf</code> and used it — the agent reads that file by default. Ignore it for this run with <code>DIRQ_CONFIG=/dev/null DIRQ_SERVER=localhost:50051 DIRQ_TLS_DISABLED=true ./bin/dirq-agent</code>, or remove the file.</li>
+<li><strong><code>dirq</code> returns <code>HTTP 401: invalid token</code>.</strong> An existing <code>~/.config/dirq/client.conf</code> is sending a stale token to the auth-disabled dev server. Run the CLI with a clean config (<code>HOME=$(mktemp -d) DIRQ_SERVER_URL=http://localhost:8090 ./bin/dirq …</code>) or delete the <code>token:</code> line.</li>
+<li><strong><code>dirq doctor</code> shows <code>404</code> on Database / Agents online.</strong> You're running a stale server image. Rebuild it: <code>podman-compose up -d --build</code>.</li>
+</ul>
 <h2 id="installing-on-real-hosts">Installing on real hosts<a class="headerlink" href="#installing-on-real-hosts" title="Permanent link">&para;</a></h2>
 <p>The steps above build from source, which is ideal for this laptop walkthrough.
 For real hosts you don't build anything — DirQ ships signed <code>dirq-server</code>,
