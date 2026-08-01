@@ -1,5 +1,7 @@
 # Completion reporting & result aggregation
 
+Broadcast operations fan out to thousands of agents, and their results flow back up the mesh. Two mechanisms keep that both reliable and cheap: completion is tracked per-target rather than by waiting for silence, and results aggregate in-mesh instead of all landing on the server.
+
 ## Completion reporting
 
 Broadcast operations (query, exec, deploy) track completion **per target**, not by watching for silence. A session ends when every target has either responded or been positively identified as disconnected — so `dirq exec --timeout 3600 -- yum upgrade -y` runs the full hour even if fast and slow responders leave long gaps between replies. A hard timeout of `command_timeout + 30 s` remains as a safety net.

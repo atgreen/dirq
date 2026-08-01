@@ -1,5 +1,7 @@
 # Architecture
 
+DirQ is a central server fronting a peer-to-peer agent mesh. Agents relay for each other in a tree, so the fleet becomes its own transport and only a bounded set of zone leaders connect directly to the server. Here's the shape:
+
 ```
   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
   │  Agent   │   │  Agent   │   │  Agent   │   │  Agent   │

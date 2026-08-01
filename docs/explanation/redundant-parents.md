@@ -1,5 +1,7 @@
 # Redundant parents & recovery
 
+When an agent's relay parent goes down, its whole subtree would be cut off from the server. DirQ avoids that by handing every agent pre-chosen fallback parents and a fast, ordered recovery path.
+
 Each non-zone-leader agent receives 2 fallback parent addresses during
 registration, chosen from different branches of the tree — and, where
 possible, from a different failure domain and off recently-flapping nodes
