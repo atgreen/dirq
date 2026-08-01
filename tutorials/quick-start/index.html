@@ -16,7 +16,7 @@
         <link rel="prev" href="../..">
       
       
-        <link rel="next" href="../../how-to/production-deployment/">
+        <link rel="next" href="../../how-to/install-packages/">
       
       
         
@@ -271,7 +271,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../how-to/production-deployment/" class="md-tabs__link">
+        <a href="../../how-to/install-packages/" class="md-tabs__link">
           
   
   
@@ -574,10 +574,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#install-a-released-agent" class="md-nav__link">
+  <a href="#installing-on-real-hosts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install a released agent
+        Installing on real hosts
       
     </span>
   </a>
@@ -662,6 +662,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/install-packages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install DirQ from packages
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -1654,10 +1682,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#install-a-released-agent" class="md-nav__link">
+  <a href="#installing-on-real-hosts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install a released agent
+        Installing on real hosts
       
     </span>
   </a>
@@ -1760,74 +1788,24 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nb">cd</span><span class="w"> </span>test-playbook
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nv">DIRQ_SERVER_URL</span><span class="o">=</span>http://localhost:8090<span class="w"> </span><span class="nv">DIRQ_TOKEN</span><span class="o">=</span><span class="nv">$DIRQ_TOKEN</span><span class="w"> </span>ansible-playbook<span class="w"> </span>test.yml<span class="w"> </span>-v
 </code></pre></div>
-<h2 id="install-a-released-agent">Install a released agent<a class="headerlink" href="#install-a-released-agent" title="Permanent link">&para;</a></h2>
+<h2 id="installing-on-real-hosts">Installing on real hosts<a class="headerlink" href="#installing-on-real-hosts" title="Permanent link">&para;</a></h2>
 <p>The steps above build from source, which is ideal for this laptop walkthrough.
-For real hosts, DirQ publishes signed packages so you don't have to build
-anything — add the repo and install <code>dirq-agent</code>:</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Fedora / RHEL / AlmaLinux</label><label for="__tabbed_1_2">Debian / Ubuntu</label><label for="__tabbed_1_3">Windows</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>sudo<span class="w"> </span>tee<span class="w"> </span>/etc/yum.repos.d/dirq.repo<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="s">[dirq]</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="s">name=DirQ</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="s">baseurl=https://atgreen.github.io/dirq/rpm-repo</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="s">gpgcheck=1</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="s">gpgkey=https://atgreen.github.io/dirq/rpm-repo/RPM-GPG-KEY-dirq</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="s">enabled=1</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="s">EOF</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>dirq-agent
-</code></pre></div>
-</div>
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://atgreen.github.io/dirq/deb-repo/dirq-archive-keyring.gpg<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>gpg<span class="w"> </span>--dearmor<span class="w"> </span>-o<span class="w"> </span>/usr/share/keyrings/dirq-archive-keyring.gpg
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;deb [signed-by=/usr/share/keyrings/dirq-archive-keyring.gpg] \</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="s2">  https://atgreen.github.io/dirq/deb-repo stable main&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>tee<span class="w"> </span>/etc/apt/sources.list.d/dirq.list
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>sudo<span class="w"> </span>apt<span class="w"> </span>update
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>dirq-agent
-</code></pre></div>
-</div>
-<div class="tabbed-block">
-<p>Download and run the latest signed installer from the
-<a href="https://github.com/atgreen/dirq/releases/latest">releases page</a>:</p>
-<ul>
-<li>
-<p><strong><code>dirq-agent-&lt;version&gt;.msi</code></strong> — for unattended / GPO deployment:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">msiexec</span> <span class="p">/</span><span class="n">i</span> <span class="n">dirq-agent</span><span class="p">-&lt;</span><span class="n">version</span><span class="p">&gt;.</span><span class="n">msi</span> <span class="p">/</span><span class="n">qn</span>
-</code></pre></div>
-</li>
-<li>
-<p><strong><code>dirq-agent-&lt;version&gt;-setup.exe</code></strong> — interactive installer.</p>
-</li>
-</ul>
-<p>Prefer a standalone binary? Download <code>dirq-agent-windows-amd64.exe</code>
-(or <code>dirq-agent-windows-arm64.exe</code>) and register it as a Windows Service:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">.\</span><span class="n">dirq-agent-windows-amd64</span><span class="p">.</span><span class="n">exe</span> <span class="n">install</span>
-</code></pre></div>
-<p>The agent runs as a Windows Service (SYSTEM).</p>
-</div>
-</div>
-</div>
-<p>After installing, drop in the server-generated agent config
-(<code>/etc/dirq/agent.conf</code> on Linux, <code>C:\ProgramData\dirq\agent.conf</code> on Windows)
-and start the service — <code>sudo systemctl restart dirq-agent</code> on Linux, or restart
-the <strong>dirq-agent</strong> service on Windows. See
-<a href="../../how-to/production-deployment/">Deploy a production fleet</a> for the full setup.</p>
+For real hosts you don't build anything — DirQ ships signed <code>dirq-server</code>,
+<code>dirq</code>, and <code>dirq-agent</code> packages (plus a Windows MSI). Follow
+<a href="../../how-to/install-packages/">Install DirQ from packages</a> for the full path:
+add the repo, install and start the server, distribute the generated
+<code>agent.conf</code>, and verify the fleet.</p>
 <h2 id="windows-agent-from-source">Windows agent from source<a class="headerlink" href="#windows-agent-from-source" title="Permanent link">&para;</a></h2>
-<p>If you'd rather build it yourself, cross-compile and run the agent on the
-Windows host:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">GOOS</span><span class="p">=</span><span class="n">windows</span> <span class="n">GOARCH</span><span class="p">=</span><span class="n">amd64</span> <span class="n">go</span> <span class="n">build</span> <span class="n">-o</span> <span class="n">bin</span><span class="p">/</span><span class="n">dirq-agent</span><span class="p">.</span><span class="n">exe</span> <span class="p">./</span><span class="n">cmd</span><span class="p">/</span><span class="n">dirq-agent</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="c"># Run in foreground</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="p">.\</span><span class="n">bin</span><span class="p">\</span><span class="n">dirq-agent</span><span class="p">.</span><span class="n">exe</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="c"># Or install as a Windows Service (runs as SYSTEM)</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="p">.\</span><span class="n">bin</span><span class="p">\</span><span class="n">dirq-agent</span><span class="p">.</span><span class="n">exe</span> <span class="n">install</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="nb">sc start </span><span class="n">DirQAgent</span>
+<p>If you'd rather build it yourself instead of using the MSI, cross-compile and run
+the agent on the Windows host:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">GOOS</span><span class="p">=</span><span class="n">windows</span> <span class="n">GOARCH</span><span class="p">=</span><span class="n">amd64</span> <span class="n">go</span> <span class="n">build</span> <span class="n">-o</span> <span class="n">bin</span><span class="p">/</span><span class="n">dirq-agent</span><span class="p">.</span><span class="n">exe</span> <span class="p">./</span><span class="n">cmd</span><span class="p">/</span><span class="n">dirq-agent</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="c"># Run in foreground</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="p">.\</span><span class="n">bin</span><span class="p">\</span><span class="n">dirq-agent</span><span class="p">.</span><span class="n">exe</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="c"># Or install as a Windows Service (runs as SYSTEM)</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">.\</span><span class="n">bin</span><span class="p">\</span><span class="n">dirq-agent</span><span class="p">.</span><span class="n">exe</span> <span class="n">install</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="nb">sc start </span><span class="n">DirQAgent</span>
 </code></pre></div>
 <p>You now have a working DirQ mesh on your laptop: a server, a registered agent, a configured CLI, and a playbook run under your belt. When you are ready to graduate to a real, multi-host fleet, continue with <a href="../../how-to/production-deployment/">Production Deployment</a>.</p>
 

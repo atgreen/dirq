@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://atgreen.github.io/dirq/how-to/production-deployment/">
+        <link rel="canonical" href="https://atgreen.github.io/dirq/how-to/install-packages/">
       
       
-        <link rel="prev" href="../install-packages/">
+        <link rel="prev" href="../../tutorials/quick-start/">
       
       
-        <link rel="next" href="../ansible-inventories/">
+        <link rel="next" href="../production-deployment/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Deploy a production fleet - DirQ</title>
+        <title>Install DirQ from packages - DirQ</title>
       
     
     
@@ -81,7 +81,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#deploy-a-production-fleet" class="md-skip">
+        <a href="#install-dirq-from-packages" class="md-skip">
           Skip to content
         </a>
       
@@ -115,7 +115,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Deploy a production fleet
+              Install DirQ from packages
             
           </span>
         </div>
@@ -271,7 +271,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../install-packages/" class="md-tabs__link">
+        <a href="./" class="md-tabs__link">
           
   
   
@@ -543,34 +543,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../install-packages/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Install DirQ from packages
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -590,7 +562,7 @@
   <span class="md-ellipsis">
     
   
-    Deploy a production fleet
+    Install DirQ from packages
   
 
     
@@ -608,7 +580,7 @@
   <span class="md-ellipsis">
     
   
-    Deploy a production fleet
+    Install DirQ from packages
   
 
     
@@ -634,10 +606,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#0-prerequisites" class="md-nav__link">
+  <a href="#what-you-install-where" class="md-nav__link">
     <span class="md-ellipsis">
       
-        0. Prerequisites
+        What you install where
       
     </span>
   </a>
@@ -645,10 +617,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-the-server-must-observe-each-agents-real-routable-ip" class="md-nav__link">
+  <a href="#ports-and-connectivity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. The server must observe each agent's real, routable IP
+        Ports and connectivity
       
     </span>
   </a>
@@ -656,10 +628,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-persist-server-state-across-restarts" class="md-nav__link">
+  <a href="#1-add-the-package-repository" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Persist server state across restarts
+        1. Add the package repository
       
     </span>
   </a>
@@ -667,10 +639,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-enable-tls-and-authentication" class="md-nav__link">
+  <a href="#2-install-and-start-the-server" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Enable TLS and authentication
+        2. Install and start the server
       
     </span>
   </a>
@@ -678,10 +650,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-install-and-verify-agents" class="md-nav__link">
+  <a href="#3-get-the-bootstrap-token-and-generated-configs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Install and verify agents
+        3. Get the bootstrap token and generated configs
       
     </span>
   </a>
@@ -689,10 +661,76 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#scaling-and-ha" class="md-nav__link">
+  <a href="#4-configure-the-cli" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Scaling and HA
+        4. Configure the CLI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-install-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Install agents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-verify-the-fleet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Verify the fleet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pin-a-version-or-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pin a version or upgrade
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#uninstall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Uninstall
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#air-gapped-offline-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Air-gapped / offline install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next steps
       
     </span>
   </a>
@@ -703,6 +741,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy a production fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1616,10 +1682,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#0-prerequisites" class="md-nav__link">
+  <a href="#what-you-install-where" class="md-nav__link">
     <span class="md-ellipsis">
       
-        0. Prerequisites
+        What you install where
       
     </span>
   </a>
@@ -1627,10 +1693,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-the-server-must-observe-each-agents-real-routable-ip" class="md-nav__link">
+  <a href="#ports-and-connectivity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. The server must observe each agent's real, routable IP
+        Ports and connectivity
       
     </span>
   </a>
@@ -1638,10 +1704,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-persist-server-state-across-restarts" class="md-nav__link">
+  <a href="#1-add-the-package-repository" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Persist server state across restarts
+        1. Add the package repository
       
     </span>
   </a>
@@ -1649,10 +1715,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-enable-tls-and-authentication" class="md-nav__link">
+  <a href="#2-install-and-start-the-server" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Enable TLS and authentication
+        2. Install and start the server
       
     </span>
   </a>
@@ -1660,10 +1726,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-install-and-verify-agents" class="md-nav__link">
+  <a href="#3-get-the-bootstrap-token-and-generated-configs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Install and verify agents
+        3. Get the bootstrap token and generated configs
       
     </span>
   </a>
@@ -1671,10 +1737,76 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#scaling-and-ha" class="md-nav__link">
+  <a href="#4-configure-the-cli" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Scaling and HA
+        4. Configure the CLI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-install-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Install agents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-verify-the-fleet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Verify the fleet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pin-a-version-or-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pin a version or upgrade
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#uninstall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Uninstall
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#air-gapped-offline-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Air-gapped / offline install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next steps
       
     </span>
   </a>
@@ -1701,75 +1833,303 @@
   
 
 
-<h1 id="deploy-a-production-fleet">Deploy a production fleet<a class="headerlink" href="#deploy-a-production-fleet" title="Permanent link">&para;</a></h1>
-<p>The <a href="../../tutorials/quick-start/">podman quick start</a> is a single-host laptop
-convenience. This page is the ordered checklist for a real, multi-host fleet. It
-assumes you install from packages — see <a href="../install-packages/">Install DirQ from packages</a>
-for the commands — and focuses on the four things a production deployment must get
-right that the quick start does not. Getting the first two wrong leaves agents
-stuck re-registering with the mesh unable to route between hosts.</p>
-<h2 id="0-prerequisites">0. Prerequisites<a class="headerlink" href="#0-prerequisites" title="Permanent link">&para;</a></h2>
-<ul>
-<li>A control host with a <strong>routable</strong> address for <code>dirq-server</code> (see step 1).</li>
-<li><strong>PostgreSQL</strong> if you're running more than a trial or want <a href="../../explanation/high-availability/">HA</a>;
-  SQLite is fine for a single small server but can't back multiple pods.</li>
-<li>Firewall rules for the <a href="../install-packages/#ports-and-connectivity">ports matrix</a>:
-  <code>50051/tcp</code> agents→server, <code>50052/tcp</code> host-to-host between agents, <code>8080/tcp</code>
-  admin→server, <code>5432/tcp</code> server→Postgres if external.</li>
-</ul>
-<h2 id="1-the-server-must-observe-each-agents-real-routable-ip">1. The server must observe each agent's real, routable IP<a class="headerlink" href="#1-the-server-must-observe-each-agents-real-routable-ip" title="Permanent link">&para;</a></h2>
-<p>During registration the server records the <strong>source IP</strong> of the agent's gRPC
-connection and advertises it to the rest of the mesh as that agent's relay
-address (so other agents know where to attach). If the server runs <strong>behind NAT</strong> —
-most commonly a <code>podman</code>/<code>docker</code> container with <strong>published ports</strong>
-(<code>-p 50051:50051</code>) — it sees a bridge address (<code>10.89.0.x</code>) instead of the agent's
-host IP and hands that unroutable address to everyone. The symptom is <code>dial tcp
-10.89.0.x:50052: i/o timeout</code> in agent logs and <code>dirq debug ping</code> timing out even
-though <code>dirq hosts list</code> shows the agent "online" (it registered, but never
-actually attached to its parent — a <em>ghost-online</em> node).</p>
-<p>Run the server so it sees real client IPs:</p>
-<ul>
-<li><strong>Native (recommended).</strong> Install the <code>dirq-server</code> package and run it as a
-  systemd service on a host with a routable address. This is what the RPM/DEB
-  packaging targets.</li>
-<li><strong>Containerized.</strong> Give the container <strong>host networking</strong> (<code>network_mode: host</code>
-  in compose, or <code>--network=host</code>) so it shares the host's network namespace. Do
-  <strong>not</strong> publish the gRPC port with <code>-p</code> — that is what masks the source IP. With
-  host networking, point <code>DIRQ_DB_URL</code> at the host (<code>@127.0.0.1:5432</code>, not a
-  compose service name) and bind the HTTP/gRPC listeners directly (<code>DIRQ_HTTP_ADDR</code>,
-  <code>DIRQ_GRPC_ADDR</code>).</li>
-</ul>
-<h2 id="2-persist-server-state-across-restarts">2. Persist server state across restarts<a class="headerlink" href="#2-persist-server-state-across-restarts" title="Permanent link">&para;</a></h2>
-<p>The server's Ed25519 <strong>signing key</strong>, <strong>CA</strong>, and <strong>bootstrap token</strong> live in
-<code>/var/lib/dirq</code>. If that directory is ephemeral (a container with no volume),
-recreating or rebuilding the server <strong>regenerates the signing key</strong>, and every
-already-registered agent then rejects the server's signed messages until you
-re-distribute the new <code>agent.conf</code>. Mount <code>/var/lib/dirq</code> on a persistent volume,
-and persist the Postgres data directory too. After any signing-key change,
-re-copy the freshly generated <code>agent.conf</code> to the agents.</p>
-<h2 id="3-enable-tls-and-authentication">3. Enable TLS and authentication<a class="headerlink" href="#3-enable-tls-and-authentication" title="Permanent link">&para;</a></h2>
-<p>In production both TLS and authentication must be enabled — with them off, API
-tokens and remote-exec payloads cross the network in cleartext, and any host that
-can reach the gRPC port can register or run commands. Set a <strong>registration
-secret</strong> so only hosts that present it can join. See
-<a href="../tls-and-auth/">Enable TLS &amp; authentication</a>.</p>
-<h2 id="4-install-and-verify-agents">4. Install and verify agents<a class="headerlink" href="#4-install-and-verify-agents" title="Permanent link">&para;</a></h2>
-<p>Install the <code>dirq-agent</code> package (native systemd service) and drop in the
-server-generated config — see <a href="../install-packages/#5-install-agents">Install agents</a>.
-Prefer the packaged unit over a hand-rolled one so config paths, the data
-directory, and restart behavior match the docs.</p>
-<p>Then confirm each agent actually attached, not just registered:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>dirq<span class="w"> </span>hosts<span class="w"> </span>list<span class="w">                 </span><span class="c1"># host shows online</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>dirq<span class="w"> </span>debug<span class="w"> </span>ping<span class="w"> </span>&lt;hostname&gt;<span class="w">      </span><span class="c1"># end-to-end proof it&#39;s reachable through the mesh</span>
+<h1 id="install-dirq-from-packages">Install DirQ from packages<a class="headerlink" href="#install-dirq-from-packages" title="Permanent link">&para;</a></h1>
+<p>This guide takes you from nothing to a running DirQ control plane with a
+registered agent, using the signed packages — no building from source. If you
+just want to try DirQ on one machine, the <a href="../../tutorials/quick-start/">laptop quick start</a>
+is faster; come here when you're installing on real hosts.</p>
+<h2 id="what-you-install-where">What you install where<a class="headerlink" href="#what-you-install-where" title="Permanent link">&para;</a></h2>
+<p>DirQ ships three packages. You do <strong>not</strong> install all of them on every host.</p>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Install on</th>
+<th>Provides</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dirq-server</code></td>
+<td>one control host (or a few, for <a href="../../explanation/high-availability/">HA</a>)</td>
+<td>gRPC service for agents, REST API, query engine, Ansible inventory</td>
+</tr>
+<tr>
+<td><code>dirq</code></td>
+<td>your workstation / admin hosts</td>
+<td>the <code>dirq</code> CLI</td>
+</tr>
+<tr>
+<td><code>dirq-agent</code></td>
+<td>every managed host in the fleet</td>
+<td>the agent that joins the mesh and runs queries/exec</td>
+</tr>
+</tbody>
+</table>
+<p>The server uses an embedded <strong>SQLite</strong> database by default, so you can stand up a
+working control plane with no external database. Point <code>db_url</code> at PostgreSQL when
+you need multiple server pods or durability guarantees SQLite can't give you.</p>
+<h2 id="ports-and-connectivity">Ports and connectivity<a class="headerlink" href="#ports-and-connectivity" title="Permanent link">&para;</a></h2>
+<p>DirQ agents are <strong>outbound-first</strong> — a managed host needs <strong>no inbound SSH or
+WinRM</strong>. But DirQ builds a relay tree, so any agent can be a <em>parent</em> for others,
+and a parent must accept an inbound gRPC connection from its children. Plan for:</p>
+<table>
+<thead>
+<tr>
+<th>Connection</th>
+<th>Port</th>
+<th>Who initiates</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent → Server</td>
+<td><code>50051/tcp</code></td>
+<td>agent</td>
+<td>gRPC control channel (TLS)</td>
+</tr>
+<tr>
+<td>Agent → Agent (relay)</td>
+<td><code>50052/tcp</code></td>
+<td>child agent</td>
+<td>host-to-host within the fleet; a relay parent listens here</td>
+</tr>
+<tr>
+<td>Admin/CLI → Server</td>
+<td><code>8080/tcp</code></td>
+<td>CLI</td>
+<td>REST API (TLS)</td>
+</tr>
+<tr>
+<td>Server → PostgreSQL</td>
+<td><code>5432/tcp</code></td>
+<td>server</td>
+<td>only if you use external Postgres instead of SQLite</td>
+</tr>
+</tbody>
+</table>
+<p>So: managed hosts open <strong>no</strong> inbound SSH/WinRM, but the fleet must allow
+<code>50052/tcp</code> <strong>host-to-host</strong> between agents, and <code>50051/tcp</code> from agents to the
+server. See <a href="../diagnostics/">Diagnose the mesh</a> for the <code>dial tcp 10.89.0.x:50052:
+i/o timeout</code> symptom when this is wrong.</p>
+<h2 id="1-add-the-package-repository">1. Add the package repository<a class="headerlink" href="#1-add-the-package-repository" title="Permanent link">&para;</a></h2>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Fedora / RHEL / AlmaLinux</label><label for="__tabbed_1_2">Debian / Ubuntu</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>sudo<span class="w"> </span>tee<span class="w"> </span>/etc/yum.repos.d/dirq.repo<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="s">[dirq]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="s">name=DirQ</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="s">baseurl=https://atgreen.github.io/dirq/rpm-repo</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="s">gpgcheck=1</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s">gpgkey=https://atgreen.github.io/dirq/rpm-repo/RPM-GPG-KEY-dirq</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="s">enabled=1</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s">EOF</span>
 </code></pre></div>
-<p>If <code>hosts list</code> shows online but <code>ping</code> times out, you have a ghost-online node —
-revisit step 1. See <a href="../diagnostics/">Diagnose the mesh</a> for the full symptom table.</p>
-<h2 id="scaling-and-ha">Scaling and HA<a class="headerlink" href="#scaling-and-ha" title="Permanent link">&para;</a></h2>
+<p>Verify the signing key before trusting the repo — import it and check the
+fingerprint against the one published on the
+<a href="https://github.com/atgreen/dirq/releases">releases page</a>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>sudo<span class="w"> </span>rpm<span class="w"> </span>--import<span class="w"> </span>https://atgreen.github.io/dirq/rpm-repo/RPM-GPG-KEY-dirq
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>rpm<span class="w"> </span>-q<span class="w"> </span>gpg-pubkey<span class="w"> </span>--qf<span class="w"> </span><span class="s1">&#39;%{SUMMARY}\n&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-i<span class="w"> </span>dirq
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://atgreen.github.io/dirq/deb-repo/dirq-archive-keyring.gpg<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>gpg<span class="w"> </span>--dearmor<span class="w"> </span>-o<span class="w"> </span>/usr/share/keyrings/dirq-archive-keyring.gpg
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;deb [signed-by=/usr/share/keyrings/dirq-archive-keyring.gpg] \</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="s2">  https://atgreen.github.io/dirq/deb-repo stable main&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>tee<span class="w"> </span>/etc/apt/sources.list.d/dirq.list
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>sudo<span class="w"> </span>apt<span class="w"> </span>update
+</code></pre></div>
+<p><code>apt</code> verifies every package against the keyring you installed above; a
+tampered or unsigned package fails the update.</p>
+</div>
+</div>
+</div>
+<h2 id="2-install-and-start-the-server">2. Install and start the server<a class="headerlink" href="#2-install-and-start-the-server" title="Permanent link">&para;</a></h2>
+<p>On the control host:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Fedora / RHEL / AlmaLinux</label><label for="__tabbed_2_2">Debian / Ubuntu</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>dirq-server<span class="w"> </span>dirq
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>dirq-server<span class="w"> </span>dirq
+</code></pre></div>
+</div>
+</div>
+</div>
+<p>The <code>dirq-server</code> package installs the binary, a <code>dirq-server</code> systemd unit, and
+a default config at <code>/etc/dirq/server.conf</code>. Edit that file before first start —
+at minimum set a registration secret, and for anything beyond a trial, point at
+PostgreSQL:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a># /etc/dirq/server.conf
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>grpc_addr: :50051
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>http_addr: :8080
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>registration_secret: &lt;a-strong-shared-secret&gt;
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a># db_url: postgres://dirq:dirq@db.internal:5432/dirq?sslmode=require   # optional
+</code></pre></div>
+<p>The unit is <strong>not</strong> auto-enabled, so you choose when it starts:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>--now<span class="w"> </span>dirq-server
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>systemctl<span class="w"> </span>status<span class="w"> </span>dirq-server
+</code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Turn on TLS and auth before this server faces a real network</p>
+<p>Both are on by default, but the quick start disables them. Do not copy the
+quick start's <code>DIRQ_TLS_DISABLED</code> / <code>DIRQ_AUTH_DISABLED</code> here. See
+<a href="../tls-and-auth/">Enable TLS &amp; authentication</a>.</p>
+</div>
+<h2 id="3-get-the-bootstrap-token-and-generated-configs">3. Get the bootstrap token and generated configs<a class="headerlink" href="#3-get-the-bootstrap-token-and-generated-configs" title="Permanent link">&para;</a></h2>
+<p>On first start with no tokens, the server generates an admin <strong>bootstrap token</strong>
+and writes ready-to-copy configs into <code>/var/lib/dirq</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>sudo<span class="w"> </span>cat<span class="w"> </span>/var/lib/dirq/bootstrap-token<span class="w">   </span><span class="c1"># admin API token (also printed to the log)</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>ls<span class="w"> </span>/var/lib/dirq/
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="c1"># agent.conf   client.conf   bootstrap-token   (plus the signing key, CA, and DB)</span>
+</code></pre></div>
 <ul>
-<li>Tune fan-out and placement with <code>max_children</code>, <code>max_zone_leaders</code>, and the
-  <a href="../../explanation/reboot-aware-placement/">reboot-aware placement</a> knobs.</li>
-<li>Run multiple server pods behind Postgres with <code>leader_election</code> for
-  <a href="../../explanation/high-availability/">high availability</a>.</li>
+<li><strong><code>/var/lib/dirq/client.conf</code></strong> — CLI config (server URL + bootstrap token).</li>
+<li><strong><code>/var/lib/dirq/agent.conf</code></strong> — agent config with the server address,
+  registration secret, and inline TLS certs. This is what every agent needs.</li>
+</ul>
+<div class="admonition danger">
+<p class="admonition-title">Persist <code>/var/lib/dirq</code></p>
+<p>It holds the server's Ed25519 signing key and CA. If it's ephemeral, a
+restart regenerates the key and <strong>every registered agent rejects the server</strong>
+until you re-distribute <code>agent.conf</code>. On a real deployment, put it on durable
+storage.</p>
+</div>
+<h2 id="4-configure-the-cli">4. Configure the CLI<a class="headerlink" href="#4-configure-the-cli" title="Permanent link">&para;</a></h2>
+<p>On your workstation, install the <code>dirq</code> package (step 2 if it isn't there), then
+drop in the generated client config:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># copy from the server:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>scp<span class="w"> </span>server:/var/lib/dirq/client.conf<span class="w"> </span>~/.config/dirq/client.conf
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>dirq<span class="w"> </span>doctor
+</code></pre></div>
+<p><code>dirq doctor</code> should report the server URL reachable and the API token valid.</p>
+<h2 id="5-install-agents">5. Install agents<a class="headerlink" href="#5-install-agents" title="Permanent link">&para;</a></h2>
+<p>On every managed host, install the agent and drop in the server-generated config:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="3:3"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><input id="__tabbed_3_3" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">Fedora / RHEL / AlmaLinux</label><label for="__tabbed_3_2">Debian / Ubuntu</label><label for="__tabbed_3_3">Windows</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>dirq-agent
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>dirq-agent
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Download and run the latest signed installer from the
+<a href="https://github.com/atgreen/dirq/releases/latest">releases page</a>:</p>
+<ul>
+<li>
+<p><strong><code>dirq-agent-&lt;version&gt;.msi</code></strong> — for unattended / GPO deployment:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">msiexec</span> <span class="p">/</span><span class="n">i</span> <span class="n">dirq-agent</span><span class="p">-&lt;</span><span class="n">version</span><span class="p">&gt;.</span><span class="n">msi</span> <span class="p">/</span><span class="n">qn</span>
+</code></pre></div>
+</li>
+<li>
+<p><strong><code>dirq-agent-&lt;version&gt;-setup.exe</code></strong> — interactive installer.</p>
+</li>
+</ul>
+<p>Prefer a standalone binary? Download <code>dirq-agent-windows-amd64.exe</code>
+(or <code>dirq-agent-windows-arm64.exe</code>) and register it as a Windows Service:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">.\</span><span class="n">dirq-agent-windows-amd64</span><span class="p">.</span><span class="n">exe</span> <span class="n">install</span>
+</code></pre></div>
+<p>Verify the download first with <code>Get-AuthenticodeSignature .\dirq-agent-&lt;version&gt;.msi</code>,
+or check it against <code>checksums.sha256</code> on the release.</p>
+</div>
+</div>
+</div>
+<p>Then distribute the config the server generated and start the service:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># copy /var/lib/dirq/agent.conf from the server to each host as:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="c1">#   Linux:   /etc/dirq/agent.conf</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1">#   Windows: C:\ProgramData\dirq\agent.conf</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>--now<span class="w"> </span>dirq-agent<span class="w">      </span><span class="c1"># Linux</span>
+</code></pre></div>
+<p>On Windows, restart the <strong>dirq-agent</strong> service after writing the config. Like the
+server, the Linux agent unit is not auto-enabled — <code>enable --now</code> starts it and
+sets it to start on boot.</p>
+<h2 id="6-verify-the-fleet">6. Verify the fleet<a class="headerlink" href="#6-verify-the-fleet" title="Permanent link">&para;</a></h2>
+<p>Confirm each agent actually attached to the mesh, not just registered:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>systemctl<span class="w"> </span>status<span class="w"> </span>dirq-agent<span class="w">                 </span><span class="c1"># on the agent host: is it running?</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>sudo<span class="w"> </span>journalctl<span class="w"> </span>-u<span class="w"> </span>dirq-agent<span class="w"> </span>-n<span class="w"> </span><span class="m">50</span><span class="w">         </span><span class="c1"># any registration / dial errors?</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>dirq<span class="w"> </span>doctor<span class="w">                                 </span><span class="c1"># from your workstation</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>dirq<span class="w"> </span>hosts<span class="w"> </span>list<span class="w">                             </span><span class="c1"># the new host should appear online</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>dirq<span class="w"> </span>debug<span class="w"> </span>ping<span class="w"> </span>&lt;hostname&gt;<span class="w">                  </span><span class="c1"># proves a message reaches it end-to-end</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>dirq<span class="w"> </span><span class="k">select</span><span class="w"> </span>hostname,<span class="w"> </span>cpu.logical_cores<span class="w"> </span>WHERE<span class="w"> </span><span class="nv">hostname</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&lt;hostname&gt;&#39;</span>
+</code></pre></div>
+<p><code>dirq hosts list</code> showing a host "online" is necessary but not sufficient — a
+<em>ghost-online</em> host registered but never attached to a relay parent. <code>dirq debug
+ping</code> is the real proof. If it times out, see
+<a href="../diagnostics/">Diagnose the mesh</a>.</p>
+<h2 id="pin-a-version-or-upgrade">Pin a version or upgrade<a class="headerlink" href="#pin-a-version-or-upgrade" title="Permanent link">&para;</a></h2>
+<p>The commands above install the latest release. To install or hold a specific
+version:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="4:2"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><input id="__tabbed_4_2" name="__tabbed_4" type="radio" /><div class="tabbed-labels"><label for="__tabbed_4_1">Fedora / RHEL / AlmaLinux</label><label for="__tabbed_4_2">Debian / Ubuntu</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>dirq-agent-0.25.0<span class="w">            </span><span class="c1"># a specific version</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>python3-dnf-plugin-versionlock
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>versionlock<span class="w"> </span>add<span class="w"> </span>dirq-agent<span class="w">           </span><span class="c1"># freeze it</span>
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>dirq-agent<span class="o">=</span><span class="m">0</span>.25.0-1<span class="w">          </span><span class="c1"># a specific version</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>sudo<span class="w"> </span>apt-mark<span class="w"> </span>hold<span class="w"> </span>dirq-agent<span class="w">                 </span><span class="c1"># freeze it</span>
+</code></pre></div>
+</div>
+</div>
+</div>
+<p>To upgrade, <code>apt-mark unhold</code> / <code>versionlock delete</code> then <code>dnf upgrade</code> /
+<code>apt upgrade</code>. Keep the server at or ahead of the agents' version; <code>dirq doctor</code>
+reports version skew.</p>
+<h2 id="uninstall">Uninstall<a class="headerlink" href="#uninstall" title="Permanent link">&para;</a></h2>
+<div class="tabbed-set tabbed-alternate" data-tabs="5:3"><input checked="checked" id="__tabbed_5_1" name="__tabbed_5" type="radio" /><input id="__tabbed_5_2" name="__tabbed_5" type="radio" /><input id="__tabbed_5_3" name="__tabbed_5" type="radio" /><div class="tabbed-labels"><label for="__tabbed_5_1">Fedora / RHEL / AlmaLinux</label><label for="__tabbed_5_2">Debian / Ubuntu</label><label for="__tabbed_5_3">Windows</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span>disable<span class="w"> </span>--now<span class="w"> </span>dirq-agent
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>remove<span class="w"> </span>dirq-agent
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>sudo<span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span>/etc/dirq<span class="w"> </span>/var/lib/dirq<span class="w">        </span><span class="c1"># only if you want config + state gone</span>
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span>disable<span class="w"> </span>--now<span class="w"> </span>dirq-agent
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>sudo<span class="w"> </span>apt<span class="w"> </span>remove<span class="w"> </span>dirq-agent<span class="w">                 </span><span class="c1"># or &#39;purge&#39; to drop /etc/dirq too</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>sudo<span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span>/var/lib/dirq
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Uninstall the MSI from <strong>Settings → Apps</strong>, or for the standalone binary:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="p">.\</span><span class="n">dirq-agent-windows-amd64</span><span class="p">.</span><span class="n">exe</span> <span class="n">uninstall</span>
+</code></pre></div>
+</div>
+</div>
+</div>
+<p>Removing the package stops the host reporting in, but the server still lists it
+(offline). Remove it from the fleet with the admin API/CLI if you want it gone.
+The same steps apply to <code>dirq-server</code> (substitute the name).</p>
+<h2 id="air-gapped-offline-install">Air-gapped / offline install<a class="headerlink" href="#air-gapped-offline-install" title="Permanent link">&para;</a></h2>
+<p>No internet on the target hosts? Mirror the repositories from a connected machine
+and serve them internally:</p>
+<ul>
+<li><strong>RPM:</strong> <code>reposync</code>/<code>dnf reposync</code> the <code>dirq</code> repo (or copy the RPMs from the
+  <a href="https://github.com/atgreen/dirq/releases">releases page</a> plus the GPG key),
+  then <code>createrepo_c</code> and point an internal <code>baseurl</code> at it.</li>
+<li><strong>DEB:</strong> mirror the <code>deb-repo</code> tree (or the <code>.deb</code> assets) behind an internal
+  apt mirror with the keyring.</li>
+<li><strong>Windows:</strong> copy the MSI to your software-distribution share.</li>
+</ul>
+<p>Verify each artifact against <code>checksums.sha256</code> on the release before mirroring,
+and distribute <code>agent.conf</code> over your existing secure channel.</p>
+<h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../tls-and-auth/">Enable TLS &amp; authentication</a> — required before production.</li>
+<li><a href="../production-deployment/">Deploy a production fleet</a> — the hardening checklist.</li>
+<li><a href="../../reference/configuration/">Configuration reference</a> — every key and env var.</li>
 </ul>
 
 
