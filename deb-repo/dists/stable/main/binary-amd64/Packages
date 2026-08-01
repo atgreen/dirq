@@ -1,0 +1,55 @@
+Package: dirq
+Version: 0.25.0-1
+Architecture: amd64
+Maintainer: Anthony Green <green@moxielogic.com>
+Installed-Size: 13257
+Filename: pool/main/dirq_0.25.0-1_amd64.deb
+Size: 6302994
+MD5sum: 478545895718b960a1dc709023237309
+SHA1: e7344f889a83bff44c76e18d90b554e435abde8c
+SHA256: 9feb6ef0c79665f1eafca647640e46f29c6119d22a462a1690141f62773b7572
+Section: admin
+Priority: optional
+Homepage: https://github.com/atgreen/dirq
+Description: DirQ CLI — command-line tool for querying the fleet
+ Query agents, manage hosts, tokens, tags, and generate TLS
+ certificates.
+
+Package: dirq-agent
+Source: dirq
+Version: 0.25.0-1
+Architecture: amd64
+Maintainer: Anthony Green <green@moxielogic.com>
+Installed-Size: 36725
+Filename: pool/main/dirq-agent_0.25.0-1_amd64.deb
+Size: 14260086
+MD5sum: 53d1c1ab4f48292aead91e17992e2e3e
+SHA1: 2c7b586c0070a70d24d5b08c8cf48629e3d77e21
+SHA256: ed8ebebdf7bdb61c1ac23433304101891696e5fa316bbb67b26fc113e4bb22a8
+Section: admin
+Priority: optional
+Homepage: https://github.com/atgreen/dirq
+Description: DirQ agent — endpoint agent for fleet management
+ Lightweight agent that runs on managed Linux servers, collects system
+ data, relays queries through the P2P mesh, and optionally executes
+ commands.
+
+Package: dirq-server
+Source: dirq
+Version: 0.25.0-1
+Architecture: amd64
+Maintainer: Anthony Green <green@moxielogic.com>
+Installed-Size: 29583
+Depends: postgresql
+Filename: pool/main/dirq-server_0.25.0-1_amd64.deb
+Size: 13391538
+MD5sum: aa60fb2c8be986977ad8899dd8f0768e
+SHA1: 513feb04bbfbe0d1a4bdaa98c6d14aff25374e2a
+SHA256: b5759c8dec1b37b4c80beb2105dcc8f32c49e7d352e8534702b5402e9363c0f2
+Section: admin
+Priority: optional
+Homepage: https://github.com/atgreen/dirq
+Description: DirQ server — Direct Query platform for fleet management
+ Central server providing gRPC service for agents, REST API, query
+ engine, and Ansible inventory endpoint.
+

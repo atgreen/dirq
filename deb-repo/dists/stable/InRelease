@@ -1,0 +1,33 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: dirq
+Label: dirq
+Suite: stable
+Codename: stable
+Date: Sat, 01 Aug 2026 00:15:44 +0000
+Architectures: amd64
+Components: main
+Description: DirQ APT repository
+MD5Sum:
+ 510eb8b4e4d3ccac5063735e52d0a190             1867 main/binary-amd64/Packages
+ 8841cf45364237f9e38323caf839f5f1              887 main/binary-amd64/Packages.gz
+SHA256:
+ f3e5023830ebe98fc3de6218bbad5e05c5feefb5fdfa9ade1249f6a4ba7b9fe9             1867 main/binary-amd64/Packages
+ 0cc4fb7e27e23edec5f3d3cbe6a099d9dbde20f0e5e98382453005c4cdaa4d88              887 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEre3Ac/FORwuD3v8b8p/ZFuMdNcsFAmptOrAACgkQ8p/ZFuMd
+Ncv7rA//WFBp5K495caIl+UjgVcXRWrm95Ny20wPgzwK9HTG0SdnsQam3I24oFCk
+y67OlT2CihL1aoivqKFvNjYnGxm4zBpO2ypGkULj2g4C79otfFq+8WazvFpkF2gl
+1RBEYW5ojhZih9A+ifdBTZQ019aGK1/7PYgIdoZZ+bknqu+jZN0TKYXxJ+eGFtpQ
+WmKvrWc46H1ZHxtNVM0Nf+Gcg7WtVPuPOAfCD1M46mQa3v5I0bI0p6kV8UvZoJGS
+X5mg75iu8U24QDolL0Q++/wZhirwIRl9JRyJhqsb1OtYIi+UX6SdiFz0enmXCsG3
+cJzPKGeb6wfPy3sq/UXZcEV785YdOQfIoWco5+q0IeJh38/qlFdGC6uB+eW1DLgs
+YObmCzOZnhfvXKZ7hNQVnT2jcuJCczthzp3EER51xh8kQnFVbS/j1XU+3LWYQLI0
+C/JHHiHSCD40hkulmTbGYZ6M7+KhvhGGt1k7cv8ByAEg5ipUOb82QV58kFTySfF+
+Ob7t547KlEN02hUMGvJf9n82YZ8VS4QlY051ddtvrS1BCe7Ulq64lAr+95FAdQzF
+iDJbvZ1N8kRJJ41BlBaSsvHiaQkmbDio4PIK1nwKXn5nZb12nitizxUUZYC0mPrO
+kmWAAxPNlEBHEzA4KEiZL6gcYCUBRRDD3Ksk8KJe3bcUTh5b7M4=
+=582L
+-----END PGP SIGNATURE-----
