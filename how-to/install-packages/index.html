@@ -617,17 +617,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ports-and-connectivity" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ports and connectivity
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#1-add-the-package-repository" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -687,6 +676,17 @@
     <span class="md-ellipsis">
       
         6. Verify the fleet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-and-ports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network and ports
       
     </span>
   </a>
@@ -1693,17 +1693,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ports-and-connectivity" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ports and connectivity
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#1-add-the-package-repository" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1763,6 +1752,17 @@
     <span class="md-ellipsis">
       
         6. Verify the fleet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-and-ports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network and ports
       
     </span>
   </a>
@@ -1869,50 +1869,9 @@ is faster; come here when you're installing on real hosts.</p>
 <p>The server uses an embedded <strong>SQLite</strong> database by default, so you can stand up a
 working control plane with no external database. Point <code>db_url</code> at PostgreSQL when
 you need multiple server pods or durability guarantees SQLite can't give you.</p>
-<h2 id="ports-and-connectivity">Ports and connectivity<a class="headerlink" href="#ports-and-connectivity" title="Permanent link">&para;</a></h2>
-<p>DirQ agents are <strong>outbound-first</strong> — a managed host needs <strong>no inbound SSH or
-WinRM</strong>. But DirQ builds a relay tree, so any agent can be a <em>parent</em> for others,
-and a parent must accept an inbound gRPC connection from its children. Plan for:</p>
-<table>
-<thead>
-<tr>
-<th>Connection</th>
-<th>Port</th>
-<th>Who initiates</th>
-<th>Notes</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Agent → Server</td>
-<td><code>50051/tcp</code></td>
-<td>agent</td>
-<td>gRPC control channel (TLS)</td>
-</tr>
-<tr>
-<td>Agent → Agent (relay)</td>
-<td><code>50052/tcp</code></td>
-<td>child agent</td>
-<td>host-to-host within the fleet; a relay parent listens here</td>
-</tr>
-<tr>
-<td>Admin/CLI → Server</td>
-<td><code>8080/tcp</code></td>
-<td>CLI</td>
-<td>REST API (TLS)</td>
-</tr>
-<tr>
-<td>Server → PostgreSQL</td>
-<td><code>5432/tcp</code></td>
-<td>server</td>
-<td>only if you use external Postgres instead of SQLite</td>
-</tr>
-</tbody>
-</table>
-<p>So: managed hosts open <strong>no</strong> inbound SSH/WinRM, but the fleet must allow
-<code>50052/tcp</code> <strong>host-to-host</strong> between agents, and <code>50051/tcp</code> from agents to the
-server. See <a href="../diagnostics/">Diagnose the mesh</a> for the <code>dial tcp 10.89.0.x:50052:
-i/o timeout</code> symptom when this is wrong.</p>
+<p>Managed hosts need <strong>no inbound SSH or WinRM</strong>. The fleet does need a couple of
+ports open between hosts — see <a href="#network-and-ports">Network and ports</a> below when
+you set up firewalls.</p>
 <h2 id="1-add-the-package-repository">1. Add the package repository<a class="headerlink" href="#1-add-the-package-repository" title="Permanent link">&para;</a></h2>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Fedora / RHEL / AlmaLinux</label><label for="__tabbed_1_2">Debian / Ubuntu</label></div>
 <div class="tabbed-content">
@@ -2066,6 +2025,48 @@ sets it to start on boot.</p>
 <em>ghost-online</em> host registered but never attached to a relay parent. <code>dirq debug
 ping</code> is the real proof. If it times out, see
 <a href="../diagnostics/">Diagnose the mesh</a>.</p>
+<h2 id="network-and-ports">Network and ports<a class="headerlink" href="#network-and-ports" title="Permanent link">&para;</a></h2>
+<p>DirQ builds a relay tree, so any agent can be a <em>parent</em> for others and must
+accept an inbound gRPC connection from its children. Open these between hosts:</p>
+<table>
+<thead>
+<tr>
+<th>Connection</th>
+<th>Port</th>
+<th>Who initiates</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent → Server</td>
+<td><code>50051/tcp</code></td>
+<td>agent</td>
+<td>gRPC control channel (TLS)</td>
+</tr>
+<tr>
+<td>Agent → Agent (relay)</td>
+<td><code>50052/tcp</code></td>
+<td>child agent</td>
+<td>host-to-host within the fleet; a relay parent listens here</td>
+</tr>
+<tr>
+<td>Admin/CLI → Server</td>
+<td><code>8080/tcp</code></td>
+<td>CLI</td>
+<td>REST API (TLS)</td>
+</tr>
+<tr>
+<td>Server → PostgreSQL</td>
+<td><code>5432/tcp</code></td>
+<td>server</td>
+<td>only if you use external Postgres instead of SQLite</td>
+</tr>
+</tbody>
+</table>
+<p>Managed hosts still need <strong>no</strong> inbound SSH/WinRM. If an agent shows online but
+<code>dirq debug ping</code> times out, <code>50052/tcp</code> host-to-host is usually the culprit —
+see <a href="../diagnostics/">Diagnose the mesh</a>.</p>
 <h2 id="pin-a-version-or-upgrade">Pin a version or upgrade<a class="headerlink" href="#pin-a-version-or-upgrade" title="Permanent link">&para;</a></h2>
 <p>The commands above install the latest release. To install or hold a specific
 version:</p>
