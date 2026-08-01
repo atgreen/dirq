@@ -1,0 +1,144 @@
+{% extends "main.html" %}
+
+<!--
+  Landing page for DirQ (the site root). A full-width hero + feature grid, with
+  the normal article chrome hidden. The Diátaxis documentation lives under
+  /tutorials, /how-to, /reference, and /explanation and is reached from here.
+
+  index.md sets `template: home.html` and `hide: [navigation, toc]`; this block
+  replaces the tab strip area with the hero and features, and the content block
+  is emptied so no empty article renders below.
+-->
+
+{% block tabs %}
+  {{ super() }}
+
+  <style>
+    .md-main__inner { margin-top: 0; }
+    .md-content { display: none; }
+
+    .dx-hero {
+      padding: 5rem 0.8rem 4rem;
+      text-align: center;
+      background:
+        radial-gradient(circle at 50% -20%,
+          var(--md-primary-fg-color--light) 0%, transparent 60%),
+        var(--md-primary-fg-color);
+      color: var(--md-primary-bg-color);
+    }
+    .dx-hero h1 {
+      font-size: 3rem;
+      font-weight: 700;
+      margin: 0 0 0.4rem;
+      color: var(--md-primary-bg-color);
+    }
+    .dx-hero__tagline {
+      font-size: 1.15rem;
+      max-width: 34rem;
+      margin: 0 auto 2rem;
+      opacity: 0.92;
+    }
+    .dx-hero .md-button {
+      margin: 0.3rem 0.4rem;
+    }
+    .dx-hero .md-button--primary {
+      background-color: var(--md-primary-bg-color);
+      color: var(--md-primary-fg-color);
+      border-color: var(--md-primary-bg-color);
+    }
+    .dx-hero .md-button:not(.md-button--primary) {
+      color: var(--md-primary-bg-color);
+      border-color: var(--md-primary-bg-color);
+    }
+    .dx-hero .md-button:not(.md-button--primary):hover {
+      background-color: var(--md-primary-bg-color);
+      color: var(--md-primary-fg-color);
+    }
+
+    .dx-features { padding: 3rem 0.8rem 4rem; }
+    .dx-features__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+      gap: 1.6rem;
+      max-width: 52rem;
+      margin: 0 auto;
+    }
+    .dx-feature__icon svg {
+      height: 2.2rem;
+      width: 2.2rem;
+      fill: var(--md-primary-fg-color);
+    }
+    .dx-feature h2 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin: 0.5rem 0 0.3rem;
+    }
+    .dx-feature p {
+      margin: 0;
+      font-size: 0.8rem;
+      color: var(--md-default-fg-color--light);
+    }
+  </style>
+
+  <section class="dx-hero">
+    <div class="md-grid md-typeset">
+      <h1>DirQ</h1>
+      <p class="dx-hero__tagline">
+        Query and manage your Windows &amp; Linux fleet like a dataset —
+        over an outbound-only relay mesh, with Ansible on top.
+      </p>
+      <a href="{{ 'tutorials/quick-start/' | url }}" class="md-button md-button--primary">
+        Get started
+      </a>
+      <a href="{{ config.repo_url }}" class="md-button">
+        View on GitHub
+      </a>
+    </div>
+  </section>
+
+  <section class="dx-features">
+    <div class="md-grid md-typeset">
+      <div class="dx-features__grid">
+
+        <div class="dx-feature">
+          <div class="dx-feature__icon">{% include ".icons/material/database-search.svg" %}</div>
+          <h2>Query the fleet like a dataset</h2>
+          <p>Ask questions across thousands of hosts at once instead of logging into them one by one.</p>
+        </div>
+
+        <div class="dx-feature">
+          <div class="dx-feature__icon">{% include ".icons/material/shield-lock-outline.svg" %}</div>
+          <h2>Outbound-only agents</h2>
+          <p>Managed hosts dial out to the mesh — no inbound SSH or WinRM to open and defend.</p>
+        </div>
+
+        <div class="dx-feature">
+          <div class="dx-feature__icon">{% include ".icons/simple/ansible.svg" %}</div>
+          <h2>Reuse Ansible</h2>
+          <p>Keep your playbooks and roles; DirQ replaces the SSH/WinRM transport underneath.</p>
+        </div>
+
+        <div class="dx-feature">
+          <div class="dx-feature__icon">{% include ".icons/material/sitemap-outline.svg" %}</div>
+          <h2>Relay-tree scale</h2>
+          <p>A peer-to-peer mesh means the server never needs a session to every node.</p>
+        </div>
+
+        <div class="dx-feature">
+          <div class="dx-feature__icon">{% include ".icons/material/clipboard-list-outline.svg" %}</div>
+          <h2>Live inventories</h2>
+          <p>Build Ansible inventories from real-time query results, not static host lists.</p>
+        </div>
+
+        <div class="dx-feature">
+          <div class="dx-feature__icon">{% include ".icons/material/shield-bug-outline.svg" %}</div>
+          <h2>Real-time CVE scanning</h2>
+          <p>Scan the fleet for vulnerabilities and run ad-hoc commands across it on demand.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block content %}{% endblock %}

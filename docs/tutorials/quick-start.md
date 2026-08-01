@@ -96,9 +96,73 @@ cd test-playbook
 DIRQ_SERVER_URL=http://localhost:8090 DIRQ_TOKEN=$DIRQ_TOKEN ansible-playbook test.yml -v
 ```
 
-## Windows agent
+## Install a released agent
 
-If you want to bring a Windows host into the mesh, cross-compile and run the agent there:
+The steps above build from source, which is ideal for this laptop walkthrough.
+For real hosts, DirQ publishes signed packages so you don't have to build
+anything — add the repo and install `dirq-agent`:
+
+=== "Fedora / RHEL / AlmaLinux"
+
+    ```bash
+    sudo tee /etc/yum.repos.d/dirq.repo <<'EOF'
+    [dirq]
+    name=DirQ
+    baseurl=https://atgreen.github.io/dirq/rpm-repo
+    gpgcheck=1
+    gpgkey=https://atgreen.github.io/dirq/rpm-repo/RPM-GPG-KEY-dirq
+    enabled=1
+    EOF
+
+    sudo dnf install dirq-agent
+    ```
+
+=== "Debian / Ubuntu"
+
+    ```bash
+    curl -fsSL https://atgreen.github.io/dirq/deb-repo/dirq-archive-keyring.gpg \
+      | sudo gpg --dearmor -o /usr/share/keyrings/dirq-archive-keyring.gpg
+
+    echo "deb [signed-by=/usr/share/keyrings/dirq-archive-keyring.gpg] \
+      https://atgreen.github.io/dirq/deb-repo stable main" \
+      | sudo tee /etc/apt/sources.list.d/dirq.list
+
+    sudo apt update
+    sudo apt install dirq-agent
+    ```
+
+=== "Windows"
+
+    Download and run the latest signed installer from the
+    [releases page](https://github.com/atgreen/dirq/releases/latest):
+
+    - **`dirq-agent-<version>.msi`** — for unattended / GPO deployment:
+
+        ```powershell
+        msiexec /i dirq-agent-<version>.msi /qn
+        ```
+
+    - **`dirq-agent-<version>-setup.exe`** — interactive installer.
+
+    Prefer a standalone binary? Download `dirq-agent-windows-amd64.exe`
+    (or `dirq-agent-windows-arm64.exe`) and register it as a Windows Service:
+
+    ```powershell
+    .\dirq-agent-windows-amd64.exe install
+    ```
+
+    The agent runs as a Windows Service (SYSTEM).
+
+After installing, drop in the server-generated agent config
+(`/etc/dirq/agent.conf` on Linux, `C:\ProgramData\dirq\agent.conf` on Windows)
+and start the service — `sudo systemctl restart dirq-agent` on Linux, or restart
+the **dirq-agent** service on Windows. See
+[Deploy a production fleet](../how-to/production-deployment.md) for the full setup.
+
+## Windows agent from source
+
+If you'd rather build it yourself, cross-compile and run the agent on the
+Windows host:
 
 ```powershell
 GOOS=windows GOARCH=amd64 go build -o bin/dirq-agent.exe ./cmd/dirq-agent
