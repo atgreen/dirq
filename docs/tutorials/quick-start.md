@@ -19,57 +19,41 @@ Bring up the stack with a single command:
 podman-compose up -d
 ```
 
-The server auto-generates TLS certs, runs DB migrations, and creates a bootstrap API token. The token is written to a file (not logged) for security:
+This starts PostgreSQL and the DirQ server and runs the DB migrations. For convenience the dev stack runs with **TLS and authentication disabled** (`DIRQ_TLS_DISABLED` and `DIRQ_AUTH_DISABLED` in `podman-compose.yml`), so there's no token to copy and no certs to manage — you can talk to the server right away. The REST API is on `http://localhost:8090` and the agent gRPC port on `localhost:50051`.
+
+Check it started cleanly:
 
 ```bash
-# The server log shows the token file path:
-podman logs dirq_dirq-server_1 2>&1 | grep "bootstrap"
-# Read the token:
-cat /var/lib/dirq/bootstrap-token
+podman logs dirq_dirq-server_1 2>&1 | tail
 ```
-
-Keep that token handy — you will use it to authenticate the CLI in a moment.
 
 ## Step 2: Deploy an agent
 
-The server writes ready-to-copy config files on startup — `/var/lib/dirq/agent.conf` for agents and `/var/lib/dirq/client.conf` for the CLI. For this laptop run, just build and start the agent directly:
+Build and start an agent on the same machine. Since the dev server has TLS disabled, tell the agent the same so their connection modes match:
 
 ```bash
 go build -o bin/dirq-agent ./cmd/dirq-agent
-./bin/dirq-agent
+DIRQ_TLS_DISABLED=true ./bin/dirq-agent
 ```
 
-Because the agent and server share the same machine, they also share the auto-generated CA and verify each other automatically. (On real hosts you copy `agent.conf` to each machine instead — that's what [Install DirQ from packages](../how-to/install-packages.md) walks through.)
+It connects to the server at `localhost:50051`, registers, and joins the mesh. (On real hosts you install the agent package and drop in a server-generated `agent.conf` instead — that's what [Install DirQ from packages](../how-to/install-packages.md) walks through.)
 
 ## Step 3: Build and use the CLI
 
-Build the `dirq` binary:
+Build the `dirq` binary and point it at the server. With auth disabled you don't need a token, and the REST API is plain HTTP:
 
 ```bash
 go build -o bin/dirq ./cmd/dirq
-```
 
-The CLI reads config from `~/.config/dirq/client.conf` (user-local) or `/etc/dirq/client.conf` (system-wide). Copy the server-generated `client.conf`:
-
-```bash
-# Copy from server to your workstation:
-scp server:/var/lib/dirq/client.conf ~/.config/dirq/client.conf
-
-# Now just use dirq — no env vars needed:
+export DIRQ_SERVER_URL=http://localhost:8090
 dirq doctor
 dirq hosts list
 dirq select hostname, cpu.logical_cores, memory.pct_used
 ```
 
-Or set env vars directly:
-
-```bash
-export DIRQ_SERVER_URL=https://dirq-server:8080
-export DIRQ_TOKEN=<bootstrap-token>
-export DIRQ_TLS_INSECURE=true  # for self-signed certs
-```
-
 If `dirq doctor` reports healthy and your agent shows up in `dirq hosts list`, your mesh is live.
+
+(On a real deployment the server generates a ready-to-copy `client.conf` with the server URL and an API token — see [Configure the CLI](../how-to/install-packages.md#4-configure-the-cli).)
 
 ## Step 4: Test with Ansible
 
@@ -77,7 +61,7 @@ Now put the mesh to work by running a playbook:
 
 ```bash
 cd test-playbook
-DIRQ_SERVER_URL=http://localhost:8090 DIRQ_TOKEN=$DIRQ_TOKEN ansible-playbook test.yml -v
+DIRQ_SERVER_URL=http://localhost:8090 ansible-playbook test.yml -v
 ```
 
 ## Installing on real hosts
