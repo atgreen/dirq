@@ -1636,6 +1636,7 @@
 
 
 <h1 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h1>
+<p>DirQ is a central server fronting a peer-to-peer agent mesh. Agents relay for each other in a tree, so the fleet becomes its own transport and only a bounded set of zone leaders connect directly to the server. Here's the shape:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  │  Agent   │   │  Agent   │   │  Agent   │   │  Agent   │
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  │  (leaf)  │   │  (leaf)  │   │  (leaf)  │   │  (leaf)  │
