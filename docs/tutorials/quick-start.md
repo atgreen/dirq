@@ -16,8 +16,10 @@ Before you begin, make sure you have:
 Bring up the stack with a single command:
 
 ```bash
-podman-compose up -d
+podman-compose up -d --build
 ```
+
+The `--build` matters: without it, `podman-compose` reuses whatever `dirq-server` image it built last time, so after pulling a new version you'd silently run stale code.
 
 This starts PostgreSQL and the DirQ server and runs the DB migrations. For convenience the dev stack runs with **TLS and authentication disabled** (`DIRQ_TLS_DISABLED` and `DIRQ_AUTH_DISABLED` in `podman-compose.yml`), so there's no token to copy and no certs to manage — you can talk to the server right away. The REST API is on `http://localhost:8090` and the agent gRPC port on `localhost:50051`.
 
@@ -63,6 +65,14 @@ Now put the mesh to work by running a playbook:
 cd test-playbook
 DIRQ_SERVER_URL=http://localhost:8090 ansible-playbook test.yml -v
 ```
+
+## Troubleshooting
+
+If a step misbehaves, it's usually leftover state from a previous DirQ install on this machine:
+
+- **The agent connects to a server other than `localhost:50051`** (its log shows a different `server=…`). It found an existing `/etc/dirq/agent.conf` and used it — the agent reads that file by default. Ignore it for this run with `DIRQ_CONFIG=/dev/null DIRQ_SERVER=localhost:50051 DIRQ_TLS_DISABLED=true ./bin/dirq-agent`, or remove the file.
+- **`dirq` returns `HTTP 401: invalid token`.** An existing `~/.config/dirq/client.conf` is sending a stale token to the auth-disabled dev server. Run the CLI with a clean config (`HOME=$(mktemp -d) DIRQ_SERVER_URL=http://localhost:8090 ./bin/dirq …`) or delete the `token:` line.
+- **`dirq doctor` shows `404` on Database / Agents online.** You're running a stale server image. Rebuild it: `podman-compose up -d --build`.
 
 ## Installing on real hosts
 
