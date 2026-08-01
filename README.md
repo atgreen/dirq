@@ -27,7 +27,8 @@ The docs follow the [Diátaxis](https://diataxis.fr/) framework:
 
 DirQ publishes signed RPM and DEB packages for Linux, and signed MSI/EXE
 installers for Windows — see the
-[install instructions](https://atgreen.github.io/dirq/#install-the-agent). In short:
+[install guide](https://atgreen.github.io/dirq/how-to/install-packages/) for the
+full server + CLI + agent path. In short:
 
 ```bash
 # Fedora / RHEL / AlmaLinux

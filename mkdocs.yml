@@ -69,6 +69,7 @@ nav:
   - Tutorials:
       - Quick start — a mesh on your laptop: tutorials/quick-start.md
   - How-to guides:
+      - Install DirQ from packages: how-to/install-packages.md
       - Deploy a production fleet: how-to/production-deployment.md
       - Build query-based Ansible inventories: how-to/ansible-inventories.md
       - Run playbooks through the mesh: how-to/run-playbooks.md

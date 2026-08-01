@@ -30,7 +30,7 @@
                   └──────────────────┘
 ```
 
-All links are **gRPC over TLS**. Agents connect outbound — no inbound ports required on managed hosts. Only a bounded number of zone leaders connect directly to the server.
+All links are **gRPC over TLS**. Agents connect outbound to the server and to their relay parent, so a managed host needs **no inbound SSH or WinRM**. Because any agent can be a relay parent, agents do accept inbound gRPC from their children on `50052/tcp` within the fleet (see the [ports matrix](../how-to/install-packages.md#ports-and-connectivity)). Only a bounded number of zone leaders connect directly to the server.
 
 ## Components
 
