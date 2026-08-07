@@ -4,6 +4,7 @@
 package tlsutil
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -17,6 +18,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -474,5 +476,110 @@ func TestEnsureCerts_UserCerts(t *testing.T) {
 	// Should pass through unchanged.
 	if out.CertFile != cfg.CertFile {
 		t.Errorf("CertFile changed")
+	}
+}
+
+// --- ClientCredentials parent-identity pinning ---
+
+// helperIssueAgentCert issues a per-agent cert (CN = agentID) signed by the
+// given CA and writes it to temp files, returning their paths.
+func helperIssueAgentCert(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, agentID string) (certFile, keyFile string) {
+	t.Helper()
+	certPEM, keyPEM, _, err := IssueCert(caCert, caKey, agentID)
+	if err != nil {
+		t.Fatalf("IssueCert(%s): %v", agentID, err)
+	}
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certFile, certPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return certFile, keyFile
+}
+
+// TestClientCredentials_ParentIDPin verifies that ExpectedPeerCN pins the
+// identity of the server side (the parent relay): a child accepts only the
+// specific parent the server assigned it and rejects any other CA-issued agent
+// cert. This is the control that stops a rogue agent — which legitimately holds
+// a CA-issued cert — from impersonating a parent relay and hijacking a child's
+// uplink. Empty ExpectedPeerCN falls back to CA-only verification (used for
+// fallback parents and mixed-version rollout, where the parent ID is unknown).
+func TestClientCredentials_ParentIDPin(t *testing.T) {
+	dir := t.TempDir()
+	caFile, caKeyFile := helperGenerateCA(t, dir)
+	caCert, caKey, err := LoadCA(caFile, caKeyFile)
+	if err != nil {
+		t.Fatalf("LoadCA: %v", err)
+	}
+
+	// The parent relay presents a per-agent cert with CN = "parent-A".
+	parentCert, parentKey := helperIssueAgentCert(t, caCert, caKey, "parent-A")
+	serverCreds, err := ServerCredentialsMixedAuth(Config{CAFile: caFile, CertFile: parentCert, KeyFile: parentKey})
+	if err != nil {
+		t.Fatalf("ServerCredentialsMixedAuth: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				sConn, _, err := serverCreds.ServerHandshake(conn)
+				if err != nil {
+					conn.Close()
+					return
+				}
+				sConn.Close()
+			}()
+		}
+	}()
+
+	dialWithPin := func(expectCN string) error {
+		creds, err := ClientCredentials(Config{CAFile: caFile, ServerName: "localhost", ExpectedPeerCN: expectCN})
+		if err != nil {
+			return err
+		}
+		raw, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		conn, _, err := creds.ClientHandshake(ctx, "localhost", raw)
+		if conn != nil {
+			conn.Close()
+		}
+		return err
+	}
+
+	// Pinning to the assigned parent is accepted.
+	if err := dialWithPin("parent-A"); err != nil {
+		t.Fatalf("pinning to the assigned parent should succeed: %v", err)
+	}
+
+	// Pinning to a different parent is rejected — the impersonation case: the
+	// relay holds a valid CA-issued cert, but not the identity the child expects.
+	err = dialWithPin("parent-B")
+	if err == nil {
+		t.Fatal("pinning to a different parent should fail, but the handshake succeeded")
+	}
+	if !strings.Contains(err.Error(), "identity mismatch") {
+		t.Fatalf("expected an identity-mismatch rejection, got: %v", err)
+	}
+
+	// No pin (empty ExpectedPeerCN) falls back to CA-only verification and succeeds.
+	if err := dialWithPin(""); err != nil {
+		t.Fatalf("CA-only verification (no pin) should succeed: %v", err)
 	}
 }

@@ -24,6 +24,10 @@ type contextKey string
 // is disabled.
 const tokenCtxKey contextKey = "apiToken"
 
+// maxQueryBodyBytes bounds the /api/v1/query request body. The DSL is small;
+// this only rejects payloads crafted to exhaust the lexer/parser.
+const maxQueryBodyBytes = 1 << 20 // 1 MiB
+
 func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -202,6 +206,12 @@ type queryResult struct {
 }
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
+	// Cap the request body. The query DSL is tiny; a multi-megabyte body is
+	// only ever an attempt to blow up the lexer/parser. Combined with the
+	// parser's depth limit this keeps a single request from exhausting memory
+	// or the goroutine stack.
+	r.Body = http.MaxBytesReader(w, r.Body, maxQueryBodyBytes)
+
 	var req queryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())

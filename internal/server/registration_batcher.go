@@ -273,8 +273,10 @@ func (s *Server) applyRelayAssignment(p *pendingReg) assignment {
 	}
 	fbAgents := s.topology.FindFallbackParents(parentID, 2)
 	fallbacks := make([]string, 0, len(fbAgents))
+	fallbackIDs := make([]string, 0, len(fbAgents))
 	for _, fb := range fbAgents {
 		fallbacks = append(fallbacks, fb.ListenAddr)
+		fallbackIDs = append(fallbackIDs, fb.ID)
 	}
 	if !s.topology.AssignChild(p.agentID, parentID) {
 		s.log.Warn("topology: chosen parent full at commit during batch relay fill, promoting",
@@ -287,6 +289,7 @@ func (s *Server) applyRelayAssignment(p *pendingReg) assignment {
 		ParentID:      parentID,
 		ParentAddr:    parentAddr,
 		FallbackAddrs: fallbacks,
+		FallbackIDs:   fallbackIDs,
 	}
 }
 

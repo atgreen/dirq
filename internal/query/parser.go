@@ -242,7 +242,28 @@ func isIdentContinue(ch byte) bool {
 type parser struct {
 	tokens []token
 	pos    int
+	depth  int
 }
+
+// maxExprDepth bounds the recursion depth of the expression parser. Without
+// it, a query with deeply nested parentheses or a long NOT chain drives
+// unbounded recursion that overflows the goroutine stack — an unrecoverable
+// fatal error that crashes the whole server. 200 is far beyond any legitimate
+// query (a handful of nesting levels) while keeping the stack tiny.
+const maxExprDepth = 200
+
+// enter increments the expression-nesting depth and rejects input that exceeds
+// maxExprDepth. Every recursive expression-parsing entry point calls it and
+// pairs it with a deferred leave.
+func (p *parser) enter() error {
+	p.depth++
+	if p.depth > maxExprDepth {
+		return p.errorf("query expression nesting too deep (max %d)", maxExprDepth)
+	}
+	return nil
+}
+
+func (p *parser) leave() { p.depth-- }
 
 // Parse parses a DirQ query string into a Query AST.
 func Parse(input string) (*Query, error) {
@@ -447,6 +468,10 @@ func (p *parser) skipFrom() error {
 
 // parseExpr: OR has lowest precedence.
 func (p *parser) parseExpr() (Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	left, err := p.parseAndExpr()
 	if err != nil {
 		return nil, err
@@ -481,6 +506,10 @@ func (p *parser) parseAndExpr() (Expr, error) {
 
 // parseUnaryExpr: NOT or parenthesized group or condition.
 func (p *parser) parseUnaryExpr() (Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	if p.cur().kind == tkNOT {
 		p.advance()
 		expr, err := p.parseUnaryExpr()

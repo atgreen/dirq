@@ -112,4 +112,5 @@ type assignment struct {
 	ParentID      string   // empty for zone leaders (they connect to the server)
 	ParentAddr    string   // listen_addr of the parent, empty for zone leaders
 	FallbackAddrs []string // ordered backup parent addresses for failover
+	FallbackIDs   []string // agent IDs, index-aligned with FallbackAddrs, for CN pinning
 }

@@ -32,6 +32,12 @@ type Config struct {
 	Insecure   bool   // skip cert verification (for self-signed)
 	Disabled   bool   // explicitly disable TLS (DIRQ_TLS_DISABLED=true)
 	ServerName string // override TLS ServerName for verification (peer connections)
+	// ExpectedPeerCN, when set, pins the identity of the server side of the
+	// connection: after the normal CA-chain + hostname check passes, the peer
+	// leaf certificate's CommonName must equal this value. Used for agent→parent
+	// (relay) connections so a child authenticates the *specific* parent the
+	// server assigned it, not merely any holder of a CA-issued agent cert.
+	ExpectedPeerCN string
 }
 
 // Enabled returns true if TLS should be used. TLS is on by default —
@@ -288,6 +294,32 @@ func ClientCredentials(cfg Config) (credentials.TransportCredentials, error) {
 
 	if cfg.ServerName != "" {
 		tlsCfg.ServerName = cfg.ServerName
+	}
+
+	// Pin the peer's identity when requested. This runs in addition to the
+	// standard CA-chain + hostname verification above (crypto/tls invokes
+	// VerifyConnection only after that succeeds), so it tightens — never
+	// loosens — verification: the parent must both hold a CA-issued cert and
+	// carry the exact CN the server told us to expect.
+	if cfg.ExpectedPeerCN != "" {
+		want := cfg.ExpectedPeerCN
+		tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			var leaf *x509.Certificate
+			if len(cs.VerifiedChains) > 0 && len(cs.VerifiedChains[0]) > 0 {
+				leaf = cs.VerifiedChains[0][0]
+			} else if len(cs.PeerCertificates) > 0 {
+				// Only reachable under Insecure (chain verification off); still
+				// enforce the CN so the pin isn't silently dropped.
+				leaf = cs.PeerCertificates[0]
+			}
+			if leaf == nil {
+				return fmt.Errorf("peer presented no certificate to verify parent identity %q", want)
+			}
+			if leaf.Subject.CommonName != want {
+				return fmt.Errorf("parent identity mismatch: peer cert CN %q, expected %q", leaf.Subject.CommonName, want)
+			}
+			return nil
+		}
 	}
 
 	return credentials.NewTLS(tlsCfg), nil

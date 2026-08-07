@@ -166,6 +166,14 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		SessionToken:               token,
 	}
 
+	// Advertise the parent's identity for CN pinning only when per-agent certs
+	// (CN = agent ID) are actually issued. With a shared/static cert the CN is
+	// not the agent ID, so a pin would reject every legitimate parent.
+	if s.mtlsEnabled {
+		resp.ParentId = a.ParentID
+		resp.FallbackIds = a.FallbackIDs
+	}
+
 	// Issue a per-agent mTLS client certificate if the CA is available.
 	if s.caCert != nil && s.caKey != nil {
 		certPEM, keyPEM, caCertPEM, err := tlsutil.IssueCert(s.caCert, s.caKey, agent.ID)
@@ -487,8 +495,10 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 	}
 
 	var fallbacks []string
+	var fallbackIDs []string
 	for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
 		fallbacks = append(fallbacks, fb.ListenAddr)
+		fallbackIDs = append(fallbackIDs, fb.ID)
 	}
 
 	s.topology.AssignChild(req.AgentId, parentID)
@@ -496,10 +506,16 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 	s.log.Info("agent reassigned to new parent",
 		"agent_id", req.AgentId, "new_parent", parentNode.Hostname)
 
-	return &pb.PeerResponse{
+	resp := &pb.PeerResponse{
 		ZoneLeaderAddr: parentAddr,
 		FallbackAddrs:  fallbacks,
-	}, nil
+	}
+	// Only pin when per-agent certs (CN = agent ID) are issued — see Register.
+	if s.mtlsEnabled {
+		resp.ParentId = parentID
+		resp.FallbackIds = fallbackIDs
+	}
+	return resp, nil
 }
 
 // ─────────────────────────────────────────────────────────
