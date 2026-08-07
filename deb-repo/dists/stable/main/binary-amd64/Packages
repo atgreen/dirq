@@ -1,13 +1,13 @@
 Package: dirq
-Version: 0.25.0-1
+Version: 0.25.1-1
 Architecture: amd64
 Maintainer: Anthony Green <green@moxielogic.com>
-Installed-Size: 13257
-Filename: pool/main/dirq_0.25.0-1_amd64.deb
-Size: 6302994
-MD5sum: 478545895718b960a1dc709023237309
-SHA1: e7344f889a83bff44c76e18d90b554e435abde8c
-SHA256: 9feb6ef0c79665f1eafca647640e46f29c6119d22a462a1690141f62773b7572
+Installed-Size: 13258
+Filename: pool/main/dirq_0.25.1-1_amd64.deb
+Size: 6303898
+MD5sum: e7f5f4ddf10191bb0d1a6b62c8807f34
+SHA1: 448d91001e6630d1d810deb72cca8e25115a9118
+SHA256: d1e89448a2523c2a9cde356c86f19236e2a9e1ae602a5f65717de1f79d685873
 Section: admin
 Priority: optional
 Homepage: https://github.com/atgreen/dirq
@@ -17,15 +17,15 @@ Description: DirQ CLI — command-line tool for querying the fleet
 
 Package: dirq-agent
 Source: dirq
-Version: 0.25.0-1
+Version: 0.25.1-1
 Architecture: amd64
 Maintainer: Anthony Green <green@moxielogic.com>
-Installed-Size: 36725
-Filename: pool/main/dirq-agent_0.25.0-1_amd64.deb
-Size: 14260086
-MD5sum: 53d1c1ab4f48292aead91e17992e2e3e
-SHA1: 2c7b586c0070a70d24d5b08c8cf48629e3d77e21
-SHA256: ed8ebebdf7bdb61c1ac23433304101891696e5fa316bbb67b26fc113e4bb22a8
+Installed-Size: 36736
+Filename: pool/main/dirq-agent_0.25.1-1_amd64.deb
+Size: 14261474
+MD5sum: adbb886b98ebe269173ad61f91666086
+SHA1: c9e0d978141899b56e125bb019adac4dd16e5a1f
+SHA256: d3aa275a469c8ba2f676a850302ad2891a1856c76025037545417baa00c23e18
 Section: admin
 Priority: optional
 Homepage: https://github.com/atgreen/dirq
@@ -36,16 +36,16 @@ Description: DirQ agent — endpoint agent for fleet management
 
 Package: dirq-server
 Source: dirq
-Version: 0.25.0-1
+Version: 0.25.1-1
 Architecture: amd64
 Maintainer: Anthony Green <green@moxielogic.com>
-Installed-Size: 29583
+Installed-Size: 29595
 Depends: postgresql
-Filename: pool/main/dirq-server_0.25.0-1_amd64.deb
-Size: 13391538
-MD5sum: aa60fb2c8be986977ad8899dd8f0768e
-SHA1: 513feb04bbfbe0d1a4bdaa98c6d14aff25374e2a
-SHA256: b5759c8dec1b37b4c80beb2105dcc8f32c49e7d352e8534702b5402e9363c0f2
+Filename: pool/main/dirq-server_0.25.1-1_amd64.deb
+Size: 13396242
+MD5sum: ea05905fdbb8027f48ced356cfe6aa31
+SHA1: 52a6c1b4216c4f79bb09f806ff03400cf8b09538
+SHA256: c2d25c8064e5deea7193ce105d88f1952c09bdc1836d78ba287345adfa9b0d34
 Section: admin
 Priority: optional
 Homepage: https://github.com/atgreen/dirq
