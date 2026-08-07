@@ -5,6 +5,17 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.25.1] - 2026-08-07
+
+### Security
+
+- **A malformed query can no longer crash the server.** The query DSL parser had no recursion-depth limit, so a `POST /api/v1/query` body with deeply nested parentheses or a long `NOT` chain overflowed the goroutine stack — an unrecoverable fatal error that took down the entire server, reachable by any `readonly`-scoped caller. The parser now caps expression nesting depth and the query endpoint bounds the request body size; legitimate queries are unaffected.
+- **Mesh agents now verify *which* parent relay they connect to, not merely that it presents a CA-issued certificate.** Agent→parent TLS connections previously verified only against a constant `localhost` name that every agent certificate carries, so any holder of any CA-issued agent certificate could impersonate a parent relay to an on-path victim and hijack its uplink. The server now tells each agent the ID of its assigned parent (and its fallback parents), and the agent pins the parent's certificate CN against that ID; connections fall back to CA-only verification only when the parent ID is unknown (shared/static-cert deployments and mixed-version rollout), so no legitimate connection breaks. The over-permissive wildcard (`*`) SAN has also been removed from generated agent certificates. Command integrity was already protected by Ed25519 message signing; this closes the transport-confidentiality and relay-impersonation gap.
+
+### Documentation
+
+- **Reworked the getting-started docs**: a real package install guide (RPM/DEB and Windows MSI/EXE), a corrected five-minute quick start matched to the development compose stack, and a proper documentation landing page.
+
 ## [0.25.0] - 2026-07-31
 
 ### Added
@@ -745,6 +756,7 @@ The design was reviewed against codex's "first terminal event wins per agent" cr
 - `dirq` — Go, CLI tool
 - `atgreen.dirq` — Python, Ansible collection
 
+[0.25.1]: https://github.com/atgreen/dirq/releases/tag/v0.25.1
 [0.25.0]: https://github.com/atgreen/dirq/releases/tag/v0.25.0
 [0.24.0]: https://github.com/atgreen/dirq/releases/tag/v0.24.0
 [0.23.2]: https://github.com/atgreen/dirq/releases/tag/v0.23.2
