@@ -108,17 +108,28 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 
 		// Hint only — topology is updated when PeerConnected arrives.
 		var fallbacks []string
+		var fallbackIDs []string
 		for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
 			fallbacks = append(fallbacks, fb.ListenAddr)
+			fallbackIDs = append(fallbackIDs, fb.ID)
 		}
 
+		// Only pin when per-agent certs (CN = agent ID) are issued — see Register.
+		pinParentID := ""
+		var pinFallbackIDs []string
+		if s.mtlsEnabled {
+			pinParentID = parentID
+			pinFallbackIDs = fallbackIDs
+		}
 		msg := &pb.ServerMessage{
 			Payload: &pb.ServerMessage_PeerUpdate{
 				PeerUpdate: &pb.PeerUpdate{
 					TargetAgentId:    child.ID,
 					NewRole:          pb.AgentRole_AGENT_ROLE_RELAY,
 					NewParentAddr:    parentAddr,
+					NewParentId:      pinParentID,
 					NewFallbackAddrs: fallbacks,
+					NewFallbackIds:   pinFallbackIDs,
 				},
 			},
 		}

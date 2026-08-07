@@ -80,7 +80,13 @@ type Agent struct {
 	role          pb.AgentRole
 	sessionToken  string   // from RegisterResponse, presented in AgentHello
 	parentAddr    string   // where to connect upstream (server addr or parent's listen_addr)
-	fallbackAddrs []string // backup parent addresses, tried before server on failure
+	// expectedParentID is the agent ID of the assigned parent relay, pinned
+	// against the parent's TLS cert CN on peer (relay) connections. Empty when
+	// this agent is a zone leader connecting to the server (whose identity is
+	// verified by the server cert's own SANs).
+	expectedParentID string
+	fallbackAddrs    []string // backup parent addresses, tried before server on failure
+	fallbackIDs      []string // agent IDs, index-aligned with fallbackAddrs, for CN pinning
 
 	// gRPC server for downstream peers
 	grpcSv *grpc.Server
@@ -184,7 +190,10 @@ func (a *Agent) registrationDialOpts() ([]grpc.DialOption, error) {
 // peerDialOpts returns gRPC dial options for connecting to a peer agent's
 // relay server.  Peer certs contain "localhost" as a SAN but not the peer's
 // IP, so we override ServerName to "localhost" for TLS verification.
-func (a *Agent) peerDialOpts() ([]grpc.DialOption, error) {
+// expectedParentID pins the parent's identity (its cert CN) when non-empty.
+// Fallback connections pass "" — the server only hands out fallback addresses,
+// not IDs, so those degrade to CA-only verification (the prior behaviour).
+func (a *Agent) peerDialOpts(expectedParentID string) ([]grpc.DialOption, error) {
 	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
@@ -196,6 +205,11 @@ func (a *Agent) peerDialOpts() ([]grpc.DialOption, error) {
 	if a.tlsConfig.Enabled() {
 		peerCfg := a.tlsConfig
 		peerCfg.ServerName = "localhost"
+		// Pin the parent's identity: the presented cert must carry the CN the
+		// server assigned as our parent, not merely be any CA-issued agent cert.
+		// Empty (unknown parent, or pre-upgrade server that didn't send it)
+		// falls back to CA-only verification — the prior behaviour.
+		peerCfg.ExpectedPeerCN = expectedParentID
 		creds, err := tlsutil.ClientCredentials(peerCfg)
 		if err != nil {
 			return nil, fmt.Errorf("load TLS credentials: %w", err)
@@ -353,8 +367,14 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 
 			// Try fallback parents.
 			for i, addr := range a.fallbackAddrs {
+				// Pin the fallback's identity when the server supplied its ID
+				// (index-aligned); otherwise "" → CA-only verification.
+				fallbackID := ""
+				if i < len(a.fallbackIDs) {
+					fallbackID = a.fallbackIDs[i]
+				}
 				a.log.Info("trying fallback parent", "fallback", i, "addr", addr)
-				if err := a.connectToAddr(ctx, addr); err == nil {
+				if err := a.connectToAddr(ctx, addr, fallbackID); err == nil {
 					a.log.Info("connected to fallback parent", "fallback", i, "addr", addr)
 					connected = true
 					break
@@ -520,15 +540,20 @@ func (a *Agent) register(ctx context.Context) error {
 	// Determine where to connect upstream.
 	if resp.ZoneLeaderAddr != "" && resp.Role != pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
 		a.parentAddr = resp.ZoneLeaderAddr
+		a.expectedParentID = resp.GetParentId()
 		a.fallbackAddrs = resp.FallbackAddrs
+		a.fallbackIDs = resp.GetFallbackIds()
 		a.log.Info("assigned to parent",
 			"parent_addr", a.parentAddr,
+			"parent_id", a.expectedParentID,
 			"role", resp.Role,
 			"fallbacks", len(a.fallbackAddrs),
 		)
 	} else {
 		a.parentAddr = a.cfg.ServerAddr
+		a.expectedParentID = ""
 		a.fallbackAddrs = nil
+		a.fallbackIDs = nil
 	}
 
 	return nil
@@ -563,7 +588,8 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 		a.upstreamStream = stream
 	} else {
 		// Use peer dial options (ServerName override) for relay connections.
-		dialOpts, err := a.peerDialOpts()
+		// Pin the assigned parent's identity on this primary connection.
+		dialOpts, err := a.peerDialOpts(a.expectedParentID)
 		if err != nil {
 			return fmt.Errorf("build TLS dial options: %w", err)
 		}
@@ -587,8 +613,10 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 }
 
 // connectToAddr connects to a specific address as a relay peer (for fallbacks).
-func (a *Agent) connectToAddr(ctx context.Context, addr string) error {
-	dialOpts, err := a.peerDialOpts()
+// expectedID pins the fallback parent's cert CN when the server supplied it;
+// "" falls back to CA-only verification.
+func (a *Agent) connectToAddr(ctx context.Context, addr, expectedID string) error {
+	dialOpts, err := a.peerDialOpts(expectedID)
 	if err != nil {
 		return fmt.Errorf("build TLS dial options: %w", err)
 	}
@@ -785,7 +813,9 @@ func (a *Agent) requestNewParent(ctx context.Context) error {
 	if resp.NewRole == pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
 		a.role = pb.AgentRole_AGENT_ROLE_ZONE_LEADER
 		a.parentAddr = a.cfg.ServerAddr
+		a.expectedParentID = ""
 		a.fallbackAddrs = nil
+		a.fallbackIDs = nil
 		a.log.Info("server promoted us to zone_leader; reconnecting to server")
 		return nil
 	}
@@ -795,9 +825,12 @@ func (a *Agent) requestNewParent(ctx context.Context) error {
 	}
 
 	a.parentAddr = resp.ZoneLeaderAddr
+	a.expectedParentID = resp.GetParentId()
 	a.fallbackAddrs = resp.FallbackAddrs
+	a.fallbackIDs = resp.GetFallbackIds()
 	a.log.Info("server assigned new parent",
 		"parent_addr", a.parentAddr,
+		"parent_id", a.expectedParentID,
 		"fallbacks", len(a.fallbackAddrs),
 	)
 	return nil
@@ -918,7 +951,9 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 				"previous_role", a.role,
 			)
 			a.parentAddr = a.cfg.ServerAddr
+			a.expectedParentID = ""
 			a.fallbackAddrs = nil
+			a.fallbackIDs = nil
 			a.role = pb.AgentRole_AGENT_ROLE_ZONE_LEADER
 			if a.upstreamConn != nil {
 				a.upstreamConn.Close()
@@ -929,10 +964,13 @@ func (a *Agent) handleServerMessage(ctx context.Context, msg *pb.ServerMessage) 
 			// Reassignment to a new parent (demotion or rebalance).
 			a.log.Info("rebalance: reconnecting to new parent",
 				"new_parent", pu.NewParentAddr,
+				"new_parent_id", pu.NewParentId,
 				"new_role", pu.NewRole,
 			)
 			a.parentAddr = pu.NewParentAddr
+			a.expectedParentID = pu.GetNewParentId()
 			a.fallbackAddrs = pu.NewFallbackAddrs
+			a.fallbackIDs = pu.GetNewFallbackIds()
 			if pu.NewRole != pb.AgentRole_AGENT_ROLE_UNSPECIFIED {
 				a.role = pu.NewRole
 			}

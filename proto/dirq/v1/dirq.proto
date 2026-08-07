@@ -82,6 +82,18 @@ message RegisterResponse {
 
   // Previous signing keys still trusted during key rotation.
   repeated bytes server_signing_public_keys_old = 13;
+
+  // Agent ID of the assigned parent relay (the owner of zone_leader_addr).
+  // The connecting agent pins this against the parent's TLS certificate CN to
+  // authenticate the parent's identity — not just that it holds a CA-issued
+  // cert. Empty when this agent is a zone leader (it connects to the server,
+  // whose identity is verified by the server cert's own SANs).
+  string parent_id = 14;
+
+  // Agent IDs of the fallback parents, index-aligned with fallback_addrs, so a
+  // child pins a fallback's identity too when it fails over. Empty (or shorter
+  // than fallback_addrs) means CA-only verification for the unmatched entries.
+  repeated string fallback_ids = 15;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -128,6 +140,14 @@ message PeerResponse {
   // server (regardless of zone_leader_addr).  Unset (UNSPECIFIED) means
   // the agent's existing role is unchanged.
   AgentRole new_role = 5;
+
+  // Agent ID of the assigned parent relay (owner of zone_leader_addr), pinned
+  // against the parent's TLS cert CN. Empty when new_role promotes the agent
+  // to zone leader (it connects to the server instead).
+  string parent_id = 6;
+
+  // Agent IDs of the fallback parents, index-aligned with fallback_addrs.
+  repeated string fallback_ids = 7;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -279,6 +299,14 @@ message PeerUpdate {
   // Target agent ID. If set, only the agent with this ID should apply
   // the update; other agents relay it downstream.
   string target_agent_id = 5;
+
+  // Agent ID of the new parent relay (owner of new_parent_addr), pinned
+  // against the parent's TLS cert CN. Empty when new_role promotes the agent
+  // to zone leader.
+  string new_parent_id = 6;
+
+  // Agent IDs of the new fallback parents, index-aligned with new_fallback_addrs.
+  repeated string new_fallback_ids = 7;
 }
 
 // ─────────────────────────────────────────────────────────
