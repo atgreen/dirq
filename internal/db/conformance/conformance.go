@@ -286,6 +286,22 @@ func testAgentRegistration(t *testing.T, s db.DB) {
 		}
 	})
 
+	t.Run("UpsertNilTags", func(t *testing.T) {
+		p4 := p
+		p4.Tags = nil
+		b, err := s.RegisterAgent(ctx, p4)
+		must(t, err, "RegisterAgent(nil tags)")
+		if b.ID != a.ID {
+			t.Errorf("upsert changed ID: %q -> %q", a.ID, b.ID)
+		}
+		// The row must still be readable and keep its existing tags.
+		got, err := s.GetAgent(ctx, a.ID)
+		must(t, err, "GetAgent after nil-tags upsert")
+		if len(got.Tags) == 0 {
+			t.Errorf("Tags = %#v, want prior tags preserved", got.Tags)
+		}
+	})
+
 	t.Run("EmptySliceFields", func(t *testing.T) {
 		p3 := agentParams("reg-host-empty")
 		p3.Capabilities = nil
@@ -750,6 +766,9 @@ func testTokens(t *testing.T, s db.DB) {
 		}
 		if len(v.AAPUsers) != 0 {
 			t.Errorf("AAPUsers = %v, want empty for unrestricted token", v.AAPUsers)
+		}
+		if v.CreatedAt.IsZero() {
+			t.Error("CreatedAt is zero, want the creation timestamp")
 		}
 	})
 
