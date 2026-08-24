@@ -8,8 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -213,11 +211,6 @@ func printReview(r *reviewResult) {
 	}
 }
 
-// isAnthropicAPI returns true if the URL points to Anthropic's native API.
-func isAnthropicAPI() bool {
-	return strings.Contains(reviewConfig.url, "anthropic.com")
-}
-
 // callLLM sends the review request to an LLM API.
 // Auto-detects Anthropic's native API vs OpenAI-compatible format.
 func callLLM(ctx context.Context, action reviewAction) (*reviewResult, error) {
@@ -225,7 +218,7 @@ func callLLM(ctx context.Context, action reviewAction) (*reviewResult, error) {
 
 	var content string
 	var err error
-	if isAnthropicAPI() {
+	if llmIsAnthropic(reviewConfig.url) {
 		content, err = callAnthropic(ctx, userPrompt)
 	} else {
 		content, err = callOpenAICompat(ctx, userPrompt)
@@ -239,35 +232,16 @@ func callLLM(ctx context.Context, action reviewAction) (*reviewResult, error) {
 
 // callAnthropic calls Anthropic's native /v1/messages API.
 func callAnthropic(ctx context.Context, userPrompt string) (string, error) {
-	reqBody := map[string]any{
+	data, err := llmRequest(ctx, reviewConfig.url, reviewConfig.key, map[string]any{
 		"model":      reviewConfig.model,
 		"max_tokens": 4096,
 		"system":     reviewSystemPrompt,
 		"messages": []map[string]string{
 			{"role": "user", "content": userPrompt},
 		},
-	}
-
-	body, _ := json.Marshal(reqBody)
-
-	url := strings.TrimRight(reviewConfig.url, "/") + "/v1/messages"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	})
 	if err != nil {
 		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", reviewConfig.key)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		data, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Anthropic API returned HTTP %d: %s", resp.StatusCode, string(data))
 	}
 
 	var anthropicResp struct {
@@ -275,7 +249,7 @@ func callAnthropic(ctx context.Context, userPrompt string) (string, error) {
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&anthropicResp); err != nil {
+	if err := json.Unmarshal(data, &anthropicResp); err != nil {
 		return "", fmt.Errorf("parse Anthropic response: %w", err)
 	}
 	if len(anthropicResp.Content) == 0 {
@@ -286,34 +260,16 @@ func callAnthropic(ctx context.Context, userPrompt string) (string, error) {
 
 // callOpenAICompat calls an OpenAI-compatible /v1/chat/completions API.
 func callOpenAICompat(ctx context.Context, userPrompt string) (string, error) {
-	reqBody := map[string]any{
+	data, err := llmRequest(ctx, reviewConfig.url, reviewConfig.key, map[string]any{
 		"model": reviewConfig.model,
 		"messages": []map[string]string{
 			{"role": "system", "content": reviewSystemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
 		"max_tokens": 4096,
-	}
-
-	body, _ := json.Marshal(reqBody)
-
-	url := strings.TrimRight(reviewConfig.url, "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	})
 	if err != nil {
 		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+reviewConfig.key)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		data, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("LLM API returned HTTP %d: %s", resp.StatusCode, string(data))
 	}
 
 	var llmResp struct {
@@ -323,7 +279,7 @@ func callOpenAICompat(ctx context.Context, userPrompt string) (string, error) {
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&llmResp); err != nil {
+	if err := json.Unmarshal(data, &llmResp); err != nil {
 		return "", fmt.Errorf("parse LLM response: %w", err)
 	}
 	if len(llmResp.Choices) == 0 {

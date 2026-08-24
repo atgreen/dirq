@@ -4,14 +4,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/spf13/cobra"
@@ -253,9 +249,7 @@ func askFormatInput(input map[string]any) string {
 // executes tool calls, and iterates until the LLM produces a final text answer.
 // Supports both Anthropic's native API and OpenAI-compatible endpoints.
 func askWithTools(apiURL, apiKey, model, question string) error {
-	isAnthropic := strings.Contains(apiURL, "anthropic.com")
-
-	if isAnthropic {
+	if llmIsAnthropic(apiURL) {
 		return askWithToolsAnthropic(apiURL, apiKey, model, question)
 	}
 	return askWithToolsOpenAI(apiURL, apiKey, model, question)
@@ -267,30 +261,15 @@ func askWithToolsAnthropic(apiURL, apiKey, model, question string) error {
 	}
 
 	for range 10 {
-		reqBody, _ := json.Marshal(map[string]any{
+		data, err := llmRequest(context.Background(), apiURL, apiKey, map[string]any{
 			"model":      model,
 			"max_tokens": 4096,
 			"system":     askSystemPrompt,
 			"tools":      askTools(),
 			"messages":   messages,
 		})
-
-		url := strings.TrimRight(apiURL, "/") + "/v1/messages"
-		req, _ := http.NewRequest("POST", url, bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("x-api-key", apiKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-
-		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("API error: %w", err)
-		}
-
-		data, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+			return err
 		}
 
 		var result struct {
@@ -376,28 +355,14 @@ func askWithToolsOpenAI(apiURL, apiKey, model, question string) error {
 	}
 
 	for range 10 {
-		reqBody, _ := json.Marshal(map[string]any{
+		data, err := llmRequest(context.Background(), apiURL, apiKey, map[string]any{
 			"model":      model,
 			"max_tokens": 4096,
 			"tools":      askOpenAITools(),
 			"messages":   messages,
 		})
-
-		url := strings.TrimRight(apiURL, "/") + "/chat/completions"
-		req, _ := http.NewRequest("POST", url, bytes.NewReader(reqBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-
-		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("API error: %w", err)
-		}
-
-		data, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+			return err
 		}
 
 		var result struct {
