@@ -81,7 +81,7 @@ Output JSON only with this schema:
 
 // reviewAction holds all the context for a change review request.
 type reviewAction struct {
-	ActionType  string `json:"action_type"`  // exec, playbook, deploy
+	ActionType  string `json:"action_type"` // exec, playbook, deploy
 	Command     string `json:"command,omitempty"`
 	ScriptName  string `json:"script_name,omitempty"`
 	ScriptBody  string `json:"script_content,omitempty"`
@@ -92,11 +92,11 @@ type reviewAction struct {
 	BecomeUser  string `json:"privilege_user,omitempty"`
 
 	// Playbook fields.
-	PlaybookPath string            `json:"playbook_path,omitempty"`
+	PlaybookPath  string            `json:"playbook_path,omitempty"`
 	PlaybookFiles map[string]string `json:"playbook_files,omitempty"` // path → content
-	Module       string            `json:"module,omitempty"`
-	ModuleArgs   string            `json:"module_args,omitempty"`
-	ExtraArgs    string            `json:"extra_args,omitempty"`
+	Module        string            `json:"module,omitempty"`
+	ModuleArgs    string            `json:"module_args,omitempty"`
+	ExtraArgs     string            `json:"extra_args,omitempty"`
 
 	// Deploy fields.
 	PackagePath    string `json:"package_path,omitempty"`
@@ -106,13 +106,13 @@ type reviewAction struct {
 
 // reviewResult is the parsed LLM response.
 type reviewResult struct {
-	Summary                      string          `json:"summary"`
-	RiskLevel                    string          `json:"risk_level"`
-	ShouldBlock                  bool            `json:"should_block_for_confirmation"`
-	Findings                     []reviewFinding `json:"findings"`
-	PossibleTypos                []reviewTypo    `json:"possible_typos"`
-	QuestionsForOperator         []string        `json:"questions_for_operator"`
-	RecommendedConfirmation      string          `json:"recommended_confirmation_message"`
+	Summary                 string          `json:"summary"`
+	RiskLevel               string          `json:"risk_level"`
+	ShouldBlock             bool            `json:"should_block_for_confirmation"`
+	Findings                []reviewFinding `json:"findings"`
+	PossibleTypos           []reviewTypo    `json:"possible_typos"`
+	QuestionsForOperator    []string        `json:"questions_for_operator"`
+	RecommendedConfirmation string          `json:"recommended_confirmation_message"`
 }
 
 type reviewFinding struct {
@@ -124,8 +124,8 @@ type reviewFinding struct {
 }
 
 type reviewTypo struct {
-	Input         string `json:"input"`
-	Reason        string `json:"reason"`
+	Input          string `json:"input"`
+	Reason         string `json:"reason"`
 	PossibleIntent string `json:"possible_intent"`
 }
 

@@ -545,12 +545,12 @@ var (
 // Today the CLI used to display "Status: completed" regardless, which
 // hid bugs where most of the fleet never answered.
 type dispatchOutcome struct {
-	Results       []*pb.QueryResult
-	TotalTargets  int  // size of the original dispatch set
-	Responded     int  // agents that returned a result (success or no-match)
-	Complete      bool // true iff every target accounted for (no idle/hard timeout)
-	HardTimedOut  bool // hard timeout fired before everyone responded
-	IdleTimedOut  bool // dispatcher stopped because nothing was arriving
+	Results      []*pb.QueryResult
+	TotalTargets int  // size of the original dispatch set
+	Responded    int  // agents that returned a result (success or no-match)
+	Complete     bool // true iff every target accounted for (no idle/hard timeout)
+	HardTimedOut bool // hard timeout fired before everyone responded
+	IdleTimedOut bool // dispatcher stopped because nothing was arriving
 }
 
 // MissingCount returns how many targets never produced a response.
@@ -899,4 +899,3 @@ func (s *Server) flushFactStage(ctx context.Context) {
 	}
 	metricFactFlushDuration.WithLabelValues(backend).Observe(time.Since(flushStart).Seconds())
 }
-

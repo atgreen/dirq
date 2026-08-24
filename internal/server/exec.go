@@ -168,7 +168,7 @@ func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.Serve
 type execCommandRequest struct {
 	AgentID      string            `json:"agent_id"`
 	Command      string            `json:"command"`
-	Stdin        string            `json:"stdin"`        // base64-encoded stdin data
+	Stdin        string            `json:"stdin"` // base64-encoded stdin data
 	Become       bool              `json:"become"`
 	BecomeUser   string            `json:"become_user"`
 	BecomeMethod string            `json:"become_method"`
@@ -185,8 +185,8 @@ type execCommandResponse struct {
 	AgentID    string `json:"agent_id"`
 	Hostname   string `json:"hostname"`
 	RC         int    `json:"rc"`
-	Stdout     string `json:"stdout"`          // base64-encoded
-	Stderr     string `json:"stderr"`          // base64-encoded
+	Stdout     string `json:"stdout"` // base64-encoded
+	Stderr     string `json:"stderr"` // base64-encoded
 	Success    bool   `json:"success"`
 	Error      string `json:"error,omitempty"`
 	StartedAt  string `json:"started_at,omitempty"`
@@ -569,9 +569,9 @@ func (s *Server) handleListExecLogs(w http.ResponseWriter, r *http.Request) {
 type execMultiRequest struct {
 	Query        string            `json:"query"`
 	Command      string            `json:"command"`
-	Script       string            `json:"script"`       // base64-encoded script content
-	ScriptName   string            `json:"script_name"`  // original filename (e.g. "deploy.sh")
-	Stdin        string            `json:"stdin"`         // base64-encoded stdin data
+	Script       string            `json:"script"`      // base64-encoded script content
+	ScriptName   string            `json:"script_name"` // original filename (e.g. "deploy.sh")
+	Stdin        string            `json:"stdin"`       // base64-encoded stdin data
 	Become       bool              `json:"become"`
 	BecomeUser   string            `json:"become_user"`
 	BecomeMethod string            `json:"become_method"`
@@ -590,8 +590,8 @@ type execMultiResult struct {
 	AgentID      string `json:"agent_id,omitempty"`
 	Hostname     string `json:"hostname,omitempty"`
 	RC           int    `json:"rc,omitempty"`
-	Stdout       string `json:"stdout,omitempty"`          // base64-encoded
-	Stderr       string `json:"stderr,omitempty"`          // base64-encoded
+	Stdout       string `json:"stdout,omitempty"` // base64-encoded
+	Stderr       string `json:"stderr,omitempty"` // base64-encoded
 	Success      bool   `json:"success"`
 	Error        string `json:"error,omitempty"`
 	StartedAt    string `json:"started_at,omitempty"`
@@ -1020,8 +1020,8 @@ type responseRecorder struct {
 }
 
 func (r *responseRecorder) Header() http.Header         { return r.headers }
-func (r *responseRecorder) Write(b []byte) (int, error)  { return r.body.Write(b) }
-func (r *responseRecorder) WriteHeader(code int)         { r.code = code }
+func (r *responseRecorder) Write(b []byte) (int, error) { return r.body.Write(b) }
+func (r *responseRecorder) WriteHeader(code int)        { r.code = code }
 
 // ─────────────────────────────────────────────────────────
 // Helpers

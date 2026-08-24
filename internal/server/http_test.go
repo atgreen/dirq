@@ -36,14 +36,14 @@ type mockToken struct {
 	token     db.Token
 }
 
-func (m *mockDB) Ping(context.Context) error      { return nil }
-func (m *mockDB) Kind() string                    { return "mock" }
+func (m *mockDB) Ping(context.Context) error       { return nil }
+func (m *mockDB) Kind() string                     { return "mock" }
 func (m *mockDB) NewLeader(*slog.Logger) db.Leader { return mockLeader{} }
 
 type mockLeader struct{}
 
-func (mockLeader) IsLeader() bool          { return true }
-func (mockLeader) Run(context.Context)      {}
+func (mockLeader) IsLeader() bool      { return true }
+func (mockLeader) Run(context.Context) {}
 
 func (m *mockDB) ValidateToken(_ context.Context, plaintext string) (db.Token, error) {
 	for _, t := range m.tokens {
@@ -127,17 +127,17 @@ func (m *mockDB) ListExecLogsByJob(_ context.Context, _ string) ([]db.ExecLog, e
 func (m *mockDB) RegisterAgent(context.Context, db.RegisterAgentParams) (db.Agent, error) {
 	return db.Agent{}, nil
 }
-func (m *mockDB) UpdateAgentHeartbeat(context.Context, string) error  { return nil }
-func (m *mockDB) SetAgentOffline(context.Context, string) error       { return nil }
-func (m *mockDB) SetAgentRole(context.Context, string, string) error  { return nil }
+func (m *mockDB) UpdateAgentHeartbeat(context.Context, string) error   { return nil }
+func (m *mockDB) SetAgentOffline(context.Context, string) error        { return nil }
+func (m *mockDB) SetAgentRole(context.Context, string, string) error   { return nil }
 func (m *mockDB) SetAgentParent(context.Context, string, string) error { return nil }
 func (m *mockDB) MarkStaleAgentsOffline(context.Context, time.Duration) (int64, error) {
 	return 0, nil
 }
-func (m *mockDB) TouchAgentTree(context.Context, string) error             { return nil }
-func (m *mockDB) MarkAgentTreeOffline(context.Context, string) (int64, error) { return 0, nil }
+func (m *mockDB) TouchAgentTree(context.Context, string) error                     { return nil }
+func (m *mockDB) MarkAgentTreeOffline(context.Context, string) (int64, error)      { return 0, nil }
 func (m *mockDB) UpsertFact(context.Context, string, string, map[string]any) error { return nil }
-func (m *mockDB) BulkUpsertFacts(context.Context, []db.FactRow) error               { return nil }
+func (m *mockDB) BulkUpsertFacts(context.Context, []db.FactRow) error              { return nil }
 func (m *mockDB) CreateQuery(_ context.Context, _ string, _ string, _ int) (db.Query, error) {
 	return db.Query{}, nil
 }
@@ -160,9 +160,9 @@ func (m *mockDB) FindShallowestParentWithRoom(context.Context, int) (db.Agent, e
 func (m *mockDB) FindFallbackParents(context.Context, string, int, int) ([]db.Agent, error) {
 	return nil, nil
 }
-func (m *mockDB) CountAgentsByRole(context.Context, string) (int, error)    { return 0, nil }
-func (m *mockDB) CountOnlineZoneLeaders(context.Context) (int, error)       { return 0, nil }
-func (m *mockDB) CountChildren(context.Context, string) (int, error)        { return 0, nil }
+func (m *mockDB) CountAgentsByRole(context.Context, string) (int, error)     { return 0, nil }
+func (m *mockDB) CountOnlineZoneLeaders(context.Context) (int, error)        { return 0, nil }
+func (m *mockDB) CountChildren(context.Context, string) (int, error)         { return 0, nil }
 func (m *mockDB) FindRelaysWithChildren(context.Context) ([]db.Agent, error) { return nil, nil }
 func (m *mockDB) FindImbalancedNodes(context.Context, int) (db.NodeLoad, db.NodeLoad, bool, error) {
 	return db.NodeLoad{}, db.NodeLoad{}, false, nil
@@ -183,7 +183,7 @@ func (m *mockDB) GetAgentByHostname(_ context.Context, hostname string) (db.Agen
 	return db.Agent{}, pgx.ErrNoRows
 }
 func (m *mockDB) GetFactsByModule(context.Context, string) ([]db.Fact, error) { return nil, nil }
-func (m *mockDB) GetFactTTL(context.Context, string) (int, error)            { return 900, nil }
+func (m *mockDB) GetFactTTL(context.Context, string) (int, error)             { return 900, nil }
 func (m *mockDB) FindParentWithRoom(context.Context, string, int) (db.Agent, error) {
 	return db.Agent{}, nil
 }

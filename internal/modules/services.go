@@ -57,7 +57,7 @@ func collectLinuxServices() []any {
 			continue
 		}
 
-		unit := fields[0]             // e.g. "sshd.service"
+		unit := fields[0]                 // e.g. "sshd.service"
 		sub := strings.ToLower(fields[3]) // SUB column: running, exited, dead, etc.
 
 		// Derive a friendly state.

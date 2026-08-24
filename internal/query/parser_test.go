@@ -407,8 +407,8 @@ func TestMatchesAgentTags(t *testing.T) {
 		{`SELECT * WHERE tag.env IN ('prod', 'staging')`, true},
 		{`SELECT * WHERE tag.env NOT IN ('staging', 'dev')`, true},
 		{`SELECT * WHERE tag.env != 'staging'`, true},
-		{`SELECT * WHERE tag.region IS NULL`, true},     // no "region" tag
-		{`SELECT * WHERE tag.env IS NOT NULL`, true},     // "env" exists
+		{`SELECT * WHERE tag.region IS NULL`, true},  // no "region" tag
+		{`SELECT * WHERE tag.env IS NOT NULL`, true}, // "env" exists
 		{`SELECT * WHERE tag.env LIKE 'pro%'`, true},
 		{`SELECT * WHERE tag.env NOT LIKE 'stag%'`, true},
 		// Data conditions are conservatively true.

@@ -899,7 +899,7 @@ func valueToString(v *Value) string {
 // AggregatedRow holds the result of a GROUP BY aggregation for one group.
 type AggregatedRow struct {
 	GroupKey map[string]any
-	Values  map[string]any
+	Values   map[string]any
 }
 
 // Aggregate applies aggregation functions to a set of rows. If a GROUP BY
@@ -939,7 +939,7 @@ func Aggregate(q *Query, rows []Row) ([]AggregatedRow, error) {
 		g := groups[gk]
 		ar := AggregatedRow{
 			GroupKey: g.key,
-			Values:  make(map[string]any),
+			Values:   make(map[string]any),
 		}
 		for k, v := range g.key {
 			ar.Values[k] = v

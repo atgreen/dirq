@@ -660,8 +660,8 @@ func certCmd() *cobra.Command {
 	}
 
 	var (
-		dir      string
-		caFile   string
+		dir       string
+		caFile    string
 		caKeyFile string
 	)
 	generateCmd := &cobra.Command{
@@ -1187,7 +1187,6 @@ Examples:
 	cmd.Flags().StringVar(&becomeUser, "become-user", "", "user to become (default: root)")
 	cmd.Flags().StringVar(&becomeMethod, "become-method", "", "privilege escalation method (default: sudo)")
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "timeout in seconds")
-
 
 	return cmd
 }
@@ -2364,7 +2363,6 @@ Examples:
 	return cmd
 }
 
-
 // ─────────────────────────────────────────────────────────
 // dirq doctor
 // ─────────────────────────────────────────────────────────
@@ -2511,7 +2509,7 @@ func doctorCmd() *cobra.Command {
 				}
 				detail := fmt.Sprintf("%d/%d", statusData.AgentsOnline, statusData.AgentsTotal)
 				if statusData.AgentsOnline == 0 && statusData.AgentsTotal > 0 {
-					return "warn", detail+" (none online)"
+					return "warn", detail + " (none online)"
 				}
 				if statusData.AgentsOnline == 0 {
 					return "warn", "no agents registered"
@@ -3529,7 +3527,8 @@ func extractPackageList(data map[string]any) []pkgInfo {
 // parseRPMNEVRA extracts the package name and version-release from an RPM NEVRA string.
 // extractRHELVersion extracts the RHEL major version from a CPE string.
 // e.g., "cpe:/o:redhat:enterprise_linux:8" → "8"
-//       "cpe:/o:redhat:enterprise_linux:9::baseos" → "9"
+//
+//	"cpe:/o:redhat:enterprise_linux:9::baseos" → "9"
 func extractRHELVersion(cpe string) string {
 	// CPE format: cpe:/o:redhat:enterprise_linux:VERSION...
 	parts := strings.Split(cpe, ":")
@@ -4266,4 +4265,3 @@ func apiRequest(method, path string, body io.Reader) ([]byte, error) {
 
 	return data, nil
 }
-

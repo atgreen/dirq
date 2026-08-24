@@ -73,13 +73,13 @@ type Config struct {
 type Agent struct {
 	pb.UnimplementedDirQRelayServer
 
-	cfg           Config
-	log           *slog.Logger
-	hostname      string // resolved at New(); used in registration and query results
-	agentID       string
-	role          pb.AgentRole
-	sessionToken  string   // from RegisterResponse, presented in AgentHello
-	parentAddr    string   // where to connect upstream (server addr or parent's listen_addr)
+	cfg          Config
+	log          *slog.Logger
+	hostname     string // resolved at New(); used in registration and query results
+	agentID      string
+	role         pb.AgentRole
+	sessionToken string // from RegisterResponse, presented in AgentHello
+	parentAddr   string // where to connect upstream (server addr or parent's listen_addr)
 	// expectedParentID is the agent ID of the assigned parent relay, pinned
 	// against the parent's TLS cert CN on peer (relay) connections. Empty when
 	// this agent is a zone leader connecting to the server (whose identity is
