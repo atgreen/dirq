@@ -645,70 +645,55 @@ func (s *Server) handleExecBroadcastResponse(resp *pb.ExecResponse) {
 	s.handleExecResponse(resp)
 }
 
-func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
-	var req execMultiRequest
+// decodeExecMultiRequest parses and validates the exec_multi request body,
+// decoding the base64 stdin and script fields. On failure it writes the
+// HTTP error response and returns ok=false.
+func decodeExecMultiRequest(w http.ResponseWriter, r *http.Request) (req execMultiRequest, stdin, script []byte, ok bool) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
+		return req, nil, nil, false
 	}
 
 	if req.Command == "" && req.Script == "" {
 		httpError(w, http.StatusBadRequest, "command or script is required")
-		return
+		return req, nil, nil, false
 	}
 	if req.Query == "" {
 		httpError(w, http.StatusBadRequest, "query is required (used to select target agents)")
-		return
+		return req, nil, nil, false
 	}
 
-	if err := s.bindAAP(r, req.AAPUser); err != nil {
-		httpError(w, http.StatusForbidden, err.Error())
-		return
-	}
-
-	timeout := req.Timeout
-	if timeout == 0 {
-		timeout = 300
-	}
-
-	// Decode stdin if provided.
-	var stdinBytes []byte
 	if req.Stdin != "" {
-		var decErr error
-		stdinBytes, decErr = decodeBase64(req.Stdin)
-		if decErr != nil {
-			httpError(w, http.StatusBadRequest, "invalid base64 stdin: "+decErr.Error())
-			return
+		var err error
+		if stdin, err = decodeBase64(req.Stdin); err != nil {
+			httpError(w, http.StatusBadRequest, "invalid base64 stdin: "+err.Error())
+			return req, nil, nil, false
 		}
 	}
-
-	// Decode script if provided.
-	var scriptBytes []byte
 	if req.Script != "" {
-		var decErr error
-		scriptBytes, decErr = decodeBase64(req.Script)
-		if decErr != nil {
-			httpError(w, http.StatusBadRequest, "invalid base64 script: "+decErr.Error())
-			return
+		var err error
+		if script, err = decodeBase64(req.Script); err != nil {
+			httpError(w, http.StatusBadRequest, "invalid base64 script: "+err.Error())
+			return req, nil, nil, false
 		}
 	}
 
-	// Resolve target agents using the query engine.
-	ctx := r.Context()
-	parsed, err := query.Parse(req.Query)
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "query parse error: "+err.Error())
-		return
-	}
+	return req, stdin, script, true
+}
 
+// resolveExecTargets resolves the exec-enabled online agents matching the
+// query: pre-filtered by tag/hostname conditions (resolved server-side from
+// the DB), then — when field conditions are present — intersected with a
+// resolution query across the fleet. unresolved counts targets the
+// resolution query couldn't account for, so the eventual exec header can
+// surface partial coverage.
+func (s *Server) resolveExecTargets(ctx context.Context, queryStr string, parsed *query.Query, timeout int) (targets []db.Agent, unresolved int, err error) {
 	online := true
 	allAgents, err := s.db.ListAgents(ctx, db.ListAgentsFilter{Online: &online})
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "failed to list agents: "+err.Error())
-		return
+		return nil, 0, fmt.Errorf("failed to list agents: %w", err)
 	}
 
-	// Pre-filter by tag and hostname conditions (resolved server-side from DB).
 	agents := allAgents
 	if query.HasTagConditions(parsed.Where) || query.HasHostnameCondition(parsed.Where) {
 		agents = make([]db.Agent, 0, len(allAgents))
@@ -719,17 +704,12 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// If there are non-tag field conditions (e.g., os_info.os = 'linux'),
-	// run a query first to resolve which agents match, then intersect.
-	// Track how many targets the resolution query couldn't account for so
-	// we can surface partial coverage in the eventual exec header.
-	unresolvedTargets := 0
 	if query.HasFieldConditions(parsed.Where) {
-		matchedIDs, missing, err := s.resolveFieldTargets(ctx, req.Query, timeout)
+		matchedIDs, missing, err := s.resolveFieldTargets(ctx, queryStr, timeout)
 		if err != nil {
 			s.log.Warn("field-based target resolution failed, using tag filter only", "error", err)
 		} else {
-			unresolvedTargets = missing
+			unresolved = missing
 			matched := make(map[string]bool, len(matchedIDs))
 			for _, id := range matchedIDs {
 				matched[id] = true
@@ -744,12 +724,42 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Filter to agents with exec enabled.
-	var targets []db.Agent
 	for _, a := range agents {
 		if a.ExecEnabled {
 			targets = append(targets, a)
 		}
+	}
+	return targets, unresolved, nil
+}
+
+func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
+	req, stdinBytes, scriptBytes, ok := decodeExecMultiRequest(w, r)
+	if !ok {
+		return
+	}
+
+	if err := s.bindAAP(r, req.AAPUser); err != nil {
+		httpError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	timeout := req.Timeout
+	if timeout == 0 {
+		timeout = 300
+	}
+
+	// Resolve target agents using the query engine.
+	ctx := r.Context()
+	parsed, err := query.Parse(req.Query)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "query parse error: "+err.Error())
+		return
+	}
+
+	targets, unresolvedTargets, err := s.resolveExecTargets(ctx, req.Query, parsed, timeout)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	// Set up streaming.
@@ -861,11 +871,23 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast to all zone leaders.  Same fanout-failure handling as
-	// the query dispatcher: a ZL whose buffer is full can't relay to
-	// its subtree, so we synthesize failures immediately.
-	sent := 0
-	var failedSubtrees []string
+	sent, failedSubtrees := s.broadcastExecToZoneLeaders(msg, bs)
+
+	s.log.Info("exec broadcast sent",
+		"request_id", requestID,
+		"targets", len(targetIDs),
+		"zone_leaders", sent,
+		"failed_subtrees", len(failedSubtrees),
+	)
+
+	outcome = s.streamExecResults(ctx, enc, flusher, bs)
+}
+
+// broadcastExecToZoneLeaders fans the exec request out to every connected
+// zone-leader stream.  Same fanout-failure handling as the query
+// dispatcher: a ZL whose buffer is full can't relay to its subtree, so we
+// synthesize failures immediately.
+func (s *Server) broadcastExecToZoneLeaders(msg *pb.ServerMessage, bs *execBroadcastSession) (sent int, failedSubtrees []string) {
 	s.mu.RLock()
 	for _, as := range s.streams {
 		select {
@@ -884,21 +906,19 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 			s.markGoneInExecSession(bs, id, "fanout to ZL failed")
 		}
 	}
+	return sent, failedSubtrees
+}
 
-	s.log.Info("exec broadcast sent",
-		"request_id", requestID,
-		"targets", len(targetIDs),
-		"zone_leaders", sent,
-		"failed_subtrees", len(failedSubtrees),
-	)
-
-	// Stream results as agents respond.  No idle timeout — completion
-	// is driven by sessionAccounting.Remaining() reaching zero.  An
-	// unreachable agent is retired by the server-wide notifier when its
-	// stream closes (or PeerDisconnected propagates up, or the reaper
-	// times it out), which synthesizes a failure into bs.results and
-	// drains the pending set.  The hard timeout is a true backstop that
-	// shouldn't fire under normal conditions.
+// streamExecResults streams results as agents respond and returns the
+// outcome classification ("complete", "hard_timeout", or "canceled").
+// No idle timeout — completion is driven by
+// sessionAccounting.Remaining() reaching zero.  An unreachable agent is
+// retired by the server-wide notifier when its stream closes (or
+// PeerDisconnected propagates up, or the reaper times it out), which
+// synthesizes a failure into bs.results and drains the pending set.  The
+// hard timeout is a true backstop that shouldn't fire under normal
+// conditions.
+func (s *Server) streamExecResults(ctx context.Context, enc *json.Encoder, flusher http.Flusher, bs *execBroadcastSession) string {
 	hardTimeout := time.NewTimer(bs.timeout)
 	defer hardTimeout.Stop()
 	progressTicker := time.NewTicker(5 * time.Second)
@@ -939,16 +959,14 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		case <-hardTimeout.C:
 			s.log.Warn("exec broadcast hard-timeout fired",
-				"request_id", requestID,
+				"request_id", bs.requestID,
 				"accounted", bs.AccountedCount(),
 				"targets", bs.Total(),
 				"still_pending", bs.Remaining(),
 			)
-			outcome = "hard_timeout"
-			return
+			return "hard_timeout"
 		case <-ctx.Done():
-			outcome = "canceled"
-			return
+			return "canceled"
 		}
 	}
 
@@ -963,7 +981,7 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		case resp := <-bs.results:
 			emit(resp)
 		default:
-			return
+			return "complete"
 		}
 	}
 }

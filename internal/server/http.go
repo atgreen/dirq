@@ -298,12 +298,40 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "query dispatch failed: "+err.Error())
 		return
 	}
-	results := outcome.Results
+	out, successCount, errorCount := convertQueryResults(outcome.Results)
+	out = projectSelectedFields(parsed, out)
 
-	// Convert results.
-	successCount := 0
-	errorCount := 0
-	out := make([]queryResult, len(results))
+	aggregated, err := aggregateQueryResults(parsed, out)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "aggregation failed: "+err.Error())
+		return
+	}
+
+	// Update query record.  Status reflects whether every target was
+	// accounted for; "incomplete" surfaces idle/hard timeouts so callers
+	// know not to trust the partial result set as authoritative.
+	status := "completed"
+	if !outcome.Complete {
+		status = "incomplete"
+	}
+	if dbQuery.ID != "" {
+		s.db.UpdateQueryStatus(ctx, dbQuery.ID, status, successCount, errorCount, outcome.MissingCount())
+	}
+
+	jsonResponse(w, http.StatusOK, queryResponse{
+		QueryID:      qr.QueryId,
+		Status:       status,
+		TotalTargets: outcome.TotalTargets,
+		Received:     outcome.Responded,
+		Missing:      outcome.MissingCount(),
+		Results:      aggregated,
+	})
+}
+
+// convertQueryResults converts protobuf results to API results, counting
+// successes and errors.
+func convertQueryResults(results []*pb.QueryResult) (out []queryResult, successCount, errorCount int) {
+	out = make([]queryResult, len(results))
 	for i, r := range results {
 		var data map[string]any
 		if r.Data != nil {
@@ -327,65 +355,54 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			errorCount++
 		}
 	}
+	return out, successCount, errorCount
+}
 
-	// Project fields: flatten module data and expand array modules into rows.
-	// SELECT * skips projection (returns raw module data as before).
+// projectSelectedFields flattens module data and expands array modules
+// into rows for an explicit SELECT list. SELECT * and aggregate queries
+// skip projection (raw module data is returned, or aggregated later).
+func projectSelectedFields(parsed *query.Query, out []queryResult) []queryResult {
 	isSelectStar := len(parsed.Select) == 1 && parsed.Select[0].Star
-	if !isSelectStar && parsed.GroupBy == nil && !parsed.HasAggregates() {
-		fields := make([]string, 0, len(parsed.Select))
-		for _, s := range parsed.Select {
-			if s.Field != "" {
-				fields = append(fields, s.Field)
-			}
-		}
-		if len(fields) > 0 {
-			out = projectResults(out, fields)
+	if isSelectStar || parsed.GroupBy != nil || parsed.HasAggregates() {
+		return out
+	}
+	fields := make([]string, 0, len(parsed.Select))
+	for _, s := range parsed.Select {
+		if s.Field != "" {
+			fields = append(fields, s.Field)
 		}
 	}
+	if len(fields) == 0 {
+		return out
+	}
+	return projectResults(out, fields)
+}
 
-	// Apply server-side aggregation if the query has GROUP BY or bare aggregates.
-	aggregated := out
-	if parsed.GroupBy != nil || parsed.HasAggregates() {
-		rows := make([]query.Row, len(out))
-		for i, r := range out {
-			row := query.Row{}
-			row["hostname"] = r.Hostname
-			flattenInto(row, "", r.Data)
-			rows[i] = row
-		}
-		aggRows, err := query.Aggregate(parsed, rows)
-		if err != nil {
-			httpError(w, http.StatusInternalServerError, "aggregation failed: "+err.Error())
-			return
-		}
-		aggregated = make([]queryResult, len(aggRows))
-		for i, ar := range aggRows {
-			aggregated[i] = queryResult{
-				Success: true,
-				Data:    ar.Values,
-			}
+// aggregateQueryResults applies server-side aggregation when the query
+// has GROUP BY or bare aggregates; otherwise the results pass through.
+func aggregateQueryResults(parsed *query.Query, out []queryResult) ([]queryResult, error) {
+	if parsed.GroupBy == nil && !parsed.HasAggregates() {
+		return out, nil
+	}
+	rows := make([]query.Row, len(out))
+	for i, r := range out {
+		row := query.Row{}
+		row["hostname"] = r.Hostname
+		flattenInto(row, "", r.Data)
+		rows[i] = row
+	}
+	aggRows, err := query.Aggregate(parsed, rows)
+	if err != nil {
+		return nil, err
+	}
+	aggregated := make([]queryResult, len(aggRows))
+	for i, ar := range aggRows {
+		aggregated[i] = queryResult{
+			Success: true,
+			Data:    ar.Values,
 		}
 	}
-
-	// Update query record.  Status reflects whether every target was
-	// accounted for; "incomplete" surfaces idle/hard timeouts so callers
-	// know not to trust the partial result set as authoritative.
-	status := "completed"
-	if !outcome.Complete {
-		status = "incomplete"
-	}
-	if dbQuery.ID != "" {
-		s.db.UpdateQueryStatus(ctx, dbQuery.ID, status, successCount, errorCount, outcome.MissingCount())
-	}
-
-	jsonResponse(w, http.StatusOK, queryResponse{
-		QueryID:      qr.QueryId,
-		Status:       status,
-		TotalTargets: outcome.TotalTargets,
-		Received:     outcome.Responded,
-		Missing:      outcome.MissingCount(),
-		Results:      aggregated,
-	})
+	return aggregated, nil
 }
 
 // ─────────────────────────────────────────────────────────
@@ -655,8 +672,6 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		hostname := agent.Hostname
-
 		// agent.OS is the distro name on Linux ("redhat", "fedora", "ubuntu",
 		// ...) and the literal "windows" on Windows. Derive the family
 		// ("linux"/"windows") so playbooks can target os_linux generically
@@ -666,102 +681,105 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 			osFamily = "windows"
 		}
 
-		// Collect host vars.
-		facts := factsByAgent[agent.ID]
-		hostFacts := map[string]any{
-			"dirq_agent_id":      agent.ID,
-			"dirq_os":            agent.OS,
-			"dirq_os_family":     osFamily,
-			"dirq_os_version":    agent.OSVersion,
-			"dirq_arch":          agent.Arch,
-			"dirq_agent_version": agent.AgentVersion,
-			"dirq_exec_enabled":  agent.ExecEnabled,
-			"dirq_online":        agent.Online,
-			"dirq_last_seen":     agent.LastSeenAt.Format(time.RFC3339),
-			"dirq_role":          agent.Role,
-		}
-		for _, f := range facts {
-			hostFacts["dirq_"+f.Module] = f.Data
-		}
-		for k, v := range agent.Tags {
-			hostFacts["dirq_tag_"+k] = v
-		}
-		hostvars[hostname] = hostFacts
-
-		// OS grouping: agent.OS is a distro name on Linux now, so we emit
-		// BOTH the per-distro group (os_redhat, os_fedora, ...) AND the
-		// family group (os_linux, os_windows). The distro group is a
-		// child of the family group so `hosts: os_linux` still reaches
-		// every Linux host the way it always did, while distro-specific
-		// targeting still works.
-		osFamilyGroup := "os_" + osFamily
-		osDistroGroup := "os_" + sanitizeGroupName(agent.OS)
-		if osDistroGroup == osFamilyGroup {
-			// Windows hosts hit this — agent.OS == "windows" == family;
-			// just one group.
-			groups[osFamilyGroup] = append(groups[osFamilyGroup], hostname)
-		} else {
-			groups[osDistroGroup] = append(groups[osDistroGroup], hostname)
-			found := false
-			for _, existing := range parentGroups[osFamilyGroup] {
-				if existing == osDistroGroup {
-					found = true
-					break
-				}
-			}
-			if !found {
-				parentGroups[osFamilyGroup] = append(parentGroups[osFamilyGroup], osDistroGroup)
-			}
-		}
-
-		// Group by arch: arch_amd64, arch_arm64
-		archGroup := "arch_" + agent.Arch
-		groups[archGroup] = append(groups[archGroup], hostname)
-
-		// Group by exec capability.
-		if agent.ExecEnabled {
-			groups["exec_enabled"] = append(groups["exec_enabled"], hostname)
-		}
-
-		// Group by tags with hierarchy.
-		// Tag env=prod creates:
-		//   - group "tag_env_prod" containing the host
-		//   - parent group "tag_env" containing child group "tag_env_prod"
-		for k, v := range agent.Tags {
-			childGroup := "tag_" + sanitizeGroupName(k) + "_" + sanitizeGroupName(v)
-			parentGroup := "tag_" + sanitizeGroupName(k)
-
-			groups[childGroup] = append(groups[childGroup], hostname)
-
-			// Track parent-child relationship (deduplicated later).
-			found := false
-			for _, existing := range parentGroups[parentGroup] {
-				if existing == childGroup {
-					found = true
-					break
-				}
-			}
-			if !found {
-				parentGroups[parentGroup] = append(parentGroups[parentGroup], childGroup)
-			}
-		}
+		hostvars[agent.Hostname] = inventoryHostVars(agent, osFamily, factsByAgent[agent.ID])
+		addInventoryGroups(groups, parentGroups, agent, osFamily)
 	}
 
-	// Build the inventory JSON.
+	jsonResponse(w, http.StatusOK, buildInventoryJSON(hostvars, groups, parentGroups))
+}
+
+// inventoryHostVars collects the Ansible hostvars for one agent.
+func inventoryHostVars(agent db.Agent, osFamily string, facts []db.Fact) map[string]any {
+	hostFacts := map[string]any{
+		"dirq_agent_id":      agent.ID,
+		"dirq_os":            agent.OS,
+		"dirq_os_family":     osFamily,
+		"dirq_os_version":    agent.OSVersion,
+		"dirq_arch":          agent.Arch,
+		"dirq_agent_version": agent.AgentVersion,
+		"dirq_exec_enabled":  agent.ExecEnabled,
+		"dirq_online":        agent.Online,
+		"dirq_last_seen":     agent.LastSeenAt.Format(time.RFC3339),
+		"dirq_role":          agent.Role,
+	}
+	for _, f := range facts {
+		hostFacts["dirq_"+f.Module] = f.Data
+	}
+	for k, v := range agent.Tags {
+		hostFacts["dirq_tag_"+k] = v
+	}
+	return hostFacts
+}
+
+// appendUniqueGroup adds child to parentGroups[parent] if not already present.
+func appendUniqueGroup(parentGroups map[string][]string, parent, child string) {
+	for _, existing := range parentGroups[parent] {
+		if existing == child {
+			return
+		}
+	}
+	parentGroups[parent] = append(parentGroups[parent], child)
+}
+
+// addInventoryGroups assigns one agent's host to its OS, arch, exec, and
+// tag groups, maintaining the parent/child group hierarchy.
+func addInventoryGroups(groups, parentGroups map[string][]string, agent db.Agent, osFamily string) {
+	hostname := agent.Hostname
+
+	// OS grouping: agent.OS is a distro name on Linux now, so we emit
+	// BOTH the per-distro group (os_redhat, os_fedora, ...) AND the
+	// family group (os_linux, os_windows). The distro group is a
+	// child of the family group so `hosts: os_linux` still reaches
+	// every Linux host the way it always did, while distro-specific
+	// targeting still works.
+	osFamilyGroup := "os_" + osFamily
+	osDistroGroup := "os_" + sanitizeGroupName(agent.OS)
+	if osDistroGroup == osFamilyGroup {
+		// Windows hosts hit this — agent.OS == "windows" == family;
+		// just one group.
+		groups[osFamilyGroup] = append(groups[osFamilyGroup], hostname)
+	} else {
+		groups[osDistroGroup] = append(groups[osDistroGroup], hostname)
+		appendUniqueGroup(parentGroups, osFamilyGroup, osDistroGroup)
+	}
+
+	// Group by arch: arch_amd64, arch_arm64
+	archGroup := "arch_" + agent.Arch
+	groups[archGroup] = append(groups[archGroup], hostname)
+
+	// Group by exec capability.
+	if agent.ExecEnabled {
+		groups["exec_enabled"] = append(groups["exec_enabled"], hostname)
+	}
+
+	// Group by tags with hierarchy.
+	// Tag env=prod creates:
+	//   - group "tag_env_prod" containing the host
+	//   - parent group "tag_env" containing child group "tag_env_prod"
+	for k, v := range agent.Tags {
+		childGroup := "tag_" + sanitizeGroupName(k) + "_" + sanitizeGroupName(v)
+		parentGroup := "tag_" + sanitizeGroupName(k)
+
+		groups[childGroup] = append(groups[childGroup], hostname)
+		appendUniqueGroup(parentGroups, parentGroup, childGroup)
+	}
+}
+
+// buildInventoryJSON assembles the Ansible dynamic-inventory document from
+// hostvars, leaf groups (hosts), and parent groups (children).
+func buildInventoryJSON(hostvars map[string]any, groups, parentGroups map[string][]string) map[string]any {
 	inventory := map[string]any{
 		"_meta": map[string]any{
 			"hostvars": hostvars,
 		},
 	}
 
-	// Add leaf groups (groups with hosts).
 	for name, hosts := range groups {
 		inventory[name] = map[string]any{
 			"hosts": hosts,
 		}
 	}
 
-	// Add parent groups (groups containing child groups, not hosts directly).
 	for parent, children := range parentGroups {
 		entry, ok := inventory[parent].(map[string]any)
 		if !ok {
@@ -771,7 +789,7 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 		entry["children"] = children
 	}
 
-	jsonResponse(w, http.StatusOK, inventory)
+	return inventory
 }
 
 // ─────────────────────────────────────────────────────────
