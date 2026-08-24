@@ -4238,19 +4238,9 @@ func apiStreamRequest(method, path string, body io.Reader) (*http.Response, erro
 }
 
 func apiRequest(method, path string, body io.Reader) ([]byte, error) {
-	url := strings.TrimRight(serverURL, "/") + path
-	req, err := http.NewRequest(method, url, body)
+	resp, err := apiStreamRequest(method, path, body)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if apiToken != "" {
-		req.Header.Set("Authorization", "Bearer "+apiToken)
-	}
-
-	resp, err := httpClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 

@@ -334,19 +334,24 @@ func TestServerCredentialsMixedAuth_NoClientCertRequired(t *testing.T) {
 		t.Errorf("ServerCredentials protocol = %q, want tls", tlsInfo.SecurityProtocol)
 	}
 
-	// ServerCredentialsMixedAuth should not require client certs at TLS layer.
-	mixedCreds, err := ServerCredentialsMixedAuth(cfg)
+	// ServerCredentialsMixedAuthWithReloader should not require client certs
+	// at the TLS layer.
+	reloader, err := NewCertReloader(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
-		t.Fatalf("ServerCredentialsMixedAuth: %v", err)
+		t.Fatalf("NewCertReloader: %v", err)
+	}
+	mixedCreds, err := ServerCredentialsMixedAuthWithReloader(cfg, reloader)
+	if err != nil {
+		t.Fatalf("ServerCredentialsMixedAuthWithReloader: %v", err)
 	}
 	mixedInfo := mixedCreds.Info()
 	if mixedInfo.SecurityProtocol != "tls" {
-		t.Errorf("ServerCredentialsMixedAuth protocol = %q, want tls", mixedInfo.SecurityProtocol)
+		t.Errorf("ServerCredentialsMixedAuthWithReloader protocol = %q, want tls", mixedInfo.SecurityProtocol)
 	}
 
 	// To verify the actual ClientAuth difference, do a real TLS handshake.
 	// ServerCredentials with CA should require client cert.
-	// ServerCredentialsMixedAuth with CA should accept without client cert.
+	// Mixed auth with CA should accept without client cert.
 	testMixedAuthHandshake(t, result)
 }
 
@@ -360,7 +365,11 @@ func testMixedAuthHandshake(t *testing.T, result *GenerateResult) {
 	}
 
 	// Set up a listener with mixed auth.
-	mixedCreds, err := ServerCredentialsMixedAuth(cfg)
+	reloader, err := NewCertReloader(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mixedCreds, err := ServerCredentialsMixedAuthWithReloader(cfg, reloader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,9 +527,13 @@ func TestClientCredentials_ParentIDPin(t *testing.T) {
 
 	// The parent relay presents a per-agent cert with CN = "parent-A".
 	parentCert, parentKey := helperIssueAgentCert(t, caCert, caKey, "parent-A")
-	serverCreds, err := ServerCredentialsMixedAuth(Config{CAFile: caFile, CertFile: parentCert, KeyFile: parentKey})
+	parentReloader, err := NewCertReloader(parentCert, parentKey)
 	if err != nil {
-		t.Fatalf("ServerCredentialsMixedAuth: %v", err)
+		t.Fatalf("NewCertReloader: %v", err)
+	}
+	serverCreds, err := ServerCredentialsMixedAuthWithReloader(Config{CAFile: caFile, CertFile: parentCert, KeyFile: parentKey}, parentReloader)
+	if err != nil {
+		t.Fatalf("ServerCredentialsMixedAuthWithReloader: %v", err)
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

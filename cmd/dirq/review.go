@@ -567,10 +567,3 @@ func extractRoleNames(docs []any) []string {
 	}
 	return roles
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
