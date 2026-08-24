@@ -17,18 +17,18 @@ import (
 
 // inflightSession is the JSON shape returned by /api/v1/debug/inflight.
 type inflightSession struct {
-	RequestID         string         `json:"request_id"`
-	Kind              string         `json:"kind"` // "exec", "exec_multi", "query", "put_file", "fetch_file"
-	Targets           int            `json:"targets"`
-	Received          int            `json:"received"`
-	Missing           []string       `json:"missing,omitempty"`         // agent IDs that haven't answered
-	ArrivalsLast1s    int            `json:"arrivals_last_1s,omitempty"`
-	ArrivalsLast5s    int            `json:"arrivals_last_5s,omitempty"`
-	ArrivalsLast30s   int            `json:"arrivals_last_30s,omitempty"`
-	ByZoneLeader      []zlBreakdown  `json:"by_zone_leader,omitempty"`
-	ElapsedMS         int64          `json:"elapsed_ms"`
-	TimeoutMS         int64          `json:"timeout_ms"`
-	StartedAt         string         `json:"started_at"`
+	RequestID       string        `json:"request_id"`
+	Kind            string        `json:"kind"` // "exec", "exec_multi", "query", "put_file", "fetch_file"
+	Targets         int           `json:"targets"`
+	Received        int           `json:"received"`
+	Missing         []string      `json:"missing,omitempty"` // agent IDs that haven't answered
+	ArrivalsLast1s  int           `json:"arrivals_last_1s,omitempty"`
+	ArrivalsLast5s  int           `json:"arrivals_last_5s,omitempty"`
+	ArrivalsLast30s int           `json:"arrivals_last_30s,omitempty"`
+	ByZoneLeader    []zlBreakdown `json:"by_zone_leader,omitempty"`
+	ElapsedMS       int64         `json:"elapsed_ms"`
+	TimeoutMS       int64         `json:"timeout_ms"`
+	StartedAt       string        `json:"started_at"`
 }
 
 // zlBreakdown attributes the pending set of one in-flight broadcast to

@@ -60,7 +60,7 @@ func (s *Server) handleDeployResponse(resp *pb.DeployResponse) {
 type deployRequest struct {
 	Query          string `json:"query"`
 	DestPath       string `json:"dest_path"`
-	Content        string `json:"content"`         // base64-encoded package binary
+	Content        string `json:"content"` // base64-encoded package binary
 	Mode           int    `json:"mode"`
 	InstallCommand string `json:"install_command"`
 	Become         bool   `json:"become"`

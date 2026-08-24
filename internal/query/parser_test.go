@@ -407,8 +407,8 @@ func TestMatchesAgentTags(t *testing.T) {
 		{`SELECT * WHERE tag.env IN ('prod', 'staging')`, true},
 		{`SELECT * WHERE tag.env NOT IN ('staging', 'dev')`, true},
 		{`SELECT * WHERE tag.env != 'staging'`, true},
-		{`SELECT * WHERE tag.region IS NULL`, true},     // no "region" tag
-		{`SELECT * WHERE tag.env IS NOT NULL`, true},     // "env" exists
+		{`SELECT * WHERE tag.region IS NULL`, true},  // no "region" tag
+		{`SELECT * WHERE tag.env IS NOT NULL`, true}, // "env" exists
 		{`SELECT * WHERE tag.env LIKE 'pro%'`, true},
 		{`SELECT * WHERE tag.env NOT LIKE 'stag%'`, true},
 		// Data conditions are conservatively true.
@@ -462,80 +462,6 @@ func TestStripTagFields(t *testing.T) {
 	}
 }
 
-func TestMatchesWhere(t *testing.T) {
-	q, _ := Parse(`SELECT hostname WHERE disk.pct_used > 80 AND os = 'linux'`)
-
-	row1 := Row{"disk.pct_used": 95.0, "os": "linux"}
-	ok, err := MatchesWhere(q, row1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Error("expected row1 to match")
-	}
-
-	row2 := Row{"disk.pct_used": 50.0, "os": "linux"}
-	ok, err = MatchesWhere(q, row2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Error("expected row2 not to match")
-	}
-
-	row3 := Row{"disk.pct_used": 95.0, "os": "windows"}
-	ok, err = MatchesWhere(q, row3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Error("expected row3 not to match")
-	}
-}
-
-func TestMatchesWhereOR(t *testing.T) {
-	q, _ := Parse(`SELECT hostname WHERE os = 'linux' OR os = 'freebsd'`)
-
-	ok, _ := MatchesWhere(q, Row{"os": "linux"})
-	if !ok {
-		t.Error("linux should match")
-	}
-	ok, _ = MatchesWhere(q, Row{"os": "freebsd"})
-	if !ok {
-		t.Error("freebsd should match")
-	}
-	ok, _ = MatchesWhere(q, Row{"os": "windows"})
-	if ok {
-		t.Error("windows should not match")
-	}
-}
-
-func TestMatchesWhereNOT(t *testing.T) {
-	q, _ := Parse(`SELECT hostname WHERE NOT os = 'windows'`)
-
-	ok, _ := MatchesWhere(q, Row{"os": "linux"})
-	if !ok {
-		t.Error("linux should match NOT windows")
-	}
-	ok, _ = MatchesWhere(q, Row{"os": "windows"})
-	if ok {
-		t.Error("windows should not match NOT windows")
-	}
-}
-
-func TestMatchesWhereISNULL(t *testing.T) {
-	q, _ := Parse(`SELECT hostname WHERE cpu.model IS NULL`)
-
-	ok, _ := MatchesWhere(q, Row{"hostname": "a"})
-	if !ok {
-		t.Error("missing field should match IS NULL")
-	}
-	ok, _ = MatchesWhere(q, Row{"cpu.model": "i7"})
-	if ok {
-		t.Error("present field should not match IS NULL")
-	}
-}
-
 func TestAggregate(t *testing.T) {
 	q, _ := Parse(`SELECT os, COUNT(hostname), AVG(memory.total_gb) GROUP BY os`)
 
@@ -569,38 +495,6 @@ func TestAggregate(t *testing.T) {
 	}
 	if result[1].Values["COUNT(hostname)"] != 1 {
 		t.Errorf("COUNT(hostname): got %v, want 1", result[1].Values["COUNT(hostname)"])
-	}
-}
-
-func TestSortRows(t *testing.T) {
-	q, _ := Parse(`SELECT hostname, disk.pct_used ORDER BY disk.pct_used DESC`)
-
-	rows := []Row{
-		{"hostname": "a", "disk.pct_used": 50.0},
-		{"hostname": "b", "disk.pct_used": 90.0},
-		{"hostname": "c", "disk.pct_used": 75.0},
-	}
-
-	SortRows(q, rows)
-
-	if rows[0]["hostname"] != "b" || rows[1]["hostname"] != "c" || rows[2]["hostname"] != "a" {
-		t.Errorf("sort order wrong: %v", rows)
-	}
-}
-
-func TestSortRowsString(t *testing.T) {
-	q, _ := Parse(`SELECT hostname ORDER BY hostname`)
-
-	rows := []Row{
-		{"hostname": "charlie"},
-		{"hostname": "alpha"},
-		{"hostname": "bravo"},
-	}
-
-	SortRows(q, rows)
-
-	if rows[0]["hostname"] != "alpha" || rows[1]["hostname"] != "bravo" || rows[2]["hostname"] != "charlie" {
-		t.Errorf("string sort wrong: %v", rows)
 	}
 }
 

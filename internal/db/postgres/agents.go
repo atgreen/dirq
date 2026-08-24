@@ -16,7 +16,13 @@ import (
 
 // RegisterAgent inserts a new agent and returns the created record.
 func (d *DB) RegisterAgent(ctx context.Context, p db.RegisterAgentParams) (db.Agent, error) {
-	tagsJSON, err := json.Marshal(p.Tags)
+	// Marshal nil tags as {} — a JSON null would turn the jsonb
+	// tags-merge in the upsert below into an array and corrupt the row.
+	tags := p.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	tagsJSON, err := json.Marshal(tags)
 	if err != nil {
 		return db.Agent{}, fmt.Errorf("marshal tags: %w", err)
 	}

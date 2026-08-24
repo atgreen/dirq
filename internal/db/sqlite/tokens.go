@@ -37,10 +37,14 @@ func (d *DB) CreateToken(ctx context.Context, name, scope string, aapUsers []str
 	prefix := plaintext[:tokenPrefixChars]
 	id := generateUUID()
 
+	// Write created_at explicitly in RFC3339 — the column's
+	// datetime('now') default produces "YYYY-MM-DD HH:MM:SS", which the
+	// readers' RFC3339 parse rejects, yielding zero CreatedAt.
 	_, err = d.db.ExecContext(ctx, `
-		INSERT INTO api_tokens (id, name, token_prefix, token_hash, scope, aap_users)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+		INSERT INTO api_tokens (id, name, token_prefix, token_hash, scope, aap_users, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		id, name, prefix, string(hash), scope, db.EncodeAAPUsers(aapUsers),
+		time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return "", err
@@ -75,9 +79,9 @@ func (d *DB) ValidateToken(ctx context.Context, plaintext string) (db.Token, err
 			return db.Token{}, err
 		}
 		t.AAPUsers = db.ParseAAPUsers(aapUsers)
-		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		t.CreatedAt = parseTokenTime(createdAt)
 		if lastUsed.Valid {
-			lu, _ := time.Parse(time.RFC3339, lastUsed.String)
+			lu := parseTokenTime(lastUsed.String)
 			t.LastUsed = &lu
 		}
 		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(plaintext)) == nil {
@@ -115,9 +119,9 @@ func (d *DB) ListTokens(ctx context.Context) ([]db.Token, error) {
 			return nil, err
 		}
 		t.AAPUsers = db.ParseAAPUsers(aapUsers)
-		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		t.CreatedAt = parseTokenTime(createdAt)
 		if lastUsed.Valid {
-			lu, _ := time.Parse(time.RFC3339, lastUsed.String)
+			lu := parseTokenTime(lastUsed.String)
 			t.LastUsed = &lu
 		}
 		tokens = append(tokens, t)
@@ -136,4 +140,15 @@ func (d *DB) DeleteToken(ctx context.Context, name string) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// parseTokenTime parses timestamps written as RFC3339, falling back to
+// sqlite's datetime('now') format for rows created before created_at was
+// written explicitly.
+func parseTokenTime(s string) time.Time {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	t, _ := time.Parse(time.DateTime, s)
+	return t
 }

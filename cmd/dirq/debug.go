@@ -211,12 +211,12 @@ intact.`,
 			brokenAt := ""
 
 			type hop struct {
-				hostname  string
-				role      string
-				online    bool
-				lastSeen  time.Time
-				parentID  string
-				notFound  bool
+				hostname string
+				role     string
+				online   bool
+				lastSeen time.Time
+				parentID string
+				notFound bool
 			}
 			var hops []hop
 

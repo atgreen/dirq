@@ -533,8 +533,6 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 // and sends a DeployResponse. Used by the broadcast deploy path — the package
 // binary travels through the mesh once (like a query) instead of once per host.
 func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
-	hostname := a.hostname
-
 	a.log.Info("deploy request received",
 		slog.String("request_id", req.GetRequestId()),
 		slog.String("dest_path", req.GetDestPath()),
@@ -543,18 +541,10 @@ func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
 	)
 
 	if !a.cfg.ExecEnabled {
-		a.sendDeployResponse(&pb.DeployResponse{
-			RequestId: req.GetRequestId(),
-			AgentId:   a.agentID,
-			Hostname:  hostname,
-			Success:   false,
-			Phase:     "write",
-			Error:     "remote execution is disabled on this agent",
-		})
+		a.deployFailure(req, "write", "remote execution is disabled on this agent")
 		return
 	}
 
-	// Set up timeout.
 	timeout := time.Duration(req.GetTimeoutSeconds()) * time.Second
 	if timeout <= 0 {
 		timeout = 300 * time.Second
@@ -562,17 +552,9 @@ func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
 	deployCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Phase 1: Write the package to disk.
 	destPath := filepath.Clean(req.GetDestPath())
 	if !filepath.IsAbs(destPath) {
-		a.sendDeployResponse(&pb.DeployResponse{
-			RequestId: req.GetRequestId(),
-			AgentId:   a.agentID,
-			Hostname:  hostname,
-			Success:   false,
-			Phase:     "write",
-			Error:     fmt.Sprintf("dest_path must be absolute, got: %s", destPath),
-		})
+		a.deployFailure(req, "write", fmt.Sprintf("dest_path must be absolute, got: %s", destPath))
 		return
 	}
 
@@ -590,49 +572,61 @@ func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
 		Become:         req.GetBecome(),
 		BecomeUser:     req.GetBecomeUser(),
 	}); !dec.Allow {
-		a.sendDeployResponse(&pb.DeployResponse{
-			RequestId: req.GetRequestId(),
-			AgentId:   a.agentID,
-			Hostname:  hostname,
-			Success:   false,
-			Phase:     "policy",
-			Error:     policyDeniedError(dec.Reason),
-		})
+		a.deployFailure(req, "policy", policyDeniedError(dec.Reason))
 		return
 	}
 
-	mode := os.FileMode(0644)
-	if req.GetMode() != 0 && runtime.GOOS != "windows" {
-		mode = os.FileMode(req.GetMode())
-	}
-	dir := filepath.Dir(destPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		a.sendDeployResponse(&pb.DeployResponse{
-			RequestId: req.GetRequestId(),
-			AgentId:   a.agentID,
-			Hostname:  hostname,
-			Success:   false,
-			Phase:     "write",
-			Error:     fmt.Sprintf("mkdir failed: %v", err),
-		})
-		return
-	}
-	if err := os.WriteFile(destPath, req.GetContent(), mode); err != nil {
-		a.sendDeployResponse(&pb.DeployResponse{
-			RequestId: req.GetRequestId(),
-			AgentId:   a.agentID,
-			Hostname:  hostname,
-			Success:   false,
-			Phase:     "write",
-			Error:     fmt.Sprintf("write failed: %v", err),
-		})
+	if err := writeDeployPackage(req, destPath); err != nil {
+		a.deployFailure(req, "write", err.Error())
 		return
 	}
 
 	a.log.Info("deploy package written", slog.String("request_id", req.GetRequestId()), slog.String("dest_path", destPath))
 
-	// Phase 2: Run the install command.
-	cmd := buildCommand(deployCtx, req.GetInstallCommand(), req.GetBecome(), req.GetBecomeUser(), "")
+	resp := a.runDeployInstall(deployCtx, req, destPath)
+
+	a.log.Info("deploy completed",
+		slog.String("request_id", req.GetRequestId()),
+		slog.Int("rc", int(resp.Rc)),
+		slog.Bool("success", resp.Success),
+	)
+
+	a.sendDeployResponse(resp)
+}
+
+// deployFailure sends a failed DeployResponse for the given phase.
+func (a *Agent) deployFailure(req *pb.DeployRequest, phase, errMsg string) {
+	a.sendDeployResponse(&pb.DeployResponse{
+		RequestId: req.GetRequestId(),
+		AgentId:   a.agentID,
+		Hostname:  a.hostname,
+		Success:   false,
+		Phase:     phase,
+		Error:     errMsg,
+	})
+}
+
+// writeDeployPackage writes the package content to destPath, creating
+// parent directories and applying the requested mode (kept at 0644 on
+// Windows, where POSIX modes don't apply).
+func writeDeployPackage(req *pb.DeployRequest, destPath string) error {
+	mode := os.FileMode(0644)
+	if req.GetMode() != 0 && runtime.GOOS != "windows" {
+		mode = os.FileMode(req.GetMode())
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		return fmt.Errorf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(destPath, req.GetContent(), mode); err != nil {
+		return fmt.Errorf("write failed: %v", err)
+	}
+	return nil
+}
+
+// runDeployInstall runs the install command and builds the install-phase
+// response, removing the package file regardless of the install outcome.
+func (a *Agent) runDeployInstall(ctx context.Context, req *pb.DeployRequest, destPath string) *pb.DeployResponse {
+	cmd := buildCommand(ctx, req.GetInstallCommand(), req.GetBecome(), req.GetBecomeUser(), "")
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
@@ -646,7 +640,7 @@ func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
 	resp := &pb.DeployResponse{
 		RequestId: req.GetRequestId(),
 		AgentId:   a.agentID,
-		Hostname:  hostname,
+		Hostname:  a.hostname,
 		Phase:     "install",
 		Stdout:    stdoutBuf.Bytes(),
 		Stderr:    stderrBuf.Bytes(),
@@ -667,13 +661,7 @@ func (a *Agent) handleDeploy(ctx context.Context, req *pb.DeployRequest) {
 		resp.Success = true
 	}
 
-	a.log.Info("deploy completed",
-		slog.String("request_id", req.GetRequestId()),
-		slog.Int("rc", int(resp.Rc)),
-		slog.Bool("success", resp.Success),
-	)
-
-	a.sendDeployResponse(resp)
+	return resp
 }
 
 // ─────────────────────────────────────────────────────────

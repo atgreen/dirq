@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -396,97 +395,38 @@ func handleMCPCVE(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	where := mcpStringArg(req, "where")
 	timeout := mcpIntArg(req, "timeout", 60)
 
-	// Fetch CVE data from Red Hat.
-	cveURL := "https://access.redhat.com/hydra/rest/securitydata/cve/" + cveID + ".json"
-	resp, err := http.Get(cveURL)
+	ci, err := fetchRedHatCVE(cveID)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to fetch CVE data: %v", err)), nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 404 {
-		return mcp.NewToolResultError(fmt.Sprintf("CVE %s not found in Red Hat Security Data", cveID)), nil
-	}
-	if resp.StatusCode != 200 {
-		return mcp.NewToolResultError(fmt.Sprintf("Red Hat API returned HTTP %d", resp.StatusCode)), nil
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	cveBody, _ := io.ReadAll(resp.Body)
-
-	var cveData struct {
-		Name           string `json:"name"`
-		ThreatSeverity string `json:"threat_severity"`
-		Bugzilla       struct {
-			Description string `json:"description"`
-		} `json:"bugzilla"`
-		AffectedRelease []struct {
-			Package string `json:"package"`
-			CPE     string `json:"cpe"`
-		} `json:"affected_release"`
-		PackageState []struct {
-			FixState    string `json:"fix_state"`
-			PackageName string `json:"package_name"`
-			CPE         string `json:"cpe"`
-		} `json:"package_state"`
-	}
-	if err := json.Unmarshal(cveBody, &cveData); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("parse CVE data: %v", err)), nil
-	}
-
-	// Build summary with CVE info.
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "CVE: %s\n", cveID)
-	fmt.Fprintf(&sb, "Description: %s\n", cveData.Bugzilla.Description)
-	fmt.Fprintf(&sb, "Severity: %s\n\n", cveData.ThreatSeverity)
+	fmt.Fprintf(&sb, "Description: %s\n", ci.Description)
+	fmt.Fprintf(&sb, "Severity: %s\n\n", ci.Severity)
 
-	// Extract affected package names.
-	pkgNames := map[string]bool{}
-	for _, ar := range cveData.AffectedRelease {
-		if ar.Package != "" && strings.Contains(ar.CPE, "enterprise_linux") {
-			name, _ := parseRPMNEVRA(ar.Package)
-			if name != "" && !strings.HasPrefix(name, "kpatch") {
-				pkgNames[name] = true
-			}
-		}
-	}
-	for _, ps := range cveData.PackageState {
-		if ps.FixState == "Affected" && strings.Contains(ps.CPE, "enterprise_linux") {
-			if ps.PackageName != "" && !strings.HasPrefix(ps.PackageName, "kpatch") {
-				pkgNames[ps.PackageName] = true
-			}
-		}
-	}
-
-	if len(pkgNames) == 0 {
+	if len(ci.FixedPkgs) == 0 {
 		sb.WriteString("No RHEL packages associated with this CVE.\n")
 		return mcp.NewToolResultText(sb.String()), nil
 	}
 
-	names := make([]string, 0, len(pkgNames))
-	for n := range pkgNames {
-		names = append(names, n)
-	}
-	fmt.Fprintf(&sb, "Affected packages: %s\n\n", strings.Join(names, ", "))
+	fixes := fixesMap(ci.FixedPkgs)
+	pkgNames := fixesPkgNames(fixes)
+	fmt.Fprintf(&sb, "Affected packages: %s\n\n", strings.Join(pkgNames, ", "))
 
-	// Query the fleet for these packages.
-	inList := make([]string, len(names))
-	for i, n := range names {
-		inList[i] = "'" + n + "'"
-	}
-	query := fmt.Sprintf("SELECT hostname, packages.name, packages.version WHERE packages.name IN (%s)", strings.Join(inList, ", "))
+	var extra []string
 	if where != "" {
-		query += " AND " + where
+		extra = []string{where}
 	}
-
-	fleetResult, err := mcpStreamPost("/api/v1/query", map[string]any{
-		"query":   query,
-		"timeout": timeout,
-	})
+	result, _, err := queryFleetPkgs(buildPkgScanQuery(pkgNames, extra), timeout)
 	if err != nil {
 		fmt.Fprintf(&sb, "Fleet scan failed: %v\n", err)
-	} else {
-		fmt.Fprintf(&sb, "Fleet scan results:\n%s\n", fleetResult)
+		return mcp.NewToolResultText(sb.String()), nil
 	}
+
+	sb.WriteString("Fleet scan results:\n")
+	outcome := assessFleetScan(&sb, result, fixes, true)
+	writeScanSummary(&sb, outcome)
 
 	return mcp.NewToolResultText(sb.String()), nil
 }
@@ -513,19 +453,38 @@ func handleMCPErrata(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	where := mcpStringArg(req, "where")
 	timeout := mcpIntArg(req, "timeout", 60)
 
-	payload := map[string]any{
-		"advisory_id": advisoryID,
-		"timeout":     timeout,
-	}
-	if where != "" {
-		payload["query"] = where
-	}
-
-	result, err := mcpStreamPost("/api/v1/errata", payload)
+	cves, fixes, err := fetchRedHatAdvisory(advisoryID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return mcp.NewToolResultText(result), nil
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Advisory %s covers %d CVE(s):\n", advisoryID, len(cves))
+	for _, cve := range cves {
+		fmt.Fprintf(&sb, "  %s (%s): %s\n", cve.ID, cve.Severity, cve.Description)
+	}
+
+	if len(fixes) == 0 {
+		sb.WriteString("No RHEL packages found in this advisory.\n")
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+
+	pkgNames := fixesPkgNames(fixes)
+	fmt.Fprintf(&sb, "\nPackages: %s\n\n", strings.Join(pkgNames, ", "))
+
+	var extra []string
+	if where != "" {
+		extra = []string{where}
+	}
+	result, _, err := queryFleetPkgs(buildPkgScanQuery(pkgNames, extra), timeout)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("fleet scan failed: %v", err)), nil
+	}
+
+	outcome := assessFleetScan(&sb, result, fixes, false)
+	writeScanSummary(&sb, outcome)
+
+	return mcp.NewToolResultText(sb.String()), nil
 }
 
 // ─────────────────────────────────────────────────────────

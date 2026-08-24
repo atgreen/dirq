@@ -215,36 +215,12 @@ func ServerCredentials(cfg Config) (credentials.TransportCredentials, error) {
 	return credentials.NewTLS(tlsCfg), nil
 }
 
-// ServerCredentialsMixedAuth returns gRPC transport credentials that verify
-// client certs if presented but don't require them at the TLS layer. This
-// allows Register (no client cert) and AgentStream (client cert required)
-// to share the same listener. A gRPC interceptor enforces client certs
-// per-method.
-func ServerCredentialsMixedAuth(cfg Config) (credentials.TransportCredentials, error) {
-	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("load server cert: %w", err)
-	}
-
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}
-
-	if cfg.CAFile != "" && !cfg.Insecure {
-		caPool, err := loadCAPool(cfg)
-		if err != nil {
-			return nil, err
-		}
-		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
-		tlsCfg.ClientCAs = caPool
-	}
-
-	return credentials.NewTLS(tlsCfg), nil
-}
-
 // ServerCredentialsMixedAuthWithReloader returns gRPC transport credentials
-// that dynamically reload the server certificate from disk via a CertReloader.
+// that verify client certs if presented but don't require them at the TLS
+// layer, dynamically reloading the server certificate from disk via a
+// CertReloader. This allows Register (no client cert) and AgentStream (client
+// cert required) to share the same listener. A gRPC interceptor enforces
+// client certs per-method.
 func ServerCredentialsMixedAuthWithReloader(cfg Config, reloader *CertReloader) (credentials.TransportCredentials, error) {
 	tlsCfg := &tls.Config{
 		GetCertificate: reloader.GetCertificate,

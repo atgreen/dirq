@@ -227,35 +227,34 @@ func (s *Server) RenewCert(ctx context.Context, req *pb.RenewCertRequest) (*pb.R
 	return resp, nil
 }
 
-// AgentStream handles the persistent bidirectional stream with zone leaders.
-func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
-	// First message must be a Hello.
+// authenticateAgentStream reads the initial AgentHello and verifies the
+// peer: the TLS cert CN must match the claimed agent ID (when mTLS is
+// active), and the session token must validate. The token is the server's
+// Ed25519 signature over the agent ID, so we can verify it
+// cryptographically even if the in-memory map was lost (e.g. after a
+// server restart before the agent re-registers).
+func (s *Server) authenticateAgentStream(stream pb.DirQServer_AgentStreamServer) (*pb.AgentHello, error) {
 	msg, err := stream.Recv()
 	if err != nil {
-		return fmt.Errorf("recv hello: %w", err)
+		return nil, fmt.Errorf("recv hello: %w", err)
 	}
 
 	hello := msg.GetHello()
 	if hello == nil {
-		return fmt.Errorf("first message must be AgentHello")
+		return nil, fmt.Errorf("first message must be AgentHello")
 	}
 
 	agentID := hello.AgentId
 
-	// If mTLS is active, verify the TLS cert CN matches the claimed agent ID.
 	if cn, ok := TLSCNFromContext(stream.Context()); ok && cn != agentID {
 		s.log.Warn("agent stream rejected: cert CN mismatch",
 			"cert_cn", cn, "claimed_agent_id", agentID)
-		return fmt.Errorf("cert CN %q does not match agent_id %q", cn, agentID)
+		return nil, fmt.Errorf("cert CN %q does not match agent_id %q", cn, agentID)
 	}
 
-	// Validate session token — reject unauthenticated streams.
-	// The token is the server's Ed25519 signature over the agent ID, so we
-	// can verify it cryptographically even if the in-memory map was lost
-	// (e.g. after a server restart before the agent re-registers).
 	if hello.SessionToken == "" {
 		s.log.Warn("agent stream rejected: no session token", "agent_id", agentID)
-		return fmt.Errorf("agent %s provided no session token", agentID)
+		return nil, fmt.Errorf("agent %s provided no session token", agentID)
 	}
 
 	s.sessionMu.RLock()
@@ -285,8 +284,19 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 
 	if !tokenValid {
 		s.log.Warn("agent stream rejected: invalid session token", "agent_id", agentID)
-		return fmt.Errorf("invalid session token for agent %s", agentID)
+		return nil, fmt.Errorf("invalid session token for agent %s", agentID)
 	}
+
+	return hello, nil
+}
+
+// AgentStream handles the persistent bidirectional stream with zone leaders.
+func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
+	hello, err := s.authenticateAgentStream(stream)
+	if err != nil {
+		return err
+	}
+	agentID := hello.AgentId
 
 	s.log.Info("agent stream opened", "agent_id", agentID, "capabilities", hello.Capabilities)
 
@@ -305,49 +315,7 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 	s.mu.Unlock()
 	s.topology.MarkOnline(agentID)
 
-	defer func() {
-		s.mu.Lock()
-		reassigned := as.reassigned
-		delete(s.streams, agentID)
-		s.mu.Unlock()
-		if reassigned {
-			// Agent was demoted/reassigned — it's reconnecting to a
-			// new parent, not dead. Don't mark offline.
-			s.log.Info("agent stream closed (reassigned)", "agent_id", agentID)
-			return
-		}
-
-		// Mark the entire subtree offline atomically.  The agent's
-		// children (if any) lose their route to the server too because
-		// we forwarded broadcasts through this AgentStream, and they
-		// can't actually answer until they've reattached to a new
-		// parent — which is signaled separately by PeerConnected.
-		// Marking only the ZL offline (the pre-fix behavior) left the
-		// children as "ghost online" in topology: reachable via the
-		// new ZL according to FindZoneLeader, but not actually
-		// connected through it yet, so new broadcasts targeted them
-		// and timed out.
-		subtree := s.topology.MarkSubtreeOffline(agentID)
-		if count, err := s.db.MarkAgentTreeOffline(context.Background(), agentID); err != nil {
-			s.log.Error("failed to mark agent tree offline", "agent_id", agentID, "error", err)
-		} else {
-			s.log.Info("agent stream closed, marked subtree offline",
-				"agent_id", agentID, "subtree_size", len(subtree), "db_count", count)
-		}
-
-		// Notify in-flight broadcast dispatchers so they stop waiting.
-		if len(subtree) > 0 {
-			s.notifySessionsAgentGone("stream closed", subtree...)
-		} else {
-			s.notifySessionsAgentGone("stream closed", agentID)
-		}
-
-		// Hint direct-stream children where to reconnect.  The
-		// topology rewrite is deferred to PeerConnected when the
-		// children actually reattach — see reassignOrphans for the
-		// rationale.
-		go s.reassignOrphans(context.Background(), agentID)
-	}()
+	defer s.closeAgentStream(as)
 
 	// Mark agent online
 	if err := s.db.UpdateAgentHeartbeat(ctx, agentID); err != nil {
@@ -385,53 +353,9 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			// Legacy heartbeat — ignored. Liveness is now tracked via
 			// stream presence and PeerDisconnected notifications.
 		case *pb.AgentMessage_PeerConnected:
-			// A relay accepted a new child via RelayStream. This is
-			// the proof-of-attachment we need to commit the new
-			// parent_id and flip the agent back to online — the only
-			// case where the server learns about a fallback-parent
-			// reattachment without the agent itself re-registering.
-			pc := p.PeerConnected
-			if pc.AgentId == "" || pc.ParentId == "" {
-				break
-			}
-			s.topology.AssignChild(pc.AgentId, pc.ParentId)
-			s.topology.MarkOnline(pc.AgentId)
-			if err := s.db.UpdateAgentHeartbeat(ctx, pc.AgentId); err != nil {
-				s.log.Error("PeerConnected: heartbeat update failed",
-					"agent_id", pc.AgentId, "error", err)
-			}
-			metricPeerConnectTotal.Inc()
-			s.log.Info("peer reattached",
-				"agent_id", pc.AgentId, "new_parent", pc.ParentId)
+			s.handlePeerConnected(ctx, p.PeerConnected)
 		case *pb.AgentMessage_PeerDisconnected:
-			// A relay agent detected a child disconnected. Mark the
-			// agent and its entire subtree offline.
-			deadID := p.PeerDisconnected.AgentId
-			if deadID == "" {
-				break
-			}
-			metricPeerDisconnectTotal.Inc()
-			// Snapshot the lost subtree from the in-memory topology
-			// BEFORE marking it offline.  PeerDisconnected propagates
-			// up the mesh when a relay loses one of its children — the
-			// whole subtree below `deadID` is now unreachable through
-			// our existing routing.  In-flight broadcasts need to know
-			// to stop waiting on those agents.
-			affected := s.topology.MarkSubtreeOffline(deadID)
-			count, err := s.db.MarkAgentTreeOffline(ctx, deadID)
-			if err != nil {
-				s.log.Error("failed to mark agent tree offline", "agent_id", deadID, "error", err)
-			} else if count > 0 {
-				s.log.Info("peer disconnected, marked tree offline",
-					"agent_id", deadID, "db_count", count, "mesh_count", len(affected))
-			}
-			if len(affected) > 0 {
-				s.notifySessionsAgentGone("peer disconnected", affected...)
-			} else {
-				// Topology didn't know about the agent (e.g., never
-				// fully registered); still notify by the bare ID.
-				s.notifySessionsAgentGone("peer disconnected", deadID)
-			}
+			s.handlePeerDisconnected(ctx, p.PeerDisconnected)
 		case *pb.AgentMessage_QueryResult:
 			s.handleQueryResult(p.QueryResult)
 		case *pb.AgentMessage_AggregatedResult:
@@ -455,6 +379,106 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 		default:
 			s.log.Warn("unknown message type from agent", "agent_id", agentID)
 		}
+	}
+}
+
+// closeAgentStream removes a closed stream from the routing table. Unless
+// the agent was demoted/reassigned (it's reconnecting to a new parent, not
+// dead), its whole subtree is marked offline, in-flight broadcasts are
+// notified, and orphan reassignment kicks off.
+func (s *Server) closeAgentStream(as *agentStream) {
+	agentID := as.agentID
+
+	s.mu.Lock()
+	reassigned := as.reassigned
+	delete(s.streams, agentID)
+	s.mu.Unlock()
+	if reassigned {
+		s.log.Info("agent stream closed (reassigned)", "agent_id", agentID)
+		return
+	}
+
+	// Mark the entire subtree offline atomically.  The agent's
+	// children (if any) lose their route to the server too because
+	// we forwarded broadcasts through this AgentStream, and they
+	// can't actually answer until they've reattached to a new
+	// parent — which is signaled separately by PeerConnected.
+	// Marking only the ZL offline (the pre-fix behavior) left the
+	// children as "ghost online" in topology: reachable via the
+	// new ZL according to FindZoneLeader, but not actually
+	// connected through it yet, so new broadcasts targeted them
+	// and timed out.
+	subtree := s.topology.MarkSubtreeOffline(agentID)
+	if count, err := s.db.MarkAgentTreeOffline(context.Background(), agentID); err != nil {
+		s.log.Error("failed to mark agent tree offline", "agent_id", agentID, "error", err)
+	} else {
+		s.log.Info("agent stream closed, marked subtree offline",
+			"agent_id", agentID, "subtree_size", len(subtree), "db_count", count)
+	}
+
+	// Notify in-flight broadcast dispatchers so they stop waiting.
+	if len(subtree) > 0 {
+		s.notifySessionsAgentGone("stream closed", subtree...)
+	} else {
+		s.notifySessionsAgentGone("stream closed", agentID)
+	}
+
+	// Hint direct-stream children where to reconnect.  The
+	// topology rewrite is deferred to PeerConnected when the
+	// children actually reattach — see reassignOrphans for the
+	// rationale.
+	go s.reassignOrphans(context.Background(), agentID)
+}
+
+// handlePeerConnected commits a fallback-parent reattachment. A relay
+// accepted a new child via RelayStream — this is the proof-of-attachment
+// we need to commit the new parent_id and flip the agent back to online,
+// the only case where the server learns about a reattachment without the
+// agent itself re-registering.
+func (s *Server) handlePeerConnected(ctx context.Context, pc *pb.PeerConnected) {
+	if pc.AgentId == "" || pc.ParentId == "" {
+		return
+	}
+	s.topology.AssignChild(pc.AgentId, pc.ParentId)
+	s.topology.MarkOnline(pc.AgentId)
+	if err := s.db.UpdateAgentHeartbeat(ctx, pc.AgentId); err != nil {
+		s.log.Error("PeerConnected: heartbeat update failed",
+			"agent_id", pc.AgentId, "error", err)
+	}
+	metricPeerConnectTotal.Inc()
+	s.log.Info("peer reattached",
+		"agent_id", pc.AgentId, "new_parent", pc.ParentId)
+}
+
+// handlePeerDisconnected marks a lost child and its entire subtree
+// offline after a relay reported the disconnect.
+func (s *Server) handlePeerDisconnected(ctx context.Context, pd *pb.PeerDisconnected) {
+	deadID := pd.AgentId
+	if deadID == "" {
+		return
+	}
+	metricPeerDisconnectTotal.Inc()
+
+	// Snapshot the lost subtree from the in-memory topology
+	// BEFORE marking it offline.  PeerDisconnected propagates
+	// up the mesh when a relay loses one of its children — the
+	// whole subtree below `deadID` is now unreachable through
+	// our existing routing.  In-flight broadcasts need to know
+	// to stop waiting on those agents.
+	affected := s.topology.MarkSubtreeOffline(deadID)
+	count, err := s.db.MarkAgentTreeOffline(ctx, deadID)
+	if err != nil {
+		s.log.Error("failed to mark agent tree offline", "agent_id", deadID, "error", err)
+	} else if count > 0 {
+		s.log.Info("peer disconnected, marked tree offline",
+			"agent_id", deadID, "db_count", count, "mesh_count", len(affected))
+	}
+	if len(affected) > 0 {
+		s.notifySessionsAgentGone("peer disconnected", affected...)
+	} else {
+		// Topology didn't know about the agent (e.g., never
+		// fully registered); still notify by the bare ID.
+		s.notifySessionsAgentGone("peer disconnected", deadID)
 	}
 }
 
@@ -545,12 +569,12 @@ var (
 // Today the CLI used to display "Status: completed" regardless, which
 // hid bugs where most of the fleet never answered.
 type dispatchOutcome struct {
-	Results       []*pb.QueryResult
-	TotalTargets  int  // size of the original dispatch set
-	Responded     int  // agents that returned a result (success or no-match)
-	Complete      bool // true iff every target accounted for (no idle/hard timeout)
-	HardTimedOut  bool // hard timeout fired before everyone responded
-	IdleTimedOut  bool // dispatcher stopped because nothing was arriving
+	Results      []*pb.QueryResult
+	TotalTargets int  // size of the original dispatch set
+	Responded    int  // agents that returned a result (success or no-match)
+	Complete     bool // true iff every target accounted for (no idle/hard timeout)
+	HardTimedOut bool // hard timeout fired before everyone responded
+	IdleTimedOut bool // dispatcher stopped because nothing was arriving
 }
 
 // MissingCount returns how many targets never produced a response.
@@ -899,4 +923,3 @@ func (s *Server) flushFactStage(ctx context.Context) {
 	}
 	metricFactFlushDuration.WithLabelValues(backend).Observe(time.Since(flushStart).Seconds())
 }
-

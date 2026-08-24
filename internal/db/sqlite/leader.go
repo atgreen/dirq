@@ -18,5 +18,5 @@ func (d *DB) NewLeader(_ *slog.Logger) db.Leader {
 
 type sqliteLeader struct{}
 
-func (sqliteLeader) IsLeader() bool             { return true }
-func (sqliteLeader) Run(ctx context.Context)    { <-ctx.Done() }
+func (sqliteLeader) IsLeader() bool          { return true }
+func (sqliteLeader) Run(ctx context.Context) { <-ctx.Done() }

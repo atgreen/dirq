@@ -27,11 +27,11 @@ const (
 	tkStar
 	tkColon
 	tkEquals
-	tkNotEquals  // !=
-	tkLess       // <
-	tkLessEq     // <=
-	tkGreater    // >
-	tkGreaterEq  // >=
+	tkNotEquals // !=
+	tkLess      // <
+	tkLessEq    // <=
+	tkGreater   // >
+	tkGreaterEq // >=
 
 	// Keywords (stored as tkIdent during lexing, promoted after lookup).
 	tkSELECT
@@ -229,8 +229,10 @@ func (l *lexer) scanIdent() {
 	l.tokens = append(l.tokens, token{kind: kind, text: text, pos: start})
 }
 
-func isDigit(ch byte) bool       { return ch >= '0' && ch <= '9' }
-func isIdentStart(ch byte) bool  { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' }
+func isDigit(ch byte) bool { return ch >= '0' && ch <= '9' }
+func isIdentStart(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+}
 func isIdentContinue(ch byte) bool {
 	return isIdentStart(ch) || isDigit(ch) || ch == '-'
 }
@@ -784,4 +786,3 @@ func kindName(k tokenKind) string {
 	}
 	return fmt.Sprintf("token(%d)", k)
 }
-

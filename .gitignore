@@ -31,8 +31,17 @@ certs/
 # Local AWS test-fleet state (SSH keys, generated configs)
 .dirq-aws-state/
 
-# Claude Code workspace artifacts
+# AI-assistant workspace artifacts
 .claude/
+.context/
+.gstack/
 
 # MkDocs build output
 site/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
