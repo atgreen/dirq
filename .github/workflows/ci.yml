@@ -59,11 +59,13 @@ jobs:
         with:
           version: v2.12.2
 
-      - name: Cross-compile Linux amd64
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./cmd/dirq-server ./cmd/dirq-agent ./cmd/dirq
-
-      - name: Cross-compile Windows amd64
-        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/dirq-agent
+      # The release workflow builds these same ten artifacts with this same
+      # script. Running it here means a change that breaks the release
+      # build fails on the pull request rather than at the moment someone
+      # pushes a tag, which is when it used to be exercised for the first
+      # and only time.
+      - name: Build every release artifact
+        run: ./releng/build-release.sh
 
   # The agent ships for Windows, and its process handling is genuinely
   # different there: no process groups to signal, so cancellation walks the
