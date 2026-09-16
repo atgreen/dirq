@@ -209,9 +209,20 @@ func writeClientConfig(cfg server.Config, log *slog.Logger) {
 		"server_url: " + serverURL,
 	}
 
-	if tlsCfg.Enabled() && !tlsCfg.HasUserCerts() {
-		// Self-signed certs — client needs tls_insecure.
-		lines = append(lines, "tls_insecure: true")
+	if tlsCfg.Enabled() {
+		// Point the client at the CA rather than telling it to stop
+		// checking. This file used to emit tls_insecure: true for the
+		// self-signed case, which left every operator on a default
+		// deployment accepting any certificate — the server enforced TLS
+		// and the client threw the guarantee away (dirq-6gr).
+		caPath := tlsCfg.CAFile
+		if caPath == "" {
+			// EnsureCerts has not run yet; it will write the CA here.
+			caPath = tlsutil.AutoGenCAPath()
+		}
+		lines = append(lines,
+			"# Copy this CA file to the client machine and point tls_ca at it.",
+			"tls_ca: "+caPath)
 	}
 
 	// Include the bootstrap token if it exists.

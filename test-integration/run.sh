@@ -151,19 +151,18 @@ if [ -z "$TOKEN" ]; then
 fi
 echo "  bootstrap token retrieved"
 
-# Pin every CLI input through the environment. The CLI always reads
-# ~/.config/dirq/client.conf with no way to point it elsewhere (dirq-12k),
-# so without this a developer's personal server URL, token and
-# tls_insecure setting leak into the run.
-export DIRQ_SERVER_URL="https://localhost:18080"
-export DIRQ_TOKEN="$TOKEN"
-# The CLI has no CA option at all — InsecureSkipVerify or the system trust
-# store, nothing else (dirq-6gr) — so against DirQ's own generated CA this
-# is the only setting that works. The agents are unaffected: they verify
-# against the CA properly and are issued mTLS client certs. The healthz
-# check above uses curl --cacert, so the server's certificate is genuinely
-# verified against the CA at least once here.
-export DIRQ_TLS_INSECURE=true
+# Point the CLI at a config file of our own, so a developer's personal
+# server URL, token and tls_insecure setting cannot leak into the run.
+cat > "$CERTS/client.conf" <<CONF
+server_url: https://localhost:18080
+token: $TOKEN
+tls_ca: $CERTS/ca.crt
+CONF
+export DIRQ_CONFIG_FILE="$CERTS/client.conf"
+# Everything above comes from that file, including tls_ca — so the CLI
+# verifies the server against the same CA the agents use. This used to
+# need DIRQ_TLS_INSECURE=true because the CLI had no CA option at all
+# (dirq-6gr); every assertion below now runs over a verified connection.
 
 say "starting ${#AGENTS[@]} agents"
 for spec in "${AGENTS[@]}"; do

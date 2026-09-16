@@ -19,6 +19,7 @@ var (
 	apiToken    string
 	jsonOut     bool
 	tlsInsecure bool
+	tlsCA       string
 )
 
 func main() {
@@ -38,7 +39,7 @@ func main() {
 	os.Args = append([]string{os.Args[0]}, flatArgs...)
 
 	// Load client config file (missing file is fine).
-	clientCfg, _ := config.Load(config.DefaultClientPath())
+	clientCfg, _ := config.Load(clientConfigPath())
 
 	root := &cobra.Command{
 		Use:          "dirq",
@@ -54,6 +55,20 @@ func main() {
 		// Apply config-file defaults for values not shown in help output.
 		if apiToken == "" {
 			apiToken = config.EnvOr("DIRQ_TOKEN", clientCfg, "token", "")
+		}
+
+		// Load the CA up front so a bad path fails here, with a clear
+		// message, rather than surfacing as a confusing handshake error on
+		// the first request — and never by silently falling back to the
+		// system trust store, which would look like it worked.
+		// Only complain about a superseded --tls-insecure when it was
+		// asked for deliberately. Inheriting it from a stale config file
+		// is the common case, and warning on every invocation for that
+		// would train people to ignore the warning.
+		insecureAsked := cmd.Root().PersistentFlags().Changed("tls-insecure") ||
+			os.Getenv("DIRQ_TLS_INSECURE") != ""
+		if err := loadTLSRoots(insecureAsked); err != nil {
+			return err
 		}
 
 		// Allow tls generate, skill, and ask --dry-run to run without a server URL.
@@ -78,6 +93,17 @@ func main() {
 	root.PersistentFlags().BoolVar(&tlsInsecure, "tls-insecure",
 		config.EnvOr("DIRQ_TLS_INSECURE", clientCfg, "tls_insecure", "false") == "true",
 		"skip TLS certificate verification")
+	// The server and agents both verify against a CA file; without the same
+	// option here, the only way to talk to a default (self-signed)
+	// deployment was to turn verification off entirely.  Same variable name
+	// the server and agent use, so one value works across all three.
+	// Registered so it shows up in help and is not rejected as unknown;
+	// the value is read by clientConfigPath before flags are parsed.
+	root.PersistentFlags().String("config", "",
+		"client config file (default ~/.config/dirq/client.conf, or set DIRQ_CONFIG_FILE)")
+	root.PersistentFlags().StringVar(&tlsCA, "tls-ca",
+		config.EnvOr("DIRQ_TLS_CA", clientCfg, "tls_ca", ""),
+		"CA certificate file used to verify the server (or set DIRQ_TLS_CA)")
 
 	root.AddCommand(hostsCmd())
 	root.AddCommand(tokenCmd())
@@ -100,4 +126,27 @@ func main() {
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// clientConfigPath decides which client config file to read. The CLI used
+// to always read ~/.config/dirq/client.conf with no way to point it
+// elsewhere, so anything invoking it inherited whatever the running user
+// had configured — a real server URL, a real token, tls_insecure.
+//
+// Flag defaults are drawn from that file and cobra computes defaults
+// before it parses, so this reads argv itself rather than going through
+// the flag it registers.
+func clientConfigPath() string {
+	if p := os.Getenv("DIRQ_CONFIG_FILE"); p != "" {
+		return p
+	}
+	for i, a := range os.Args {
+		if a == "--config" && i+1 < len(os.Args) {
+			return os.Args[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, "--config="); ok {
+			return v
+		}
+	}
+	return config.DefaultClientPath()
 }

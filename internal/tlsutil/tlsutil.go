@@ -120,6 +120,14 @@ func autoGenDir() string {
 	return filepath.Join(config.DataDir(), "tls")
 }
 
+// AutoGenCAPath returns where EnsureCerts writes the auto-generated CA
+// certificate. Callers that must tell a client where the CA will be before
+// the server has started — writeClientConfig does exactly this — need the
+// path without triggering generation.
+func AutoGenCAPath() string {
+	return filepath.Join(autoGenDir(), "ca.crt")
+}
+
 // EnsureCerts makes sure TLS cert/key files exist. If the user provided their
 // own, those are used. Otherwise, self-signed certs are auto-generated.
 // Returns the (possibly updated) Config and logs what happened.

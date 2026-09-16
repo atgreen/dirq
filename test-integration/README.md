@@ -33,18 +33,14 @@ test result; on failure the container logs are dumped.
 
 ## Notes
 
-The CLI runs with `DIRQ_TLS_INSECURE=true` — not a shortcut, but the only
-setting that works today. The CLI has no way to trust a CA file
-(`dirq-6gr`), so against DirQ's own generated CA it either skips
-verification or fails. The agents are unaffected: they verify against the
-CA properly and are issued mTLS client certificates. The server's
-certificate is genuinely verified against the CA once, by the `curl
---cacert` health check.
+Every connection in this test is verified. The CLI trusts the generated
+CA via `DIRQ_TLS_CA`, the agents verify against the same CA and are
+issued mTLS client certificates during registration, and the `curl
+--cacert` health check verifies the server certificate independently.
 
-Every CLI input is pinned through environment variables because the CLI
-always reads `~/.config/dirq/client.conf` with no way to point it
-elsewhere (`dirq-12k`); without pinning, a developer's own server URL and
-token leak into the run.
+The CLI is pointed at a generated config file via `DIRQ_CONFIG_FILE`, so
+a developer's own `~/.config/dirq/client.conf` — their server URL, token
+and `tls_insecure` — cannot leak into the run.
 
 `test-mesh/` and `demo/` are manual harnesses for poking at a fleet by
 hand. They are not tests and nothing runs them.
