@@ -151,6 +151,20 @@ if [ -z "$TOKEN" ]; then
 fi
 echo "  bootstrap token retrieved"
 
+# Resolve the server's address on the network once, and give every agent a
+# static hosts entry for it. The container runtime's own DNS is an extra
+# moving part with nothing to do with what this test checks, and on a CI
+# runner it has timed out mid-run — agents registered, then could not
+# resolve the same name a second later to open their stream. Agents still
+# connect by name, so the server certificate is still verified against its
+# dirq-server SAN; only the lookup changes.
+SERVER_IP="$("$RUNTIME" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$SERVER")"
+if [ -z "$SERVER_IP" ]; then
+  fail "could not determine the server's address on $NET"
+  exit 1
+fi
+echo "  server reachable at $SERVER_IP"
+
 # Point the CLI at a config file of our own, so a developer's personal
 # server URL, token and tls_insecure setting cannot leak into the run.
 cat > "$CERTS/client.conf" <<CONF
@@ -168,6 +182,7 @@ say "starting ${#AGENTS[@]} agents"
 for spec in "${AGENTS[@]}"; do
   read -r name tags execEnabled <<<"$spec"
   "$RUNTIME" run -d --name "$name" --network "$NET" \
+    --add-host "$SERVER:$SERVER_IP" \
     -v "$CERTS:/certs:ro,z" \
     -e DIRQ_SERVER="$SERVER:50051" \
     -e DIRQ_HOSTNAME="$name" \
