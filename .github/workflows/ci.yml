@@ -88,6 +88,30 @@ jobs:
       - name: Test the agent on Windows
         run: go test ./internal/agent/... -v
 
+  # Everything else in CI is unit tests plus a compile. This is the only job
+  # that starts the shipped binaries, opens a socket, completes a TLS
+  # handshake, and checks that a command lands on the hosts a query selected.
+  # Slower than the rest by design; it is testing the parts that only exist
+  # between the processes.
+  integration:
+    name: End-to-end (server + agents in containers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Run the end-to-end fleet test
+        run: make test-integration
+
   collection-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10

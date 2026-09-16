@@ -8,7 +8,7 @@ PREFIX    ?= /usr/local
 
 CMDS := dirq-server dirq-agent dirq
 
-.PHONY: build test test-postgres lint clean install proto collection cross demo demo-down demo-logs aws aws-status aws-down help
+.PHONY: build test test-postgres test-integration lint clean install proto collection cross demo demo-down demo-logs aws aws-status aws-down help
 
 .DEFAULT_GOAL := help
 
@@ -31,6 +31,9 @@ PG_IMAGE ?= docker.io/library/postgres:17.11-alpine
 
 test-postgres:  ## Run tests against a throwaway PostgreSQL, as CI does
 	PG_IMAGE=$(PG_IMAGE) ./releng/with-postgres.sh go test ./... -race
+
+test-integration:  ## End-to-end: real server and agents in containers, driven by the CLI
+	./test-integration/run.sh
 
 lint:  ## Run golangci-lint
 	golangci-lint run ./...
