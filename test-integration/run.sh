@@ -63,6 +63,11 @@ AGENTS=(
 for i in $(seq -w 1 8); do
   AGENTS+=("worker-$i     env=test,role=worker          true")
 done
+# Runs a real Rego policy, mounted in below. The agent evaluates policy
+# before any local side effect, and that is the last line of defence
+# against an instruction it should refuse — but nothing checked that a real
+# agent with a real policy file actually refuses anything (dirq-4f9).
+AGENTS+=("policed-01    env=test,role=policed         true")
 
 # Forces a multi-level tree out of that fleet: two agents connect directly
 # to the server, everyone else reaches it through a parent. The defaults
@@ -151,6 +156,30 @@ else
   echo "  rpmbuild unavailable — deploy checks will be skipped"
 fi
 
+say "writing an agent policy"
+# Deliberately narrow: echo is permitted, everything else refused, and
+# privileged exec refused outright. Default-deny so a policy that fails to
+# load cannot quietly permit everything.
+cat > "$CERTS/policy.rego" <<'REGO'
+package dirq.agent
+
+default allow := false
+default reason := "denied by dirq end-to-end test policy"
+
+allow if {
+	input.operation == "exec"
+	startswith(input.command, "echo ")
+	not input.become
+}
+
+reason := "only unprivileged echo is permitted on this host" if {
+	input.operation == "exec"
+	not startswith(input.command, "echo ")
+}
+REGO
+chmod a+r "$CERTS/policy.rego"
+echo "  policy allows unprivileged echo only"
+
 say "generating TLS material"
 "$BIN" cert generate --dir "$CERTS" >/dev/null
 chmod -R a+rX "$CERTS"
@@ -228,9 +257,14 @@ export DIRQ_CONFIG_FILE="$CERTS/client.conf"
 say "starting ${#AGENTS[@]} agents"
 for spec in "${AGENTS[@]}"; do
   read -r name tags execEnabled <<<"$spec"
+  POLICY_ENV=()
+  if [ "$name" = "policed-01" ]; then
+    POLICY_ENV=(-e DIRQ_POLICY_FILE=/certs/policy.rego -e DIRQ_POLICY_FAIL_CLOSED=true)
+  fi
   "$RUNTIME" run -d --name "$name" --network "$NET" \
     --add-host "$SERVER:$SERVER_IP" \
     -v "$CERTS:/certs:ro,z" \
+    "${POLICY_ENV[@]}" \
     -e DIRQ_SERVER="$SERVER:50051" \
     -e DIRQ_HOSTNAME="$name" \
     -e DIRQ_TAGS="$tags" \
@@ -616,6 +650,57 @@ print(",".join(sorted(names)))' 2>/dev/null || echo ERR)"
   else
     fail "exec-disabled host not reported as skipped"
   fi
+fi
+
+say "agent policy refuses what it should, and only that"
+# The agent evaluates policy before any local side effect. This is the
+# only place that is checked against a real agent process running a real
+# policy file, with the instruction arriving over the mesh (dirq-4f9).
+"$BIN" --json exec WHERE hostname = "'policed-01'" -- echo policy-allows-this > "$CERTS/pol-ok.json" 2>&1 || true
+"$BIN" --json exec WHERE hostname = "'policed-01'" -- id > "$CERTS/pol-deny.json" 2>&1 || true
+if python3 - "$CERTS/pol-ok.json" "$CERTS/pol-deny.json" <<'ASSERT'
+import base64, json, sys
+
+def lines(path):
+    out = []
+    for line in open(path):
+        line = line.strip()
+        if line.startswith("{"):
+            out.append(json.loads(line))
+    return [l for l in out if l.get("hostname")]
+
+allowed = lines(sys.argv[1])
+denied = lines(sys.argv[2])
+
+assert len(allowed) == 1, f"permitted command produced {len(allowed)} results, want 1"
+a = allowed[0]
+assert a.get("success") and a.get("rc") == 0, f"policy refused a permitted echo: {a.get('error')}"
+out = base64.b64decode(a.get("stdout") or "").decode()
+assert "policy-allows-this" in out, f"stdout={out!r}"
+
+assert len(denied) == 1, f"forbidden command produced {len(denied)} results, want 1"
+d = denied[0]
+# A denial must not look like the command ran and failed, or an operator
+# reads it as a broken host rather than a refused instruction.
+assert not d.get("success") or d.get("rc", 0) != 0, "a forbidden command reported success"
+blob = ((d.get("error") or "") + base64.b64decode(d.get("stderr") or "").decode()).lower()
+assert "polic" in blob or "denied" in blob, f"denial does not say it was a policy decision: {d}"
+ASSERT
+then pass "policy permitted echo, refused everything else, and said why"
+else fail "agent policy enforcement"
+fi
+
+# Whatever policy does on one agent must not affect the rest.
+"$BIN" --json exec WHERE hostname = "'web-01'" -- id > "$CERTS/pol-other.json" 2>&1 || true
+if python3 - "$CERTS/pol-other.json" <<'ASSERT'
+import json, sys
+res = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+ran = [r for r in res if r.get("hostname")]
+assert len(ran) == 1, f"{len(ran)} results, want 1"
+assert ran[0].get("success") and ran[0].get("rc") == 0, ran[0].get("error")
+ASSERT
+then pass "an unpoliced agent still runs the same command"
+else fail "policy leaked to an agent that has none"
 fi
 
 # ── chaos ────────────────────────────────────────────────
