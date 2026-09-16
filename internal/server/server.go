@@ -502,6 +502,15 @@ func (s *Server) Start(ctx context.Context) error {
 // Stop gracefully stops the server.
 func (s *Server) Stop() {
 	s.log.Info("shutting down")
-	s.grpcSv.GracefulStop()
-	s.httpSv.Close()
+	// Start assigns these partway through, after TLS and signing setup.
+	// An error before that point leaves them nil, and a caller doing the
+	// ordinary "start it, defer stopping it" then gets a segfault that
+	// buries the startup error that actually mattered. Stopping something
+	// that never started is a no-op, not a crash.
+	if s.grpcSv != nil {
+		s.grpcSv.GracefulStop()
+	}
+	if s.httpSv != nil {
+		s.httpSv.Close()
+	}
 }
