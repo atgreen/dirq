@@ -195,6 +195,28 @@ while :; do
 done
 echo "  all ${#AGENTS[@]} agents registered and online"
 
+# Registered and online is not the same as reachable. An agent appears in
+# the host list as soon as it registers, but a query is dispatched down
+# the gRPC agent streams, and a moment passes before a freshly registered
+# agent's stream is connected. Waiting on "online" is waiting on a proxy;
+# wait on the condition the assertions actually need — that a trivial
+# query comes back with nobody missing. Without this the suite passes on
+# a fast machine and fails on a loaded CI runner, which is the worst way
+# for a test to be wrong.
+say "waiting for the fleet to become answerable"
+deadline=$((SECONDS + 120))
+while :; do
+  answered="$("$BIN" --json select hostname 2>/dev/null \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(0 if d.get("missing",0) else len(d.get("results",[])))' 2>/dev/null || echo 0)"
+  [ "$answered" = "${#AGENTS[@]}" ] && break
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    fail "only $answered of ${#AGENTS[@]} agents answered a query"
+    exit 1
+  fi
+  sleep 2
+done
+echo "  all ${#AGENTS[@]} agents answering queries"
+
 # ── assertions ───────────────────────────────────────────
 
 hosts_json()  { "$BIN" --json hosts list; }
