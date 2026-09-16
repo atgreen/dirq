@@ -998,3 +998,54 @@ func TestHandleExecRequestLeavesNormalOutputAlone(t *testing.T) {
 		t.Errorf("stdout = %q, want the output verbatim with no notice", got)
 	}
 }
+
+// TestBuildCommandUnixSkipsPointlessEscalation covers dirq-uni: deploy
+// hardcodes become, and the agent used to wrap every such command in
+// `sudo -n` even when it was already running as the target user. On a
+// minimal image with no sudo — DirQ's own agent image is one — that turned
+// a command that would have worked into rc=127, reported as though the
+// package manager were missing.
+func TestBuildCommandUnixSkipsPointlessEscalation(t *testing.T) {
+	skipOnWindows(t)
+
+	alreadyRoot := os.Geteuid() == 0
+	cmd := buildCommandUnix(context.Background(), "echo hi", true, "", "sudo")
+	joined := strings.Join(cmd.Args, " ")
+
+	if alreadyRoot {
+		if strings.Contains(joined, "sudo") {
+			t.Errorf("running as root, command still escalates: %q", joined)
+		}
+	} else {
+		// Not root, so escalation is the whole point and must remain.
+		if !strings.Contains(joined, "sudo") {
+			t.Errorf("running as non-root, command does not escalate: %q", joined)
+		}
+	}
+}
+
+// Escalating to a genuinely different user must still go through sudo,
+// whoever we are.
+func TestBuildCommandUnixStillEscalatesToAnotherUser(t *testing.T) {
+	skipOnWindows(t)
+
+	cmd := buildCommandUnix(context.Background(), "echo hi", true, "someone-else", "sudo")
+	if joined := strings.Join(cmd.Args, " "); !strings.Contains(joined, "sudo") {
+		t.Errorf("escalation to another user was skipped: %q", joined)
+	}
+}
+
+func TestRunningAs(t *testing.T) {
+	skipOnWindows(t)
+
+	root := os.Geteuid() == 0
+	if got := runningAs("root"); got != root {
+		t.Errorf("runningAs(\"root\") = %v, want %v", got, root)
+	}
+	if got := runningAs(""); got != root {
+		t.Errorf("runningAs(\"\") = %v, want %v — empty means root", got, root)
+	}
+	if runningAs("definitely-not-a-real-user") {
+		t.Error("runningAs reported a match for a user that does not exist")
+	}
+}

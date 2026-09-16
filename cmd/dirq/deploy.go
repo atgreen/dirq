@@ -19,6 +19,11 @@ import (
 
 func deployCmd() *cobra.Command {
 	var timeout int
+	// exec has always exposed these; deploy hardcoded become and gave no
+	// way to turn it off, so a host without sudo could not be deployed to
+	// at all (dirq-uni).
+	var become = true
+	var becomeUser string
 
 	cmd := &cobra.Command{
 		Use:   "deploy [package] [WHERE ...]",
@@ -80,7 +85,8 @@ Examples:
 				PackagePath:    filepath.Base(pkgPath),
 				InstallCommand: installCmd,
 				DestPath:       destPath,
-				Become:         true,
+				Become:         become,
+				BecomeUser:     becomeUser,
 			}); err != nil {
 				return err
 			}
@@ -166,6 +172,11 @@ Examples:
 	}
 
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "timeout in seconds for each operation")
+	cmd.Flags().BoolVar(&become, "become", true,
+		"run the install with privilege escalation (--become=false to run as the agent's own user)")
+	// No --become-method: DeployRequest has no field to carry it, and a
+	// flag that is silently ignored is worse than one that is absent.
+	cmd.Flags().StringVar(&becomeUser, "become-user", "", "user to become (default: root)")
 
 	return cmd
 }

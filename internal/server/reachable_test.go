@@ -4,6 +4,7 @@
 package server
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/atgreen/dirq/internal/db"
@@ -107,5 +108,31 @@ func TestReachable_UnknownAgentIsNotReachable(t *testing.T) {
 
 	if agents[0].Reachable {
 		t.Error("an agent absent from the topology reports reachable")
+	}
+}
+
+// TestGetHostIsEnrichedLikeTheList pins that the single-host endpoint
+// applies the same live overlay as the list. Without it, hosts show
+// returns the stored record: a stale role, and reachable false for every
+// host regardless of the truth — a field that is always wrong is worse
+// than one that is absent.
+func TestGetHostIsEnrichedLikeTheList(t *testing.T) {
+	stored := db.Agent{ID: "zl-1", Hostname: "zl-1", Online: true, Role: "leaf"}
+	s := newTestServer(&mockDB{agents: []db.Agent{stored}}, true)
+	s.topology.AddAgent("zl-1", "zl-1", "10.0.0.1:50052")
+	s.topology.AssignZoneLeader("zl-1")
+	connectStream(s, "zl-1")
+
+	rec := callHandler(s.handleGetHost, "GET", "", map[string]string{"id": "zl-1"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	got := decodeAgent(t, rec)
+	if !got.Reachable {
+		t.Error("hosts show reports the agent unreachable while its stream is live")
+	}
+	if got.Role != "zone_leader" {
+		t.Errorf("role = %q, want the live topology role zone_leader, not the stored %q", got.Role, stored.Role)
 	}
 }

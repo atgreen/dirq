@@ -19,7 +19,13 @@ drives assertions through the real `dirq` CLI the way an operator would.
   from real hosts, and coming back
 - A command landing on exactly the hosts a query selected — and on no
   others, including an agent that never opted in to exec
-- The `dirq` CLI, which has no other test at all
+- A package deploy actually installing, on exactly the targeted hosts,
+  verified by asking the fleet for the installed marker file rather than
+  trusting the deploy's own report
+- Much of the `dirq` CLI, which has no other test at all: `hosts
+  list/show/facts/graph/tag/untag`, `select` including aggregates,
+  `exec` with and without `--script`, `deploy`, `token
+  create/list/delete`, `queries`, `doctor` and `cert generate`
 
 ## Running it
 

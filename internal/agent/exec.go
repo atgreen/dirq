@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -185,6 +186,15 @@ func buildCommandUnix(ctx context.Context, cmdStr string, become bool, becomeUse
 	if become {
 		if becomeUser == "" {
 			becomeUser = "root"
+		}
+		// Already running as the requested user: escalating is pointless,
+		// and on a minimal image with no sudo it turns a command that would
+		// have worked into rc=127 — which reads as "rpm is missing" rather
+		// than "sudo is missing". The Windows path has always done this
+		// (the agent runs as SYSTEM); Unix did not, so a deploy to DirQ's
+		// own agent image failed on every host.
+		if runningAs(becomeUser) {
+			return withTreeKill(exec.CommandContext(ctx, "sh", "-c", cmdStr))
 		}
 		if becomeMethod == "" {
 			becomeMethod = "sudo"
@@ -904,4 +914,17 @@ func encodeUTF16Base64(s string) string {
 		binary.Write(&buf, binary.LittleEndian, uint16(r))
 	}
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+// runningAs reports whether this process already has the identity of the
+// named user, so privilege escalation would be a no-op.
+func runningAs(name string) bool {
+	if name == "" || name == "root" {
+		return os.Geteuid() == 0
+	}
+	u, err := user.Current()
+	if err != nil {
+		return false
+	}
+	return u.Username == name || u.Uid == name
 }

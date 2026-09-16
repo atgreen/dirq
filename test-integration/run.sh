@@ -106,6 +106,36 @@ echo "  images and CLI built"
 # verify the same cert over the published port. Both use the real CA —
 # nothing here disables verification.
 
+say "building a package fixture"
+PKG=""
+if command -v rpmbuild >/dev/null 2>&1; then
+  RPMTOP="$CERTS/rpmbuild"
+  mkdir -p "$RPMTOP"/{SPECS,BUILD,RPMS,SOURCES,SRPMS}
+  cat > "$RPMTOP/SPECS/dirq-itest.spec" <<'SPEC'
+Name:           dirq-itest
+Version:        1.0.0
+Release:        1
+Summary:        Fixture package for the DirQ end-to-end test
+License:        MIT
+BuildArch:      noarch
+%description
+Installs a marker file so a deploy can be proven to have actually run.
+%install
+mkdir -p %{buildroot}/usr/share/dirq-itest
+echo deployed > %{buildroot}/usr/share/dirq-itest/marker
+%files
+/usr/share/dirq-itest/marker
+SPEC
+  if rpmbuild --define "_topdir $RPMTOP" -bb "$RPMTOP/SPECS/dirq-itest.spec" >/dev/null 2>&1; then
+    PKG="$(find "$RPMTOP/RPMS" -name '*.rpm' | head -1)"
+  fi
+fi
+if [ -n "$PKG" ]; then
+  echo "  built $(basename "$PKG")"
+else
+  echo "  rpmbuild unavailable — deploy checks will be skipped"
+fi
+
 say "generating TLS material"
 "$BIN" cert generate --dir "$CERTS" >/dev/null
 chmod -R a+rX "$CERTS"
@@ -340,6 +370,162 @@ else fail "exec targeting"
 fi
 
 # ── result ───────────────────────────────────────────────
+
+# ── more of the CLI ──────────────────────────────────────
+#
+# Everything above drives hosts list, select and exec. The rest of the CLI
+# is only meaningful against a real fleet, so this is the only place it can
+# be covered at all.
+
+say "hosts show reports live topology, not the stored record"
+if "$BIN" --json hosts show web-01 > "$CERTS/show.json" 2>&1 && python3 - "$CERTS/show.json" <<'ASSERT'
+import json, sys
+h = json.load(open(sys.argv[1]))
+assert h["hostname"] == "web-01", h["hostname"]
+assert h["tags"].get("env") == "prod", h["tags"]
+assert h["online"], "not online"
+# Reachable comes from the live topology overlay; the stored record has no
+# such field, so a false here means the endpoint skipped enrichment.
+assert h["reachable"], "hosts show reports the agent unreachable"
+assert h["role"], "no role"
+ASSERT
+then pass "hosts show returns the host with its live role and reachability"
+else fail "hosts show"
+fi
+
+say "hosts facts returns what the agent collected"
+if "$BIN" --json hosts facts web-01 > "$CERTS/facts.json" 2>&1 && python3 - "$CERTS/facts.json" <<'ASSERT'
+import json, sys
+facts = json.load(open(sys.argv[1]))
+mods = {f["module"] for f in facts}
+assert mods, "no facts cached for the host"
+# os_info is collected by every agent on every platform.
+assert "os_info" in mods, f"os_info missing from {sorted(mods)}"
+for f in facts:
+    assert f["data"], f"module {f['module']} cached with no data"
+ASSERT
+then pass "hosts facts returns real collected facts"
+else fail "hosts facts"
+fi
+
+say "hosts graph draws the mesh"
+GRAPH="$("$BIN" hosts graph 2>&1)"
+if printf '%s' "$GRAPH" | grep -q web-01 && printf '%s' "$GRAPH" | grep -q db-01; then
+  pass "hosts graph shows the fleet"
+else
+  fail "hosts graph (got: $GRAPH)"
+fi
+
+# Tags decide what every later command targets, so a tag write that does
+# not take effect silently redirects real commands.
+say "tagging changes what targeting selects"
+"$BIN" hosts tag tier=edge WHERE hostname = "'web-01'" >/dev/null 2>&1
+TAGGED="$("$BIN" --json select hostname WHERE tag.tier = "'edge'" 2>/dev/null \
+  | python3 -c 'import sys,json;d=json.load(sys.stdin);print(",".join(sorted(r["hostname"] for r in d.get("results",[]))))' 2>/dev/null || echo ERR)"
+"$BIN" hosts untag tier WHERE hostname = "'web-01'" >/dev/null 2>&1
+UNTAGGED="$("$BIN" --json select hostname WHERE tag.tier = "'edge'" 2>/dev/null \
+  | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("total_targets",-1))' 2>/dev/null || echo ERR)"
+if [ "$TAGGED" = "web-01" ] && [ "$UNTAGGED" = "0" ]; then
+  pass "a tag is applied, retargets a query, and is removed again"
+else
+  fail "tag lifecycle (tagged selected '$TAGGED', after untag total_targets=$UNTAGGED)"
+fi
+
+say "a created token authenticates, and a deleted one stops"
+NEWTOK="$("$BIN" token create itest-ro --scope readonly 2>&1 | awk '/Token:/ {print $2}')"
+if [ -z "$NEWTOK" ]; then
+  fail "token create returned no token"
+else
+  # A fresh config using only the new token, so nothing else can satisfy it.
+  cat > "$CERTS/tok.conf" <<CONF
+server_url: https://localhost:18080
+token: $NEWTOK
+tls_ca: $CERTS/ca.crt
+CONF
+  WORKED=no; REVOKED=no
+  DIRQ_CONFIG_FILE="$CERTS/tok.conf" "$BIN" --json hosts list >/dev/null 2>&1 && WORKED=yes
+  "$BIN" token delete itest-ro >/dev/null 2>&1
+  DIRQ_CONFIG_FILE="$CERTS/tok.conf" "$BIN" --json hosts list >/dev/null 2>&1 || REVOKED=yes
+  if [ "$WORKED" = yes ] && [ "$REVOKED" = yes ]; then
+    pass "a new token works and stops working once deleted"
+  else
+    fail "token lifecycle (worked=$WORKED revoked-after-delete=$REVOKED)"
+  fi
+fi
+
+say "query history records what ran"
+if "$BIN" --json queries > "$CERTS/queries.json" 2>&1 && python3 - "$CERTS/queries.json" <<'ASSERT'
+import json, sys
+qs = json.load(open(sys.argv[1]))
+assert qs, "no queries recorded despite several having run"
+assert any(q["raw_query"].startswith("SELECT") for q in qs), "no SELECT in the history"
+assert any(q.get("target_count", 0) > 0 for q in qs), "every recorded query targeted nothing"
+ASSERT
+then pass "queries lists the history with real target counts"
+else fail "query history"
+fi
+
+say "aggregates run across the fleet"
+if "$BIN" --json select "COUNT(hostname)" > "$CERTS/agg.json" 2>&1 && python3 - "$CERTS/agg.json" <<'ASSERT'
+import json, sys
+d = json.load(open(sys.argv[1]))
+rows = d["results"]
+assert len(rows) == 1, f"aggregate returned {len(rows)} rows, want 1"
+assert rows[0]["data"]["COUNT(hostname)"] == 4, rows[0]["data"]
+ASSERT
+then pass "COUNT aggregates the whole fleet to a single row"
+else fail "aggregate query"
+fi
+
+say "exec --script uploads and runs a script"
+# shellcheck disable=SC2016  # $(hostname) must stay literal: it runs on the agent
+printf '#!/bin/sh\necho script-ran-on-$(hostname)\n' > "$CERTS/probe.sh"
+SCRIPTOUT="$("$BIN" --json exec WHERE hostname = "'web-01'" --script "$CERTS/probe.sh" 2>&1 || true)"
+if python3 - "$SCRIPTOUT" <<'ASSERT'
+import base64, json, sys
+lines = [json.loads(l) for l in sys.argv[1].splitlines() if l.strip().startswith("{")]
+ran = [l for l in lines if l.get("hostname")]
+assert len(ran) == 1, f"script ran on {len(ran)} hosts, want 1"
+assert ran[0]["success"], ran[0].get("error")
+out = base64.b64decode(ran[0].get("stdout") or "").decode()
+assert "script-ran-on-" in out, f"stdout={out!r}"
+ASSERT
+then pass "a local script is uploaded, executed, and its output returned"
+else fail "exec --script"
+fi
+
+say "doctor reports a healthy deployment"
+if "$BIN" doctor > "$CERTS/doctor.txt" 2>&1 && grep -q "Agents online" "$CERTS/doctor.txt"; then
+  pass "doctor exits clean and sees the fleet"
+else
+  fail "doctor ($(tail -3 "$CERTS/doctor.txt" 2>/dev/null))"
+fi
+
+say "deploy installs on exactly the targeted hosts"
+if [ -z "$PKG" ]; then
+  echo "  skipped: no rpmbuild on this machine"
+else
+  DEPLOY_OUT="$("$BIN" deploy "$PKG" WHERE tag.env = "'prod'" --timeout 60 2>&1 || true)"
+  # Which hosts had the package installed, asked of the fleet rather than
+  # taken from the deploy's own report.
+  INSTALLED="$("$BIN" --json exec -- cat /usr/share/dirq-itest/marker 2>/dev/null \
+    | python3 -c '
+import sys, json
+names = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    d = json.loads(line)
+    if d.get("hostname") and d.get("success") and d.get("rc") == 0:
+        names.append(d["hostname"])
+print(",".join(sorted(names)))' 2>/dev/null || echo ERR)"
+  if printf '%s' "$DEPLOY_OUT" | grep -q "Broadcasting to 2 host(s)" && [ "$INSTALLED" = "web-01,web-02" ]; then
+    pass "the package installed on both prod hosts and on no others"
+  else
+    fail "deploy (broadcast line: $(printf '%s' "$DEPLOY_OUT" | grep -i broadcast); marker found on: $INSTALLED)"
+  fi
+fi
 
 say "result"
 if [ "$FAILURES" -eq 0 ]; then

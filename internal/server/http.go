@@ -477,7 +477,13 @@ func (s *Server) handleGetHost(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusNotFound, "host not found")
 		return
 	}
-	jsonResponse(w, http.StatusOK, agent)
+	// Same live overlay the list endpoint applies. Without it this returns
+	// the stored record, so the topology-derived fields are stale or absent
+	// — reachable in particular would read false for every host, which is
+	// worse than not reporting it at all.
+	agents := []db.Agent{agent}
+	s.enrichWithTopology(agents)
+	jsonResponse(w, http.StatusOK, agents[0])
 }
 
 func (s *Server) handleGetHostFacts(w http.ResponseWriter, r *http.Request) {
