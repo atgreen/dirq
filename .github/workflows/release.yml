@@ -494,7 +494,14 @@ jobs:
           gh release download "${TAG}" --pattern '*.rpm' --dir /tmp/rpms --skip-existing
 
       - name: Build repodata
-        run: createrepo_c /tmp/rpms
+        # Pin the metadata compression rather than taking the distro
+        # default. createrepo_c 1.0 switched that default to zstd, and the
+        # rewrite step below globs for *.xml.gz — so the day the runner
+        # image picks up a newer createrepo_c, this job would silently stop
+        # finding any metadata to rewrite, and only at a release. Ubuntu
+        # 24.04 currently ships 0.17.3, which still defaults to gz; that is
+        # luck, not a guarantee.
+        run: createrepo_c --compress-type=gz /tmp/rpms
 
       - name: Rewrite package URLs to GitHub Release assets
         run: |
