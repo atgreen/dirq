@@ -1530,13 +1530,13 @@
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>dirq<span class="w"> </span>run<span class="w"> </span>cleanup-disks.yml<span class="w"> </span>WHERE<span class="w"> </span>disk.pct_used<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">90</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Quoted form</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>dirq<span class="w"> </span><span class="s2">&quot;run deploy.yml where tag.env = &#39;prod&#39;&quot;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>dirq<span class="w"> </span><span class="s2">"run deploy.yml where tag.env = 'prod'"</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># Ad-hoc command</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>dirq<span class="w"> </span>run<span class="w"> </span>--command<span class="w"> </span><span class="s2">&quot;yum update -y openssl&quot;</span><span class="w"> </span>WHERE<span class="w"> </span>packages.name<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;openssl&#39;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>dirq<span class="w"> </span>run<span class="w"> </span>--command<span class="w"> </span><span class="s2">"yum update -y openssl"</span><span class="w"> </span>WHERE<span class="w"> </span>packages.name<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'openssl'</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Ansible module</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>dirq<span class="w"> </span>run<span class="w"> </span>--module<span class="w"> </span>ping<span class="w"> </span>WHERE<span class="w"> </span>os_info.os<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;linux&#39;</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>dirq<span class="w"> </span>run<span class="w"> </span>--module<span class="w"> </span>ping<span class="w"> </span>WHERE<span class="w"> </span>os_info.os<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'linux'</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
 <a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># All online hosts (no WHERE clause)</span>
 <a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>dirq<span class="w"> </span>run<span class="w"> </span>deploy.yml

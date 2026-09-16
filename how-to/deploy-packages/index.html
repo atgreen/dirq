@@ -1534,10 +1534,10 @@ This keeps the relay mesh intact throughout the upgrade.</p>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>dirq<span class="w"> </span>deploy<span class="w"> </span>./patch-2026-05.rpm
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Deploy to specific hosts</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>dirq<span class="w"> </span>deploy<span class="w"> </span>./patch.rpm<span class="w"> </span>WHERE<span class="w"> </span>tag.env<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;prod&#39;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>dirq<span class="w"> </span>deploy<span class="w"> </span>./patch.rpm<span class="w"> </span>WHERE<span class="w"> </span>tag.env<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'prod'</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># Windows packages</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>dirq<span class="w"> </span>deploy<span class="w"> </span>./agent-0.3.0.msi<span class="w"> </span>WHERE<span class="w"> </span>os_info.os<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;windows&#39;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>dirq<span class="w"> </span>deploy<span class="w"> </span>./agent-0.3.0.msi<span class="w"> </span>WHERE<span class="w"> </span>os_info.os<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'windows'</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Override rolling deployment — install everywhere at once</span>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>dirq<span class="w"> </span>deploy<span class="w"> </span>./monitoring.rpm<span class="w"> </span>--parallel

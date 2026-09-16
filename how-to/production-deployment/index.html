@@ -1760,7 +1760,7 @@ Prefer the packaged unit over a hand-rolled one so config paths, the data
 directory, and restart behavior match the docs.</p>
 <p>Then confirm each agent actually attached, not just registered:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>dirq<span class="w"> </span>hosts<span class="w"> </span>list<span class="w">                 </span><span class="c1"># host shows online</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>dirq<span class="w"> </span>debug<span class="w"> </span>ping<span class="w"> </span>&lt;hostname&gt;<span class="w">      </span><span class="c1"># end-to-end proof it&#39;s reachable through the mesh</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>dirq<span class="w"> </span>debug<span class="w"> </span>ping<span class="w"> </span>&lt;hostname&gt;<span class="w">      </span><span class="c1"># end-to-end proof it's reachable through the mesh</span>
 </code></pre></div>
 <p>If <code>hosts list</code> shows online but <code>ping</code> times out, you have a ghost-online node —
 revisit step 1. See <a href="../diagnostics/">Diagnose the mesh</a> for the full symptom table.</p>
