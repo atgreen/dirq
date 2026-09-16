@@ -426,10 +426,28 @@ func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 // in-memory MeshTopology when present.  Static fields (hostname, OS,
 // listen_addr, tags, etc.) come from the DB unchanged.
 func (s *Server) enrichWithTopology(agents []db.Agent) {
+	// Snapshot the connected zone-leader streams before touching the
+	// topology. dispatchQuery takes s.mu and then consults the topology, so
+	// acquiring them in that order here too keeps the lock ordering
+	// consistent; the reverse would be a deadlock waiting for load.
+	s.mu.RLock()
+	connected := make(map[string]bool, len(s.streams))
+	for id := range s.streams {
+		connected[id] = true
+	}
+	s.mu.RUnlock()
+
 	for i := range agents {
 		n, ok := s.topology.Get(agents[i].ID)
 		if !ok {
 			continue
+		}
+
+		// A broadcast reaches an agent through the zone leader at the head
+		// of its path, so that stream being live is what "reachable" means.
+		// A zone leader is its own zone leader, so this covers both.
+		if zl, found := s.topology.FindZoneLeader(agents[i].ID); found {
+			agents[i].Reachable = connected[zl]
 		}
 		agents[i].Role = n.Role
 		if n.ParentID == "" {

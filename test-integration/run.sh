@@ -209,34 +209,28 @@ while :; do
 done
 echo "  all ${#AGENTS[@]} agents registered and online"
 
-# `hosts list` above is not enough on its own, and this is the second half
-# of the wait rather than a belt-and-braces duplicate of it.
+# Online is not the same as reachable, and waiting on the wrong one is how
+# this suite passed locally and failed in CI with missing=1. Online is
+# written when an agent registers; a broadcast travels down the zone
+# leader's gRPC stream, which opens afterwards. Between those two points
+# every agent reads as online and a query finds nobody home — a window
+# that only opens on a machine slow enough to lose the race.
 #
-# "Online" is written to the database when an agent registers. A query is
-# dispatched down the gRPC agent streams, which the agent connects a
-# moment after registering. Between those two points the host list shows
-# four online agents and a query finds nobody home — which is exactly how
-# this suite failed in CI with missing=1 while passing locally, because
-# the window only opens on a machine slow enough to lose the race.
-#
-# So wait on the capability the assertions need rather than a proxy for
-# it: a trivial query coming back with nobody missing.
-say "waiting for the fleet to become answerable"
+# The API reports both now, so wait on the one that matters rather than
+# dispatching a query to find out.
+say "waiting for the fleet to become reachable"
 deadline=$((SECONDS + 120))
 while :; do
-  # --timeout 5, not the 60s default: an agent whose stream is not up yet
-  # makes the query wait out its hard timeout before reporting anyone
-  # missing, so one unlucky probe otherwise costs a full minute.
-  answered="$("$BIN" --json select hostname --timeout 5 2>/dev/null \
-    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(0 if d.get("missing",0) else len(d.get("results",[])))' 2>/dev/null || echo 0)"
-  [ "$answered" = "${#AGENTS[@]}" ] && break
+  reachable="$("$BIN" --json hosts list 2>/dev/null \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(sum(1 for h in d if h.get("reachable")))' 2>/dev/null || echo 0)"
+  [ "$reachable" = "${#AGENTS[@]}" ] && break
   if [ "$SECONDS" -ge "$deadline" ]; then
-    fail "only $answered of ${#AGENTS[@]} agents answered a query"
+    fail "only $reachable of ${#AGENTS[@]} agents are reachable"
     exit 1
   fi
   sleep 1
 done
-echo "  all ${#AGENTS[@]} agents answering queries"
+echo "  all ${#AGENTS[@]} agents reachable"
 
 # ── assertions ───────────────────────────────────────────
 
@@ -260,6 +254,18 @@ for h in hosts:
 PY
 then pass "every agent registered with its own identity, tags and role"
 else fail "registration"
+fi
+
+say "reachability"
+if python3 - "$(hosts_json)" <<'ASSERT'
+import json, sys
+hosts = json.loads(sys.argv[1])
+for h in hosts:
+    assert h["online"], f"{h['hostname']} is not online"
+    assert h["reachable"], f"{h['hostname']} is online but not reachable"
+ASSERT
+then pass "every agent is reachable, not merely registered"
+else fail "reachability"
 fi
 
 say "topology"

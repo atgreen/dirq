@@ -65,6 +65,15 @@ type Agent struct {
 	FlapScore     float64 `json:"flap_score,omitempty"`     // decayed reboot-propensity score
 	OnProbation   bool    `json:"on_probation,omitempty"`   // personally over the flap threshold
 	FailureDomain string  `json:"failure_domain,omitempty"` // network-prefix bucket of listen_addr
+
+	// Reachable reports whether a broadcast can actually get to this agent
+	// right now: the zone leader at the head of its path has a live stream
+	// to the server. Online means only that the agent registered, which is
+	// a database write that happens before the agent opens its stream — so
+	// an agent can be online and unreachable, and a query to it comes back
+	// counted as missing. Deliberately not omitempty: false is the value an
+	// operator needs to see.
+	Reachable bool `json:"reachable"`
 }
 
 // RegisterAgentParams holds the parameters for registering a new agent.
