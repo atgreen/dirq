@@ -16,7 +16,11 @@ jobs:
     # without one it skips and reports the same green as a passing run.
     services:
       postgres:
-        image: postgres:17
+        # Pinned to an exact patch release: a floating tag is a test
+        # fixture that changes under you, and it will change on a day
+        # you are debugging something else. releng/with-postgres.sh
+        # defaults to the same tag so local runs match. Bump both.
+        image: postgres:17.11-alpine
         env:
           POSTGRES_PASSWORD: postgres
         ports:

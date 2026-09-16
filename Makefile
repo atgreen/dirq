@@ -25,23 +25,12 @@ $(BINDIR)/%: cmd/%/*.go internal/**/*.go
 test:  ## Run all tests (postgres conformance suite skipped)
 	go test ./...
 
-PG_IMAGE ?= docker.io/library/postgres:17
-PG_PORT  ?= 55432
+# Keep in step with the service image in .github/workflows/ci.yml, so a
+# failure here is a failure there.
+PG_IMAGE ?= docker.io/library/postgres:17.11-alpine
 
 test-postgres:  ## Run tests against a throwaway PostgreSQL, as CI does
-	@podman rm -f dirq-test-pg >/dev/null 2>&1 || true
-	@podman run -d --rm --name dirq-test-pg -e POSTGRES_PASSWORD=postgres \
-	    -p $(PG_PORT):5432 $(PG_IMAGE) >/dev/null
-	@echo "Waiting for postgres on :$(PG_PORT)..."
-	@for i in $$(seq 30); do \
-	    podman exec dirq-test-pg pg_isready -q && break; \
-	    sleep 1; \
-	done; \
-	DIRQ_TEST_POSTGRES_URL='postgres://postgres:postgres@localhost:$(PG_PORT)/postgres?sslmode=disable' \
-	    go test ./... -race; \
-	status=$$?; \
-	podman rm -f dirq-test-pg >/dev/null; \
-	exit $$status
+	PG_IMAGE=$(PG_IMAGE) ./releng/with-postgres.sh go test ./... -race
 
 lint:  ## Run golangci-lint
 	golangci-lint run ./...
