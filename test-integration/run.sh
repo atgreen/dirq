@@ -47,6 +47,12 @@ BIN="$ROOT/bin/dirq"
 FAILURES=0
 KEEP="${KEEP:-0}"
 
+# The four named agents carry the tags every targeting assertion below
+# depends on. The workers exist to make the mesh a real tree: with a
+# handful of agents they all become zone leaders and nothing is ever
+# relayed, so the architecture's central claim — that a broadcast reaches
+# a subtree through its parent — goes untested. Tagged env=test so they
+# cannot disturb the prod/staging assertions.
 AGENTS=(
   # name        tags                          exec
   "web-01       env=prod,role=web             true"
@@ -54,6 +60,15 @@ AGENTS=(
   "db-01        env=staging,role=db           true"
   "locked-01    env=prod,role=web             false"
 )
+for i in $(seq -w 1 8); do
+  AGENTS+=("worker-$i     env=test,role=worker          true")
+done
+
+# Forces a multi-level tree out of that fleet: two agents connect directly
+# to the server, everyone else reaches it through a parent. The defaults
+# (5 zone leaders) would let a fleet this size stay flat.
+MAX_ZONE_LEADERS=2
+MAX_CHILDREN=2
 
 # ── output ───────────────────────────────────────────────
 
@@ -158,6 +173,8 @@ say "starting the server"
   -e DIRQ_TLS_CERT=/certs/server.crt \
   -e DIRQ_TLS_KEY=/certs/server.key \
   -e DIRQ_TLS_CA_KEY=/certs/ca.key \
+  -e DIRQ_MAX_ZONE_LEADERS="$MAX_ZONE_LEADERS" \
+  -e DIRQ_MAX_CHILDREN="$MAX_CHILDREN" \
   -p 127.0.0.1:18080:8080 \
   localhost/dirq-server:itest >/dev/null
 
@@ -268,12 +285,14 @@ hosts_json()  { "$BIN" --json hosts list; }
 select_json() { "$BIN" --json select "$@"; }
 
 say "registration"
-if python3 - "$(hosts_json)" <<'PY'
-import json, sys
+if EXPECTED="${#AGENTS[@]}" python3 - "$(hosts_json)" <<'PY'
+import json, os, sys
+EXPECTED = int(os.environ["EXPECTED"])
 hosts = json.loads(sys.argv[1])
 by = {h["hostname"]: h for h in hosts}
 want = {"web-01", "web-02", "db-01", "locked-01"}
 assert want <= set(by), f"missing: {want - set(by)}"
+assert len(hosts) == EXPECTED, f"{len(hosts)} hosts registered, want {EXPECTED}"
 assert by["web-01"]["tags"].get("env") == "prod", by["web-01"]["tags"]
 assert by["db-01"]["tags"].get("env") == "staging", by["db-01"]["tags"]
 assert by["locked-01"]["exec_enabled"] is False, "exec_enabled did not survive registration"
@@ -298,30 +317,55 @@ then pass "every agent is reachable, not merely registered"
 else fail "reachability"
 fi
 
-say "topology"
-if python3 - "$(hosts_json)" <<'PY'
-import json, sys
+say "the mesh forms a real tree"
+if MAXZL="$MAX_ZONE_LEADERS" MAXCH="$MAX_CHILDREN" python3 - "$(hosts_json)" <<'ASSERT'
+import json, os, sys
 hosts = json.loads(sys.argv[1])
-zls = [h["hostname"] for h in hosts if h["role"] == "zone_leader"]
-assert zls, f"no zone leader among {[(h['hostname'], h['role']) for h in hosts]}"
-PY
-then pass "a zone leader was elected"
-else fail "zone-leader election"
+max_zl = int(os.environ["MAXZL"])
+max_children = int(os.environ["MAXCH"])
+by_id = {h["id"]: h for h in hosts}
+
+zls = [h for h in hosts if h["role"] == "zone_leader"]
+assert zls, "no zone leader was elected"
+assert len(zls) <= max_zl, f"{len(zls)} zone leaders, configured maximum is {max_zl}"
+
+# The point of scaling the fleet: most agents must reach the server
+# through a parent, not directly. A flat mesh proves nothing about relays.
+parented = [h for h in hosts if h.get("parent_id")]
+assert parented, "every agent connects directly; nothing is relayed and the tree is flat"
+
+# And the tree must be deeper than one hop somewhere, or a parent is only
+# ever a zone leader and forwarding through an intermediate is untested.
+deep = [h for h in parented if by_id.get(h["parent_id"], {}).get("role") != "zone_leader"]
+assert deep, "no agent sits below a non-zone-leader; the tree is only one level deep"
+
+# Nobody may exceed the configured fan-out.
+children = {}
+for h in parented:
+    children[h["parent_id"]] = children.get(h["parent_id"], 0) + 1
+for pid, n in children.items():
+    assert n <= max_children, f"{by_id.get(pid, {}).get('hostname', pid)} has {n} children, max is {max_children}"
+
+print(f"  {len(zls)} zone leaders, {len(parented)} agents behind a parent, {len(deep)} at depth 2+")
+ASSERT
+then pass "a bounded multi-level tree formed, and every agent is in it"
+else fail "topology"
 fi
 
-say "query reaches agents and returns real facts"
-if python3 - "$(select_json hostname, os_info.os)" <<'PY'
-import json, sys
+say "query reaches every agent, through relays, and returns real facts"
+if EXPECTED="${#AGENTS[@]}" python3 - "$(select_json hostname, os_info.os)" <<'PY'
+import json, os, sys
+EXPECTED = int(os.environ["EXPECTED"])
 d = json.loads(sys.argv[1])
 assert d.get("missing", 0) == 0, f"missing={d.get('missing')} — agents did not answer"
 results = d["results"]
-assert len(results) == 4, f"{len(results)} results, want 4"
+assert len(results) == EXPECTED, f"{len(results)} results, want {EXPECTED}"
 for r in results:
     assert r["success"], f"{r.get('hostname')}: {r.get('error')}"
     data = r.get("data") or {}
     assert any("os_info" in k for k in data), f"{r['hostname']} returned no os_info: {data}"
 PY
-then pass "all four agents answered with real facts"
+then pass "every agent answered with real facts, most of them through a relay"
 else fail "fleet query"
 fi
 
@@ -466,12 +510,13 @@ else fail "query history"
 fi
 
 say "aggregates run across the fleet"
-if "$BIN" --json select "COUNT(hostname)" > "$CERTS/agg.json" 2>&1 && python3 - "$CERTS/agg.json" <<'ASSERT'
-import json, sys
+if "$BIN" --json select "COUNT(hostname)" > "$CERTS/agg.json" 2>&1 && EXPECTED="${#AGENTS[@]}" python3 - "$CERTS/agg.json" <<'ASSERT'
+import json, os, sys
+EXPECTED = int(os.environ["EXPECTED"])
 d = json.load(open(sys.argv[1]))
 rows = d["results"]
 assert len(rows) == 1, f"aggregate returned {len(rows)} rows, want 1"
-assert rows[0]["data"]["COUNT(hostname)"] == 4, rows[0]["data"]
+assert rows[0]["data"]["COUNT(hostname)"] == EXPECTED, rows[0]["data"]
 ASSERT
 then pass "COUNT aggregates the whole fleet to a single row"
 else fail "aggregate query"
