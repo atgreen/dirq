@@ -613,7 +613,6 @@ type execBroadcastSession struct {
 	results   chan *pb.ExecResponse
 	startedAt time.Time
 	timeout   time.Duration
-	targetIDs []string
 	*sessionAccounting
 }
 
@@ -799,15 +798,12 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 	// kills the command at command-timeout, then needs a moment to
 	// flush its ExecResponse back up the mesh.  Without the grace we
 	// race the agent's reply and report a false "did not respond".
-	targetIDsCopy := make([]string, len(targetIDs))
-	copy(targetIDsCopy, targetIDs)
 	bs := &execBroadcastSession{
 		requestID:         requestID,
 		results:           make(chan *pb.ExecResponse, len(targets)),
 		startedAt:         time.Now(),
 		timeout:           time.Duration(timeout)*time.Second + transportGrace,
-		targetIDs:         targetIDsCopy,
-		sessionAccounting: newSessionAccounting(targetIDsCopy),
+		sessionAccounting: newSessionAccounting(targetIDs),
 	}
 
 	execBroadcastSessionsMu.Lock()

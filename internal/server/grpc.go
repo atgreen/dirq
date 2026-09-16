@@ -553,7 +553,6 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 type querySession struct {
 	queryID   string
 	results   chan *pb.QueryResult
-	targetIDs []string
 	startedAt time.Time
 	timeout   time.Duration
 	*sessionAccounting
@@ -588,7 +587,6 @@ func (s *Server) dispatchQuery(ctx context.Context, qr *pb.QueryRequest, targetI
 	qs := &querySession{
 		queryID:           qr.QueryId,
 		results:           make(chan *pb.QueryResult, len(targetIDs)),
-		targetIDs:         targetIDs,
 		startedAt:         time.Now(),
 		timeout:           time.Duration(qr.TimeoutSeconds) * time.Second,
 		sessionAccounting: newSessionAccounting(targetIDs),
