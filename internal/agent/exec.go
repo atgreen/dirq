@@ -165,6 +165,12 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 	a.sendExecResponse(resp)
 }
 
+// execWaitDelay caps how long Wait will block on pipes still held open
+// after the process itself is gone. Generous enough not to truncate the
+// output of a command that finished cleanly, short enough that a stuck
+// one does not pin the agent.
+const execWaitDelay = 5 * time.Second
+
 // buildCommand constructs the os/exec.Cmd for the current platform.
 func buildCommand(ctx context.Context, cmdStr string, become bool, becomeUser, becomeMethod string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
@@ -192,7 +198,7 @@ func buildCommandUnix(ctx context.Context, cmdStr string, become bool, becomeUse
 			cmdStr = fmt.Sprintf("sudo -n -u %s -- sh -c %s", shellQuote(becomeUser), shellQuote(cmdStr))
 		}
 	}
-	return exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	return withTreeKill(exec.CommandContext(ctx, "sh", "-c", cmdStr))
 }
 
 // buildCommandWindows builds a command for Windows.
@@ -247,9 +253,9 @@ func buildCommandWindows(ctx context.Context, cmdStr string, become bool, become
 			exe := parts[0]
 			args := strings.TrimSpace(parts[1])
 			// Parse the argument string into individual args, preserving quoted values.
-			return exec.CommandContext(ctx, exe, splitPowerShellArgs(args)...)
+			return withTreeKill(exec.CommandContext(ctx, exe, splitPowerShellArgs(args)...))
 		}
-		return exec.CommandContext(ctx, "cmd", "/c", trimmed)
+		return withTreeKill(exec.CommandContext(ctx, "cmd", "/c", trimmed))
 	}
 
 	// Run as a different user using a one-shot scheduled task.
@@ -277,8 +283,8 @@ func buildCommandWindows(ctx context.Context, cmdStr string, become bool, become
 		outFile, outFile,
 	)
 
-	return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
-		"-EncodedCommand", encodeUTF16Base64(psScript))
+	return withTreeKill(exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
+		"-EncodedCommand", encodeUTF16Base64(psScript)))
 }
 
 // handlePutFile writes content to a file on the agent.
@@ -362,7 +368,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 			becomeUser = "root"
 		}
 		cmdStr := fmt.Sprintf("sudo -n -u %s tee %s > /dev/null", shellQuote(becomeUser), shellQuote(destPath))
-		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+		cmd := withTreeKill(exec.CommandContext(ctx, "sh", "-c", cmdStr))
 		cmd.Stdin = bytes.NewReader(content)
 		var stderrBuf bytes.Buffer
 		cmd.Stderr = &stderrBuf
@@ -370,7 +376,7 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 			writeErr = fmt.Errorf("sudo tee failed: %s: %w", stderrBuf.String(), err)
 		} else if req.GetMode() != 0 {
 			chmodCmd := fmt.Sprintf("sudo -n chmod %04o %s", req.GetMode(), shellQuote(destPath))
-			chCmd := exec.CommandContext(ctx, "sh", "-c", chmodCmd)
+			chCmd := withTreeKill(exec.CommandContext(ctx, "sh", "-c", chmodCmd))
 			if err := chCmd.Run(); err != nil {
 				writeErr = fmt.Errorf("chmod failed: %w", err)
 			}
@@ -476,7 +482,7 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 			becomeUser = "root"
 		}
 		cmdStr := fmt.Sprintf("sudo -n -u %s cat %s", shellQuote(becomeUser), shellQuote(srcPath))
-		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+		cmd := withTreeKill(exec.CommandContext(ctx, "sh", "-c", cmdStr))
 		var stdoutBuf, stderrBuf bytes.Buffer
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
@@ -723,10 +729,10 @@ func buildScriptCommandUnix(ctx context.Context, script []byte, ext string, beco
 		default: // sudo
 			cmdStr = fmt.Sprintf("sudo -n -u %s -- %s", shellQuote(becomeUser), tmpPath)
 		}
-		return exec.CommandContext(ctx, "sh", "-c", cmdStr), cleanup, nil
+		return withTreeKill(exec.CommandContext(ctx, "sh", "-c", cmdStr)), cleanup, nil
 	}
 
-	return exec.CommandContext(ctx, tmpPath), cleanup, nil
+	return withTreeKill(exec.CommandContext(ctx, tmpPath)), cleanup, nil
 }
 
 func buildScriptCommandWindows(ctx context.Context, script []byte, ext string, become bool, becomeUser string) (*exec.Cmd, func(), error) {
@@ -751,11 +757,11 @@ func buildScriptCommandWindows(ctx context.Context, script []byte, ext string, b
 	tmpFile.Close()
 
 	if ext == ".ps1" {
-		return exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpPath), cleanup, nil
+		return withTreeKill(exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpPath)), cleanup, nil
 	}
 
 	// For other extensions (.bat, .cmd), run via cmd.
-	return exec.CommandContext(ctx, "cmd", "/c", tmpPath), cleanup, nil
+	return withTreeKill(exec.CommandContext(ctx, "cmd", "/c", tmpPath)), cleanup, nil
 }
 
 // ─────────────────────────────────────────────────────────

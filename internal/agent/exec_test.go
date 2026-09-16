@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -489,6 +490,49 @@ func TestHandleExecRequestScript(t *testing.T) {
 	}
 	if got := string(resp.Stdout); got != "from-script\n" {
 		t.Errorf("stdout = %q, want \"from-script\\n\"", got)
+	}
+}
+
+// TestHandleExecRequestTimeoutKillsChildren pins the property the plain
+// timeout test only samples: a timed-out command must take its whole
+// process tree with it.
+//
+// The command backgrounds a child and waits on it, which forces a fork
+// on every shell — unlike "sleep 30", which bash exec-optimizes into a
+// single process so that killing the shell happens to kill the sleep
+// too. Under dash (Debian/Ubuntu, and so the CI runner) the fork happens
+// either way, which is why this defect showed up only there.
+//
+// If the child outlives the kill it keeps the inherited stdout pipe
+// open, so cmd.Run blocks in Wait until the child exits on its own — the
+// timeout bounds nothing.
+func TestHandleExecRequestTimeoutKillsChildren(t *testing.T) {
+	skipOnWindows(t)
+	a, cs := newExecAgent(t)
+
+	marker := filepath.Join(t.TempDir(), "child-survived")
+
+	start := time.Now()
+	a.handleExecRequest(context.Background(), &pb.ExecRequest{
+		RequestId:      "exec-timeout-children",
+		AgentId:        a.agentID,
+		Command:        fmt.Sprintf("{ sleep 3; touch %s; } & wait", marker),
+		TimeoutSeconds: 1,
+	})
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("exec was not killed by its 1s timeout (took %v)", elapsed)
+	}
+	execResponse(t, cs)
+
+	// Outlive the child's own sleep: if the process group really died,
+	// nothing is left to create the marker.
+	time.Sleep(4 * time.Second)
+	if _, err := os.Stat(marker); err == nil {
+		t.Errorf("child survived the timeout and created %s; the process group was not killed", marker)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v", marker, err)
 	}
 }
 
