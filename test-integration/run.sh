@@ -618,6 +618,141 @@ print(",".join(sorted(names)))' 2>/dev/null || echo ERR)"
   fi
 fi
 
+# ── chaos ────────────────────────────────────────────────
+#
+# Everything above assumes the fleet stays up. The mesh's resilience
+# machinery — stream-loss notification, reparenting, fallback parents,
+# reconnect — is the most intricate code here and the happy path never
+# touches it. These run last because killing agents degrades the fleet
+# for anything after them.
+#
+# Known gaps deliberately not asserted here, so this stays green and
+# honest rather than encoding broken behaviour as correct: the server's
+# topology is not updated when an agent fails over (dirq-613), and killing
+# a zone leader strands part of the fleet permanently with no replacement
+# promoted (dirq-zyc). What IS asserted is the part that must hold
+# regardless: the dispatcher never hangs on an agent that has gone, and a
+# restarted agent rejoins.
+
+# pickLeaf names an online agent that nobody uses as a parent, so killing
+# it disturbs no one else. Chosen at runtime because the tree shape
+# differs from run to run.
+pickLeaf() {
+  "$BIN" --json hosts list 2>/dev/null | python3 -c '
+import sys, json
+hosts = json.load(sys.stdin)
+parents = {h.get("parent_id") for h in hosts if h.get("parent_id")}
+for h in hosts:
+    if h["online"] and h["id"] not in parents and h["hostname"].startswith("worker-"):
+        print(h["hostname"])
+        break
+'
+}
+
+# answeringCount runs a fleet query and reports how many answered, or
+# ERR. --timeout 10 so a hang is visible as a slow check rather than a
+# minute of silence.
+answeringCount() {
+  "$BIN" --json select hostname --timeout 10 2>/dev/null \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d.get("results",[])))' 2>/dev/null || echo ERR
+}
+
+say "chaos: a killed leaf is accounted for, not waited on"
+LEAF="$(pickLeaf)"
+if [ -z "$LEAF" ]; then
+  fail "could not find a leaf agent to kill"
+else
+  echo "  killing $LEAF"
+  "$RUNTIME" kill "$LEAF" >/dev/null 2>&1
+  # The dispatcher must stop counting on it promptly. Poll rather than
+  # sleep a fixed amount, and bound it well under the 60s hard timeout so
+  # "it eventually timed out" cannot pass for "it noticed".
+  DEADLINE=$((SECONDS + 90)); SAW=no
+  while [ "$SECONDS" -lt "$DEADLINE" ]; do
+    GONE="$("$BIN" --json hosts list 2>/dev/null \
+      | python3 -c "
+import sys, json
+hosts = json.load(sys.stdin)
+print('yes' if any(h['hostname'] == '$LEAF' and not h['online'] for h in hosts) else 'no')" 2>/dev/null || echo no)"
+    [ "$GONE" = yes ] && { SAW=yes; break; }
+    sleep 2
+  done
+
+  # And a query must come back quickly, without the dead agent in it.
+  START=$SECONDS
+  ANSWERED="$(answeringCount)"
+  ELAPSED=$((SECONDS - START))
+  STILL="$("$BIN" --json select hostname --timeout 10 2>/dev/null \
+    | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print('yes' if any(r['hostname'] == '$LEAF' for r in d.get('results', [])) else 'no')" 2>/dev/null || echo yes)"
+
+  if [ "$SAW" = yes ] && [ "$STILL" = no ] && [ "$ELAPSED" -lt 30 ]; then
+    pass "the fleet noticed $LEAF was gone and queries returned in ${ELAPSED}s without it"
+  else
+    fail "dead-leaf handling (noticed=$SAW still-answering=$STILL query took ${ELAPSED}s, answered=$ANSWERED)"
+  fi
+fi
+
+say "chaos: a restarted agent rejoins the mesh"
+if [ -z "${LEAF:-}" ]; then
+  echo "  skipped: no agent was killed"
+else
+  "$RUNTIME" start "$LEAF" >/dev/null 2>&1
+  DEADLINE=$((SECONDS + 120)); BACK=no
+  while [ "$SECONDS" -lt "$DEADLINE" ]; do
+    BACK="$("$BIN" --json select hostname --timeout 10 2>/dev/null \
+      | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print('yes' if any(r['hostname'] == '$LEAF' for r in d.get('results', [])) else 'no')" 2>/dev/null || echo no)"
+    [ "$BACK" = yes ] && break
+    sleep 3
+  done
+  if [ "$BACK" = yes ]; then
+    pass "$LEAF re-registered and answered a query again"
+  else
+    fail "$LEAF did not rejoin within 120s"
+  fi
+fi
+
+say "chaos: killing a zone leader does not hang the dispatcher"
+ZL="$("$BIN" --json hosts list 2>/dev/null | python3 -c '
+import sys, json
+for h in json.load(sys.stdin):
+    if h["online"] and h["role"] == "zone_leader":
+        print(h["hostname"]); break
+')"
+if [ -z "$ZL" ]; then
+  fail "no zone leader to kill"
+else
+  echo "  killing zone leader $ZL"
+  "$RUNTIME" kill "$ZL" >/dev/null 2>&1
+  sleep 10
+  # The surviving fleet must still answer, and promptly. Agents stranded
+  # by dirq-zyc are counted offline, so this asserts that whoever the
+  # server still believes is online actually responds — no silent partial,
+  # no waiting out the hard timeout.
+  START=$SECONDS
+  ONLINE="$("$BIN" --json hosts list 2>/dev/null \
+    | python3 -c 'import sys,json;print(sum(1 for h in json.load(sys.stdin) if h["online"]))' 2>/dev/null || echo ERR)"
+  "$BIN" --json select hostname --timeout 15 > "$CERTS/chaos.json" 2>/dev/null || true
+  RESULT="$(python3 - "$CERTS/chaos.json" <<'ASSERT' 2>/dev/null || echo ERR
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(f"{len(d.get('results', []))}/{d.get('total_targets', -1)}/{d.get('missing', 0)}")
+ASSERT
+)"
+  ELAPSED=$((SECONDS - START))
+  ANSWERED="${RESULT%%/*}"
+  if [ "$RESULT" != ERR ] && [ "$ANSWERED" -gt 0 ] && [ "$ELAPSED" -lt 30 ]; then
+    pass "after losing $ZL the fleet still answered ($RESULT answered/targeted/missing) in ${ELAPSED}s"
+  else
+    fail "zone-leader loss (online=$ONLINE result=$RESULT took ${ELAPSED}s)"
+  fi
+fi
+
 say "result"
 if [ "$FAILURES" -eq 0 ]; then
   printf '  \033[32mall checks passed\033[0m\n\n'
