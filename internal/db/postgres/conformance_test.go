@@ -28,13 +28,23 @@ var schemaSeq atomic.Int64
 // ./...` passes without any external services. Each factory call gets a
 // fresh throwaway schema (via search_path) that is dropped on cleanup.
 //
+// Under CI the skip becomes a failure: PostgreSQL is a supported
+// production backend, and a silently skipped suite reports the same
+// green as a passing one. If this fails, the workflow lost its
+// postgres service container.
+//
 // Example:
 //
 //	DIRQ_TEST_POSTGRES_URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable \
 //	  go test ./internal/db/postgres/
+//
+// or `make test-postgres`, which supplies a throwaway container.
 func TestConformance(t *testing.T) {
 	base := os.Getenv("DIRQ_TEST_POSTGRES_URL")
 	if base == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("DIRQ_TEST_POSTGRES_URL not set under CI; the postgres conformance suite must not be skipped there")
+		}
 		t.Skip("DIRQ_TEST_POSTGRES_URL not set; skipping postgres conformance tests")
 	}
 
