@@ -8,7 +8,7 @@ PREFIX    ?= /usr/local
 
 CMDS := dirq-server dirq-agent dirq
 
-.PHONY: build test lint clean install proto collection cross demo demo-down demo-logs aws aws-status aws-down help
+.PHONY: build test test-postgres lint clean install proto collection cross demo demo-down demo-logs aws aws-status aws-down help
 
 .DEFAULT_GOAL := help
 
@@ -22,8 +22,26 @@ $(BINDIR)/%: cmd/%/*.go internal/**/*.go
 	@mkdir -p $(BINDIR)
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $@ ./cmd/$*
 
-test:  ## Run all tests
+test:  ## Run all tests (postgres conformance suite skipped)
 	go test ./...
+
+PG_IMAGE ?= docker.io/library/postgres:17
+PG_PORT  ?= 55432
+
+test-postgres:  ## Run tests against a throwaway PostgreSQL, as CI does
+	@podman rm -f dirq-test-pg >/dev/null 2>&1 || true
+	@podman run -d --rm --name dirq-test-pg -e POSTGRES_PASSWORD=postgres \
+	    -p $(PG_PORT):5432 $(PG_IMAGE) >/dev/null
+	@echo "Waiting for postgres on :$(PG_PORT)..."
+	@for i in $$(seq 30); do \
+	    podman exec dirq-test-pg pg_isready -q && break; \
+	    sleep 1; \
+	done; \
+	DIRQ_TEST_POSTGRES_URL='postgres://postgres:postgres@localhost:$(PG_PORT)/postgres?sslmode=disable' \
+	    go test ./... -race; \
+	status=$$?; \
+	podman rm -f dirq-test-pg >/dev/null; \
+	exit $$status
 
 lint:  ## Run golangci-lint
 	golangci-lint run ./...

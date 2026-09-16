@@ -10,6 +10,23 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+
+    # PostgreSQL is a supported production backend, so the shared
+    # backend conformance suite has to run against a real server here —
+    # without one it skips and reports the same green as a passing run.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +39,8 @@ jobs:
 
       - name: Test
         run: go test ./... -v -race
+        env:
+          DIRQ_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
 
       - name: Vet
         run: go vet ./...
