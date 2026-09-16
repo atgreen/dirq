@@ -23,7 +23,7 @@ import (
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
-// resolveExecTargets decides which machines a command runs on. Getting
+// resolveBroadcastTargets decides which machines a command runs on. Getting
 // it wrong is silent — the command simply lands on the wrong fleet — so
 // every case below asserts the exact target set, never just its size.
 
@@ -51,7 +51,7 @@ func targetIDs(targets []db.Agent) []string {
 	return ids
 }
 
-// resolve parses queryStr and runs it through resolveExecTargets,
+// resolve parses queryStr and runs it through resolveBroadcastTargets,
 // returning the sorted matched IDs.
 func resolve(t *testing.T, s *Server, queryStr string, timeout int) ([]string, int) {
 	t.Helper()
@@ -59,9 +59,9 @@ func resolve(t *testing.T, s *Server, queryStr string, timeout int) ([]string, i
 	if err != nil {
 		t.Fatalf("parse %q: %v", queryStr, err)
 	}
-	targets, unresolved, err := s.resolveExecTargets(context.Background(), queryStr, parsed, timeout)
+	targets, unresolved, err := s.resolveBroadcastTargets(context.Background(), queryStr, parsed, timeout)
 	if err != nil {
-		t.Fatalf("resolveExecTargets(%q): %v", queryStr, err)
+		t.Fatalf("resolveBroadcastTargets(%q): %v", queryStr, err)
 	}
 	return targetIDs(targets), unresolved
 }
@@ -88,7 +88,7 @@ func withSigner(t *testing.T, s *Server) {
 }
 
 // fakeZoneLeader registers a stream that answers every dispatched query
-// on behalf of the agents in `succeed`. Agents absent from the map are
+// (and every deploy) on behalf of the agents in `succeed`. Agents absent from the map are
 // answered with Success=false, mirroring a real "no match" reply;
 // agents listed in `silent` are never answered at all, so the
 // dispatcher has to time them out.
@@ -108,19 +108,32 @@ func fakeZoneLeader(t *testing.T, s *Server, succeed map[string]bool, silent map
 			case <-done:
 				return
 			case msg := <-as.send:
-				qr := msg.GetQueryRequest()
-				if qr == nil {
+				if qr := msg.GetQueryRequest(); qr != nil {
+					for _, id := range qr.TargetAgentIds {
+						if silent[id] {
+							continue
+						}
+						s.handleQueryResult(&pb.QueryResult{
+							QueryId: qr.QueryId,
+							AgentId: id,
+							Success: succeed[id],
+						})
+					}
 					continue
 				}
-				for _, id := range qr.TargetAgentIds {
-					if silent[id] {
-						continue
+				// Deploy requests are answered unconditionally: the target
+				// set has already been decided by the time one is sent, so
+				// these replies only keep the handler from blocking on its
+				// hard timeout while a test inspects the header.
+				if dr := msg.GetDeployRequest(); dr != nil {
+					for _, id := range dr.TargetAgentIds {
+						s.handleDeployResponse(&pb.DeployResponse{
+							RequestId: dr.RequestId,
+							AgentId:   id,
+							Success:   true,
+							Phase:     "install",
+						})
 					}
-					s.handleQueryResult(&pb.QueryResult{
-						QueryId: qr.QueryId,
-						AgentId: id,
-						Success: succeed[id],
-					})
 				}
 			}
 		}

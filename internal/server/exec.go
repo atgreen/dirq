@@ -680,13 +680,18 @@ func decodeExecMultiRequest(w http.ResponseWriter, r *http.Request) (req execMul
 	return req, stdin, script, true
 }
 
-// resolveExecTargets resolves the exec-enabled online agents matching the
-// query: pre-filtered by tag/hostname conditions (resolved server-side from
-// the DB), then — when field conditions are present — intersected with a
-// resolution query across the fleet. unresolved counts targets the
-// resolution query couldn't account for, so the eventual exec header can
-// surface partial coverage.
-func (s *Server) resolveExecTargets(ctx context.Context, queryStr string, parsed *query.Query, timeout int) (targets []db.Agent, unresolved int, err error) {
+// resolveBroadcastTargets resolves the exec-enabled online agents matching
+// the query: pre-filtered by tag/hostname conditions (resolved server-side
+// from the DB), then — when field conditions are present — intersected with
+// a resolution query across the fleet. unresolved counts targets the
+// resolution query couldn't account for, so the caller's header can surface
+// partial coverage.
+//
+// Shared by the exec and deploy broadcast paths. Deploy used to carry its
+// own copy that tested for tag conditions only, so a hostname- or
+// field-filtered deploy silently landed on the whole fleet (dirq-8cp).
+// One resolver means the two paths cannot drift apart like that again.
+func (s *Server) resolveBroadcastTargets(ctx context.Context, queryStr string, parsed *query.Query, timeout int) (targets []db.Agent, unresolved int, err error) {
 	online := true
 	allAgents, err := s.db.ListAgents(ctx, db.ListAgentsFilter{Online: &online})
 	if err != nil {
@@ -755,7 +760,7 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targets, unresolvedTargets, err := s.resolveExecTargets(ctx, req.Query, parsed, timeout)
+	targets, unresolvedTargets, err := s.resolveBroadcastTargets(ctx, req.Query, parsed, timeout)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return

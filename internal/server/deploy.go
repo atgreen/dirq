@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/atgreen/dirq/internal/db"
 	"github.com/atgreen/dirq/internal/query"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
@@ -100,7 +99,7 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targets, err := s.resolveDeployTargets(ctx, parsed)
+	targets, unresolvedTargets, err := s.resolveBroadcastTargets(ctx, req.Query, parsed, timeout)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -117,10 +116,17 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 
-	enc.Encode(map[string]any{
+	header := map[string]any{
 		"type":          "header",
 		"total_targets": len(targets),
-	})
+	}
+	// Only present when the field-resolution pass lost part of the fleet, so
+	// a fully-resolved deploy keeps the header it has always had. Mirrors the
+	// exec header's unresolved_targets.
+	if unresolvedTargets > 0 {
+		header["unresolved_targets"] = unresolvedTargets
+	}
+	enc.Encode(header)
 	flusher.Flush()
 
 	if len(targets) == 0 {
@@ -252,40 +258,6 @@ func (s *Server) decodeDeployRequest(w http.ResponseWriter, r *http.Request) (re
 		timeout = 300
 	}
 	return req, content, timeout, true
-}
-
-// resolveDeployTargets returns the online, exec-enabled agents matching the
-// query.
-//
-// NOTE: this honours tag conditions only.  A query filtering on hostname or
-// on a fact field contains no tag condition, so the filter is skipped
-// entirely and every online exec-enabled agent is targeted — see dirq-8cp.
-// The exec path (resolveExecTargets) handles both; deploy has not been
-// brought in line with it yet.
-func (s *Server) resolveDeployTargets(ctx context.Context, parsed *query.Query) ([]db.Agent, error) {
-	online := true
-	allAgents, err := s.db.ListAgents(ctx, db.ListAgentsFilter{Online: &online})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list agents: %w", err)
-	}
-
-	agents := allAgents
-	if query.HasTagConditions(parsed.Where) {
-		agents = make([]db.Agent, 0, len(allAgents))
-		for _, a := range allAgents {
-			if query.MatchesAgentTags(parsed.Where, a.Tags) {
-				agents = append(agents, a)
-			}
-		}
-	}
-
-	var targets []db.Agent
-	for _, a := range agents {
-		if a.ExecEnabled {
-			targets = append(targets, a)
-		}
-	}
-	return targets, nil
 }
 
 // broadcastDeployToZoneLeaders fans the deploy request out to every

@@ -164,10 +164,17 @@ func TestBroadcastDeployTargetSelection(t *testing.T) {
 		{name: "no where clause targets all exec-enabled", agents: agents, query: "SELECT hostname", wantTargets: 2},
 		{name: "tag condition narrows to matching agents", agents: agents, query: "SELECT hostname WHERE tag.env = 'prod'", wantTargets: 1},
 		{name: "non-matching tag condition targets none", agents: agents, query: "SELECT hostname WHERE tag.env = 'staging'", wantTargets: 0},
-		// Characterizes current (incorrect) behavior — see dirq-8cp.  A
-		// hostname condition contains no tag condition, so the filter is
-		// skipped entirely and every exec-enabled agent is targeted.
-		{name: "hostname condition is ignored and targets all (dirq-8cp)", agents: agents, query: "SELECT hostname WHERE hostname = 'web01'", wantTargets: 2},
+		// dirq-8cp: a hostname condition carries no tag condition, so the
+		// old deploy-only resolver skipped filtering entirely and installed
+		// on every exec-enabled agent. Deploy now shares the exec path's
+		// resolver, which honours hostname conditions too.
+		{name: "hostname condition narrows to the matching host (dirq-8cp)", agents: agents, query: "SELECT hostname WHERE hostname = 'web01'", wantTargets: 1},
+		{name: "hostname condition matching no host targets none", agents: agents, query: "SELECT hostname WHERE hostname = 'nope'", wantTargets: 0},
+		{name: "hostname IN narrows to the listed hosts", agents: agents, query: "SELECT hostname WHERE hostname IN ('web01', 'web02')", wantTargets: 2},
+		{name: "hostname LIKE narrows by prefix", agents: agents, query: "SELECT hostname WHERE hostname LIKE 'web%'", wantTargets: 2},
+		{name: "hostname and tag intersect", agents: agents, query: "SELECT hostname WHERE hostname LIKE 'web%' AND tag.env = 'prod'", wantTargets: 1},
+		// An exec-disabled host is excluded even when named directly.
+		{name: "hostname naming an exec-disabled host targets none", agents: agents, query: "SELECT hostname WHERE hostname = 'db01'", wantTargets: 0},
 	}
 
 	for _, tc := range cases {
@@ -203,4 +210,94 @@ func TestBroadcastDeployTargetSelection(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBroadcastDeployFieldConditions covers the other half of dirq-8cp: a
+// deploy whose query filters on an agent-reported field must be intersected
+// with the resolution query rather than skipping the filter. Deploy reaches
+// this through the same resolver as exec, so these assert the wiring — that
+// deploy actually consults it — rather than re-testing the resolver itself.
+func TestBroadcastDeployFieldConditions(t *testing.T) {
+	content := base64.StdEncoding.EncodeToString([]byte("package-bytes"))
+	// A short timeout keeps the silent-agent case from waiting out the
+	// default 300s resolution window.
+	body := func(q string) string {
+		return `{"query":"` + q + `","dest_path":"/tmp/p.rpm","install_command":"rpm -i","content":"` + content + `","timeout":1}`
+	}
+	fleet := []db.Agent{
+		deployAgent("a1", "web01", true, map[string]string{"env": "prod"}),
+		deployAgent("a2", "web02", true, map[string]string{"env": "prod"}),
+		deployAgent("a3", "web03", true, map[string]string{"env": "dev"}),
+	}
+
+	header := func(t *testing.T, lines []string) map[string]any {
+		t.Helper()
+		if len(lines) == 0 {
+			t.Fatal("expected a header line, got empty body")
+		}
+		var h map[string]any
+		if err := json.Unmarshal([]byte(lines[0]), &h); err != nil {
+			t.Fatalf("header line %q: %v", lines[0], err)
+		}
+		return h
+	}
+
+	t.Run("field condition narrows the tag-matched set", func(t *testing.T) {
+		s := newTestServer(&mockDB{agents: fleet}, true)
+		withSigner(t, s)
+		// Of the two prod hosts, only a1 reports a matching field.
+		fakeZoneLeader(t, s, map[string]bool{"a1": true}, nil)
+
+		code, lines := postDeploy(t, s, body(`SELECT hostname WHERE tag.env = 'prod' AND os_info.os = 'linux'`), nil)
+		if code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body %v)", code, lines)
+		}
+		h := header(t, lines)
+		if got := h["total_targets"]; got != float64(1) {
+			t.Errorf("total_targets = %v, want 1 — the field condition must narrow the deploy", got)
+		}
+		if _, present := h["unresolved_targets"]; present {
+			t.Errorf("unresolved_targets present (%v) when every target answered", h["unresolved_targets"])
+		}
+	})
+
+	t.Run("a field condition cannot widen past the tag filter", func(t *testing.T) {
+		s := newTestServer(&mockDB{agents: fleet}, true)
+		withSigner(t, s)
+		// Every host claims a match, but a3 is not in the tag-matched set.
+		fakeZoneLeader(t, s, map[string]bool{"a1": true, "a2": true, "a3": true}, nil)
+
+		_, lines := postDeploy(t, s, body(`SELECT hostname WHERE tag.env = 'prod' AND os_info.os = 'linux'`), nil)
+		if got := header(t, lines)["total_targets"]; got != float64(2) {
+			t.Errorf("total_targets = %v, want 2 — resolution must not re-admit a tag-excluded host", got)
+		}
+	})
+
+	t.Run("a silent agent is dropped and surfaced as unresolved", func(t *testing.T) {
+		s := newTestServer(&mockDB{agents: fleet}, true)
+		withSigner(t, s)
+		// a1 answers, a2 never does. Installing on a host that never
+		// confirmed it matches is the over-broad deploy dirq-8cp is about.
+		fakeZoneLeader(t, s, map[string]bool{"a1": true}, map[string]bool{"a2": true})
+
+		_, lines := postDeploy(t, s, body(`SELECT hostname WHERE tag.env = 'prod' AND os_info.os = 'linux'`), nil)
+		h := header(t, lines)
+		if got := h["total_targets"]; got != float64(1) {
+			t.Errorf("total_targets = %v, want 1", got)
+		}
+		if got := h["unresolved_targets"]; got != float64(1) {
+			t.Errorf("unresolved_targets = %v, want 1 — partial coverage must be reported", got)
+		}
+	})
+
+	t.Run("a failed resolution falls back to the record filter", func(t *testing.T) {
+		// No signer, so the resolution query cannot be dispatched. The
+		// fallback must be the tag-matched set, never the whole fleet.
+		s := newTestServer(&mockDB{agents: fleet}, true)
+
+		_, lines := postDeploy(t, s, body(`SELECT hostname WHERE tag.env = 'prod' AND os_info.os = 'linux'`), nil)
+		if got := header(t, lines)["total_targets"]; got != float64(2) {
+			t.Errorf("total_targets = %v, want 2 — a failed resolution must not widen the deploy", got)
+		}
+	})
 }
