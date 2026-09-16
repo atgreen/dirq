@@ -205,14 +205,17 @@ echo "  all ${#AGENTS[@]} agents registered and online"
 say "waiting for the fleet to become answerable"
 deadline=$((SECONDS + 120))
 while :; do
-  answered="$("$BIN" --json select hostname 2>/dev/null \
+  # --timeout 5, not the 60s default: an agent whose stream is not up yet
+  # makes the query wait out its hard timeout before reporting anyone
+  # missing, so one unlucky probe otherwise costs a full minute.
+  answered="$("$BIN" --json select hostname --timeout 5 2>/dev/null \
     | python3 -c 'import sys,json;d=json.load(sys.stdin);print(0 if d.get("missing",0) else len(d.get("results",[])))' 2>/dev/null || echo 0)"
   [ "$answered" = "${#AGENTS[@]}" ] && break
   if [ "$SECONDS" -ge "$deadline" ]; then
     fail "only $answered of ${#AGENTS[@]} agents answered a query"
     exit 1
   fi
-  sleep 2
+  sleep 1
 done
 echo "  all ${#AGENTS[@]} agents answering queries"
 

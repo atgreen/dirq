@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [main]
 
+# A second push supersedes the first; finishing the old run helps nobody.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -47,7 +52,7 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test ./... -v -race
+        run: go test ./... -race
         env:
           DIRQ_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
 
@@ -59,11 +64,29 @@ jobs:
         with:
           version: v2.12.2
 
-      # The release workflow builds these same ten artifacts with this same
-      # script. Running it here means a change that breaks the release
-      # build fails on the pull request rather than at the moment someone
-      # pushes a tag, which is when it used to be exercised for the first
-      # and only time.
+
+  # The release workflow builds the ten release artifacts with this same
+  # script, so running it here means a change that breaks the release build
+  # fails on the pull request rather than at the moment someone pushes a
+  # tag — which is when it used to be exercised for the first and only
+  # time. Its own job because it takes ~100s and jobs run in parallel;
+  # inside build-and-test it nearly tripled that job for no benefit.
+  release-build:
+    name: Build every release artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
       - name: Build every release artifact
         run: ./releng/build-release.sh
 
