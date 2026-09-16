@@ -22,10 +22,34 @@ drives assertions through the real `dirq` CLI the way an operator would.
 - A package deploy actually installing, on exactly the targeted hosts,
   verified by asking the fleet for the installed marker file rather than
   trusting the deploy's own report
+- An Ansible playbook running through the mesh — a real module, shipped
+  to the host and executed by Python there, not `raw` — and a file read
+  back off an agent, so both directions of file transfer are covered
+- Agent-side Rego policy actually refusing an instruction, on an agent
+  configured with a policy file, with the refusal distinguishable from a
+  command failure
+- `dirq cert rotate agent_cert` reissuing every agent's mTLS certificate
+  with the fleet still answering afterwards
+- Chaos: a killed leaf accounted for without the dispatcher hanging, a
+  restarted agent rejoining, and a killed zone leader leaving every
+  survivor reattached with the server's topology following the failover
 - Much of the `dirq` CLI, which has no other test at all: `hosts
   list/show/facts/graph/tag/untag`, `select` including aggregates,
-  `exec` with and without `--script`, `deploy`, `token
-  create/list/delete`, `queries`, `doctor` and `cert generate`
+  `exec` with and without `--script`, `deploy`, `grep`, `run`, `token
+  create/list/delete`, `queries`, `doctor`, `cert generate` and
+  `cert rotate`
+
+## Shape of the fleet
+
+Thirteen agents on one network. Four carry the tags the targeting
+assertions depend on, eight exist to force a real tree
+(`max_zone_leaders=2`, `max_children=2`, so most agents reach the server
+through a parent rather than directly), and one runs a restrictive policy.
+A flat mesh would leave relaying — the architecture's central claim —
+entirely untested.
+
+Order matters: the chaos checks run last because they deliberately break
+the fleet. Anything asserted after them is asserting against wreckage.
 
 ## Running it
 

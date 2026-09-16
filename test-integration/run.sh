@@ -703,6 +703,99 @@ then pass "an unpoliced agent still runs the same command"
 else fail "policy leaked to an agent that has none"
 fi
 
+# answeringCount runs a fleet query and reports how many answered, or
+# ERR. --timeout 10 so a hang is visible as a slow check rather than a
+# minute of silence.
+answeringCount() {
+  "$BIN" --json select hostname --timeout 10 2>/dev/null \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d.get("results",[])))' 2>/dev/null || echo ERR
+}
+
+say "grep searches a file across the fleet"
+# Plant a known file on the prod hosts, then find it through the mesh.
+# Via --script rather than an inline command: quoting a multi-line redirect
+# through the shell, the CLI's argument flattening and the agent mangles it
+# (the agent received a printf with its quotes stripped).
+cat > "$CERTS/plant.sh" <<'PLANT'
+#!/bin/sh
+printf 'alpha\nNEEDLE-beta\ngamma\n' > /tmp/dirq-grep-target
+PLANT
+"$BIN" exec WHERE tag.env = "'prod'" --script "$CERTS/plant.sh" >/dev/null 2>&1
+"$BIN" --json grep NEEDLE /tmp/dirq-grep-target WHERE tag.env = "'prod'" > "$CERTS/grep.json" 2>&1 || true
+if python3 - "$CERTS/grep.json" <<'ASSERT'
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1]) if l.strip().startswith("{")]
+# grep's result lines are {"host": ..., "line": "<n>:<text>"} — a different
+# shape from exec's, which is worth pinning rather than assuming.
+hits = [l for l in lines if l.get("host")]
+assert hits, f"grep returned no matches at all: {lines}"
+names = sorted({l["host"] for l in hits})
+# Only the two exec-enabled prod hosts ran the script that made the file;
+# locked-01 matches the tag but has exec disabled.
+assert names == ["web-01", "web-02"], f"grep answered from {names}, want web-01 and web-02"
+for h in hits:
+    assert "NEEDLE" in h["line"], f"a returned line does not match the pattern: {h}"
+assert not any("gamma" in h["line"] for h in hits), "grep returned non-matching lines too"
+ASSERT
+then pass "grep found the planted line on both hosts and nothing else"
+else fail "fleet grep"
+fi
+
+say "a file is fetched back up through the mesh"
+if ! command -v ansible-playbook >/dev/null 2>&1; then
+  echo "  skipped: ansible-playbook not installed"
+else
+  # put_file is covered by the copy task earlier; this is the return
+  # direction, which nothing else exercises.
+  cat > "$CERTS/fetch.yml" <<'YML'
+---
+- name: Fetch a file back from the agent
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Read a file that only exists on the agent
+      ansible.builtin.slurp:
+        src: /tmp/dirq-grep-target
+      register: grabbed
+
+    - name: Prove the content came back
+      ansible.builtin.assert:
+        that:
+          - "'NEEDLE-beta' in (grabbed.content | b64decode)"
+        fail_msg: "content did not survive the trip back"
+YML
+  FETCH_OUT="$("$BIN" run "$CERTS/fetch.yml" WHERE hostname = "'web-01'" 2>&1 || true)"
+  if printf '%s' "$FETCH_OUT" | grep -qE "ok=2|changed=0.*failed=0" && ! printf '%s' "$FETCH_OUT" | grep -q "failed=1"; then
+    pass "a file was read back off the agent and its content verified"
+  else
+    fail "fetch (recap: $(printf '%s' "$FETCH_OUT" | grep -A1 'PLAY RECAP' | tail -1))"
+  fi
+fi
+
+say "agent certificates rotate without dropping the fleet"
+# Every agent holds an mTLS client cert issued at registration. Rotation
+# broadcasts to the zone leaders, each agent calls RenewCert and persists a
+# fresh one. If that breaks, the fleet keeps working until agents reconnect
+# and then goes dark — invisible until the worst moment.
+BEFORE="$(answeringCount)"
+"$BIN" cert rotate agent_cert > "$CERTS/rotate.txt" 2>&1 || true
+ROTATED=no
+DEADLINE=$((SECONDS + 60))
+while [ "$SECONDS" -lt "$DEADLINE" ]; do
+  if "$RUNTIME" logs web-01 2>&1 | grep -q "rotating agent cert via RenewCert"; then
+    ROTATED=yes
+    break
+  fi
+  sleep 2
+done
+sleep 5
+AFTER="$(answeringCount)"
+if [ "$ROTATED" = yes ] && [ "$AFTER" = "$BEFORE" ] && [ "$AFTER" != ERR ]; then
+  pass "certificates rotated and all $AFTER agents still answered"
+else
+  fail "cert rotation (agent rotated=$ROTATED answering before=$BEFORE after=$AFTER; $(head -1 "$CERTS/rotate.txt"))"
+fi
+
 # ── chaos ────────────────────────────────────────────────
 #
 # Everything above assumes the fleet stays up. The mesh's resilience
@@ -732,14 +825,6 @@ for h in hosts:
         print(h["hostname"])
         break
 '
-}
-
-# answeringCount runs a fleet query and reports how many answered, or
-# ERR. --timeout 10 so a hang is visible as a slow check rather than a
-# minute of silence.
-answeringCount() {
-  "$BIN" --json select hostname --timeout 10 2>/dev/null \
-    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d.get("results",[])))' 2>/dev/null || echo ERR
 }
 
 say "chaos: a killed leaf is accounted for, not waited on"
