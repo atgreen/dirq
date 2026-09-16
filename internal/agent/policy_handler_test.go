@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -132,9 +133,18 @@ func TestPutFilePolicyAllowedWrites(t *testing.T) {
 	if err := os.MkdirAll(allowed, 0755); err != nil {
 		t.Fatal(err)
 	}
+	// The prefix has to be built, not concatenated. A Rego string literal is
+	// a JSON string, so a Windows path's backslashes are escape sequences and
+	// the policy fails to parse; and the separator must be the platform's,
+	// since the paths being matched come from filepath.Join. json.Marshal
+	// gives a correctly quoted and escaped literal on both.
+	prefix, err := json.Marshal(allowed + string(filepath.Separator))
+	if err != nil {
+		t.Fatal(err)
+	}
 	policySrc := "package dirq.agent\n\ndefault allow := false\n\n" +
 		"allow if {\n\tinput.operation == \"put_file\"\n\t" +
-		"startswith(input.dest_path, \"" + allowed + "/\")\n}\n"
+		"startswith(input.dest_path, " + string(prefix) + ")\n}\n"
 	a, cs := newTestAgent(t, policySrc)
 
 	// A matching path is written.
