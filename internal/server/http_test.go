@@ -29,6 +29,12 @@ type mockDB struct {
 	facts              map[string][]db.Fact
 	lastDelete         string
 	lastCreateAAPUsers []string
+
+	// Injected failures, so handler error paths can be exercised. Nil
+	// means the operation succeeds.
+	errUpdateTags  error
+	errListTokens  error
+	errDeleteToken error
 }
 
 type mockToken struct {
@@ -60,6 +66,9 @@ func (m *mockDB) CreateToken(_ context.Context, name, scope string, aapUsers []s
 }
 
 func (m *mockDB) ListTokens(_ context.Context) ([]db.Token, error) {
+	if m.errListTokens != nil {
+		return nil, m.errListTokens
+	}
 	var tokens []db.Token
 	for _, t := range m.tokens {
 		tokens = append(tokens, t.token)
@@ -69,7 +78,7 @@ func (m *mockDB) ListTokens(_ context.Context) ([]db.Token, error) {
 
 func (m *mockDB) DeleteToken(_ context.Context, name string) error {
 	m.lastDelete = name
-	return nil
+	return m.errDeleteToken
 }
 
 func (m *mockDB) GetAgent(_ context.Context, id string) (db.Agent, error) {
@@ -86,6 +95,9 @@ func (m *mockDB) ListAgents(_ context.Context, _ db.ListAgentsFilter) ([]db.Agen
 }
 
 func (m *mockDB) UpdateAgentTags(_ context.Context, id string, tags map[string]string) error {
+	if m.errUpdateTags != nil {
+		return m.errUpdateTags
+	}
 	for i, a := range m.agents {
 		if a.ID == id {
 			m.agents[i].Tags = tags

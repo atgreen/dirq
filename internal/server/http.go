@@ -512,6 +512,13 @@ func (s *Server) handleMergeTags(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid JSON: expected {\"key\": \"value\", ...}")
 		return
 	}
+	// An agent that registered without tags has a nil map here, and
+	// writing to a nil map panics. Merge is the only one of the three
+	// tag handlers that writes in place: set replaces the map outright,
+	// and delete on a nil map is a no-op.
+	if agent.Tags == nil {
+		agent.Tags = make(map[string]string, len(newTags))
+	}
 	for k, v := range newTags {
 		agent.Tags[k] = v
 	}
