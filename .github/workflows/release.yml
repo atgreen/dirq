@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Build all Go binaries and the Ansible collection.
@@ -69,9 +69,13 @@ jobs:
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-server-linux-amd64 ./cmd/dirq-server
 
           # Agent: cross-compile for all platforms (no CGO).
-          for GOARCH in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o dist/dirq-agent-linux-$GOARCH ./cmd/dirq-agent
-            CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o dist/dirq-linux-$GOARCH      ./cmd/dirq
+          # Loop over `arch`, not `GOARCH`: naming the loop variable after the
+          # environment variable it feeds makes `GOARCH=$GOARCH cmd ... $GOARCH`
+          # read as though the expansion sees the assignment, which it does not.
+          # It worked only because both happened to hold the same value.
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -ldflags "$LDFLAGS" -o dist/dirq-agent-linux-$arch ./cmd/dirq-agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -ldflags "$LDFLAGS" -o dist/dirq-linux-$arch      ./cmd/dirq
           done
 
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/dirq-agent-windows-amd64.exe ./cmd/dirq-agent
@@ -132,7 +136,7 @@ jobs:
           wget -q https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
           tar -C /usr/local -xzf go1.26.2.linux-amd64.tar.gz
           rm go1.26.2.linux-amd64.tar.gz
-          echo "/usr/local/go/bin" >> $GITHUB_PATH
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
 
       - name: Setup rpmbuild
         run: |
@@ -208,7 +212,7 @@ jobs:
           wget -q https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
           tar -C /usr/local -xzf go1.26.2.linux-amd64.tar.gz
           rm go1.26.2.linux-amd64.tar.gz
-          echo "/usr/local/go/bin" >> $GITHUB_PATH
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
 
       - name: Update changelog version
         run: |
@@ -379,7 +383,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts/dist
-          sha256sum *.tar.gz *.exe > checksums.sha256
+          sha256sum -- *.tar.gz *.exe > checksums.sha256
 
       - name: Upload signed artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -517,8 +521,8 @@ jobs:
           REPO="${{ github.repository }}"
           BASE="https://github.com/${REPO}/releases/download/${TAG}"
           cd /tmp/rpms/repodata
-          gunzip -f *-primary.xml.gz
-          PRIMARY=$(ls *-primary.xml)
+          gunzip -f -- *-primary.xml.gz
+          PRIMARY=$(ls -- *-primary.xml)
           sed -i "s|<location href=\"\([^\"]*\.rpm\)\"|<location href=\"${BASE}/\1\"|g" "${PRIMARY}"
           gzip -9 "${PRIMARY}"
 
@@ -531,7 +535,11 @@ jobs:
 
           for gz in repodata/*.xml.gz; do
             fname="$(basename "${gz}")"
-            type="$(echo "${fname}" | sed 's/.*-\([a-z_]*\)\.xml\.gz/\1/')"
+            # repodata names are <hash>-<type>.xml.gz; strip the suffix, then
+            # everything up to the last dash. Same result as the sed it
+            # replaces, without forking two processes per file.
+            type="${fname%.xml.gz}"
+            type="${type##*-}"
             checksum="$(sha256sum "${gz}" | awk '{print $1}')"
             size="$(stat -c%s "${gz}")"
             open_file="${gz%.gz}"
