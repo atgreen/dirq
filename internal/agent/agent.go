@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -91,8 +92,16 @@ type Agent struct {
 	// gRPC server for downstream peers
 	grpcSv *grpc.Server
 
-	// Upstream connection (to server or parent peer)
+	// Upstream connection (to server or parent peer).
+	//
+	// upstreamMu guards upstreamStream, which connectLoop replaces on every
+	// reconnect while relay goroutines are forwarding through it. It is a
+	// separate lock from a.mu deliberately: a.mu guards downstreams and is
+	// already held across parts of RelayStream, and RWMutex is not
+	// reentrant. Reach for the stream through upstreamSend/upstreamGet
+	// rather than touching the field.
 	upstreamConn   *grpc.ClientConn
+	upstreamMu     sync.RWMutex
 	upstreamStream pb.DirQServer_AgentStreamClient
 	serverVerifier serverMessageVerifier
 
@@ -451,7 +460,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 			a.upstreamConn.Close()
 			a.upstreamConn = nil
 		}
-		a.upstreamStream = nil
+		a.setUpstreamStream(nil)
 
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -585,7 +594,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("open agent stream: %w", err)
 		}
-		a.upstreamStream = stream
+		a.setUpstreamStream(stream)
 	} else {
 		// Use peer dial options (ServerName override) for relay connections.
 		// Pin the assigned parent's identity on this primary connection.
@@ -606,7 +615,7 @@ func (a *Agent) connectUpstream(ctx context.Context) error {
 			a.upstreamConn = nil
 			return fmt.Errorf("relay stream to %s: %w", target, err)
 		}
-		a.upstreamStream = stream
+		a.setUpstreamStream(stream)
 	}
 
 	return a.sendHello()
@@ -633,7 +642,7 @@ func (a *Agent) connectToAddr(ctx context.Context, addr, expectedID string) erro
 	}
 
 	a.upstreamConn = conn
-	a.upstreamStream = stream
+	a.setUpstreamStream(stream)
 
 	if err := a.sendHello(); err != nil {
 		conn.Close()
@@ -650,7 +659,7 @@ func (a *Agent) sendHello() error {
 	for name := range modules.Registry() {
 		caps = append(caps, name)
 	}
-	return a.upstreamStream.Send(&pb.AgentMessage{
+	return a.upstreamSend(&pb.AgentMessage{
 		Payload: &pb.AgentMessage_Hello{
 			Hello: &pb.AgentHello{
 				AgentId:      a.agentID,
@@ -842,7 +851,15 @@ func (a *Agent) mainLoop(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
 		for {
-			msg, err := a.upstreamStream.Recv()
+			// Take a handle rather than reading the field: connectLoop
+			// replaces the stream on every reconnect, and nil means the
+			// agent is currently detached.
+			up := a.upstreamGet()
+			if up == nil {
+				errCh <- errNoUpstream
+				return
+			}
+			msg, err := up.Recv()
 			if err == io.EOF {
 				errCh <- nil
 				return
@@ -887,10 +904,10 @@ func (a *Agent) mainLoop(ctx context.Context) error {
 // notifyPeerDisconnected sends a PeerDisconnected message upstream so the
 // server can immediately mark the agent (and its subtree) offline.
 func (a *Agent) notifyPeerDisconnected(peerID string) {
-	if a.upstreamStream == nil {
+	if a.upstreamGet() == nil {
 		return
 	}
-	err := a.upstreamStream.Send(&pb.AgentMessage{
+	err := a.upstreamSend(&pb.AgentMessage{
 		Payload: &pb.AgentMessage_PeerDisconnected{
 			PeerDisconnected: &pb.PeerDisconnected{
 				AgentId: peerID,
@@ -909,10 +926,10 @@ func (a *Agent) notifyPeerDisconnected(peerID string) {
 // server topology — there is no other upstream notification of the new
 // attachment outside of full re-registration.
 func (a *Agent) notifyPeerConnected(peerID string) {
-	if a.upstreamStream == nil {
+	if a.upstreamGet() == nil {
 		return
 	}
-	err := a.upstreamStream.Send(&pb.AgentMessage{
+	err := a.upstreamSend(&pb.AgentMessage{
 		Payload: &pb.AgentMessage_PeerConnected{
 			PeerConnected: &pb.PeerConnected{
 				AgentId:  peerID,
@@ -1176,7 +1193,7 @@ func (a *Agent) sendQueryResult(queryID, hostname string, success bool, errMsg s
 			},
 		},
 	}
-	if err := a.upstreamStream.Send(msg); err != nil {
+	if err := a.upstreamSend(msg); err != nil {
 		a.log.Error("failed to send query result", "error", err)
 	}
 }
@@ -1344,7 +1361,7 @@ func (a *Agent) RelayStream(stream pb.DirQRelay_RelayStreamServer) error {
 		}
 
 		// Forward everything upstream immediately — no buffering.
-		if err := a.upstreamStream.Send(msg); err != nil {
+		if err := a.upstreamSend(msg); err != nil {
 			a.log.Error("failed to relay upstream", "peer_id", peerID, "error", err)
 			return err
 		}
@@ -1425,3 +1442,40 @@ func protoFiltersToConditions(filters []*pb.Filter) []*query.Condition {
 	}
 	return conds
 }
+
+// setUpstreamStream installs the current upstream stream, or clears it
+// with nil while the agent has no parent.
+func (a *Agent) setUpstreamStream(s pb.DirQServer_AgentStreamClient) {
+	a.upstreamMu.Lock()
+	a.upstreamStream = s
+	a.upstreamMu.Unlock()
+}
+
+// upstreamGet returns the current upstream stream, which is nil whenever
+// the agent is not attached to a parent.
+func (a *Agent) upstreamGet() pb.DirQServer_AgentStreamClient {
+	a.upstreamMu.RLock()
+	defer a.upstreamMu.RUnlock()
+	return a.upstreamStream
+}
+
+// upstreamSend forwards a message to the parent.
+//
+// It returns an error rather than panicking when there is no upstream
+// connection. A child opens its relay stream as soon as the server assigns
+// it a parent, which can be before that parent has attached upstream or
+// while it is reconnecting after losing its own. Dropping one message is
+// vastly better than a nil dereference taking the agent down and its whole
+// subtree off the mesh with it (dirq-4mn).
+func (a *Agent) upstreamSend(msg *pb.AgentMessage) error {
+	s := a.upstreamGet()
+	if s == nil {
+		return errNoUpstream
+	}
+	return s.Send(msg)
+}
+
+// errNoUpstream is returned when a send is attempted with no parent
+// attached. Callers log and carry on; the dispatcher's own accounting
+// notices the missing response.
+var errNoUpstream = errors.New("no upstream connection")
