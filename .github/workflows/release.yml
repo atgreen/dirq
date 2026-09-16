@@ -15,6 +15,9 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   extract-version:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.VERSION }}
     steps:
@@ -29,13 +32,22 @@ jobs:
     name: Build Binaries
     needs: [extract-version]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26'
+          # Release builds are hermetic: setup-go caches by default, and a
+          # poisoned cache on a tag-triggered run would reach the published
+          # binaries. CI keeps its cache; this job trades the minutes.
+          cache: false
 
       - name: Extract release notes from CHANGELOG.md
         run: |
@@ -87,7 +99,7 @@ jobs:
         run: ansible-galaxy collection build --force
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-artifacts
           path: |
@@ -102,12 +114,17 @@ jobs:
     name: Build RPMs
     needs: [extract-version]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     container:
       image: almalinux:8
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install build tools
         run: |
@@ -160,7 +177,7 @@ jobs:
           rpmsign --addsign rpmbuild/RPMS/x86_64/*.rpm
 
       - name: Upload RPM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rpm-packages
           path: rpmbuild/RPMS/x86_64/*.rpm
@@ -172,12 +189,17 @@ jobs:
     name: Build DEBs
     needs: [extract-version]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     container:
       image: debian:stable
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install build tools
         run: |
@@ -216,7 +238,7 @@ jobs:
         run: cp ../*.deb . 2>/dev/null || true
 
       - name: Upload DEB artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deb-packages
           path: ./*.deb
@@ -228,13 +250,18 @@ jobs:
     name: Windows Installers
     needs: [build, extract-version]
     runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: build-artifacts
           path: ./artifacts
@@ -287,7 +314,7 @@ jobs:
           Move-Item "releng\installer\wix\dirq-agent-$env:VERSION.msi" "artifacts\dist\"
 
       - name: Upload installer artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-installers
           path: |
@@ -301,21 +328,24 @@ jobs:
     name: Sign Artifacts
     needs: [build]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       id-token: write
       attestations: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: build-artifacts
           path: ./artifacts
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Create tarballs and sign
         run: |
@@ -335,12 +365,12 @@ jobs:
           done
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: artifacts/dist/*.tar.gz
 
       - name: Generate SBOMs
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: artifacts/dist/
           output-file: artifacts/dist/sbom.spdx.json
@@ -352,7 +382,7 @@ jobs:
           sha256sum *.tar.gz *.exe > checksums.sha256
 
       - name: Upload signed artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signed-artifacts
           path: |
@@ -370,11 +400,14 @@ jobs:
     name: Generate SLSA Subjects
     needs: [sign, build-rpm, build-deb, build-windows-installers]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
 
@@ -394,6 +427,12 @@ jobs:
       actions: read
       id-token: write
       contents: write
+    # Deliberately NOT pinned to a hash. slsa-verifier verifies the ref of
+    # the trusted generator's reusable workflow, so upstream requires an
+    # exact @vX.Y.Z tag: "the build will fail if you reference it via a
+    # shorter tag like @vX.Y or @vX", and hash pinning is not supported.
+    # This is the one place the repo's pin-everything rule does not apply.
+    # zizmor: ignore[unpinned-uses]
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.generate-provenance-subjects.outputs.hashes }}"
@@ -406,13 +445,14 @@ jobs:
     name: Publish Release
     needs: [build, sign, build-rpm, build-deb, build-windows-installers, slsa-provenance, extract-version]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
 
@@ -448,11 +488,16 @@ jobs:
     name: Build RPM Repo
     needs: [release, extract-version]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
       TAG: v${{ needs.extract-version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install createrepo_c
         run: sudo apt-get install -y createrepo-c
@@ -520,7 +565,7 @@ jobs:
           gpg --batch --export --armor > /tmp/rpms/RPM-GPG-KEY-dirq
 
       - name: Upload RPM repo artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rpm-repo
           path: /tmp/rpms/repodata/
@@ -529,7 +574,7 @@ jobs:
         env:
           RPM_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
         if: ${{ env.RPM_GPG_PRIVATE_KEY != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rpm-repo-key
           path: /tmp/rpms/RPM-GPG-KEY-dirq
@@ -541,11 +586,16 @@ jobs:
     name: Build DEB Repo
     needs: [release, extract-version]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
       TAG: v${{ needs.extract-version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install APT repo tools
         run: sudo apt-get update && sudo apt-get install -y dpkg-dev gpg
@@ -618,7 +668,7 @@ jobs:
           gpg --batch --yes --armor --clearsign -o InRelease Release
 
       - name: Upload DEB repo artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deb-repo
           path: /tmp/apt-repo/
@@ -627,7 +677,7 @@ jobs:
         env:
           DEB_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
         if: ${{ env.DEB_GPG_PRIVATE_KEY != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deb-repo-key
           path: /tmp/debs/dirq-archive-keyring.gpg
@@ -641,36 +691,39 @@ jobs:
     name: Publish Package Repos
     needs: [build-rpm-repo, build-deb-repo]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write # peaceiris pushes rpm-repo/ + deb-repo/ to the gh-pages branch
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       # Assemble the same rpm-repo/ + deb-repo/ tree the site has always served.
       # (RPMs are fetched from GitHub Release URLs rewritten into primary.xml, so
       # only repodata + the GPG key live here; the DEB artifact carries the full
       # pool/ + dists/ tree plus its keyring.)
       - name: Download RPM repo artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: rpm-repo
           path: public/rpm-repo/repodata
 
       - name: Download RPM GPG key
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: rpm-repo-key
           path: public/rpm-repo
         continue-on-error: true
 
       - name: Download DEB repo artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: deb-repo
           path: public/deb-repo
 
       - name: Download DEB keyring
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: deb-repo-key
           path: public/deb-repo
@@ -698,7 +751,7 @@ jobs:
       # keep_files: true → write ONLY rpm-repo/ and deb-repo/; never delete the
       # MkDocs site that .github/workflows/docs.yml publishes to the same branch.
       - name: Publish package repos to gh-pages (preserving the docs site)
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
