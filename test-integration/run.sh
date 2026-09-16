@@ -194,14 +194,18 @@ while :; do
 done
 echo "  all ${#AGENTS[@]} agents registered and online"
 
-# Registered and online is not the same as reachable. An agent appears in
-# the host list as soon as it registers, but a query is dispatched down
-# the gRPC agent streams, and a moment passes before a freshly registered
-# agent's stream is connected. Waiting on "online" is waiting on a proxy;
-# wait on the condition the assertions actually need — that a trivial
-# query comes back with nobody missing. Without this the suite passes on
-# a fast machine and fails on a loaded CI runner, which is the worst way
-# for a test to be wrong.
+# `hosts list` above is not enough on its own, and this is the second half
+# of the wait rather than a belt-and-braces duplicate of it.
+#
+# "Online" is written to the database when an agent registers. A query is
+# dispatched down the gRPC agent streams, which the agent connects a
+# moment after registering. Between those two points the host list shows
+# four online agents and a query finds nobody home — which is exactly how
+# this suite failed in CI with missing=1 while passing locally, because
+# the window only opens on a machine slow enough to lose the race.
+#
+# So wait on the capability the assertions need rather than a proxy for
+# it: a trivial query coming back with nobody missing.
 say "waiting for the fleet to become answerable"
 deadline=$((SECONDS + 120))
 while :; do
