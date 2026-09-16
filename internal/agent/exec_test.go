@@ -923,3 +923,78 @@ func TestHandleDeployMkdirFailure(t *testing.T) {
 		t.Errorf("error = %q, want mkdir failure", resp.Error)
 	}
 }
+
+// TestHandleExecRequestBoundsRunawayOutput is the end-to-end half of the
+// bounded-buffer change (dirq-424). Before it, a command that printed
+// without stopping grew the agent's heap until the host ran out of memory —
+// and the agent is the one process that has to survive to report the
+// problem. The command itself must still succeed: truncating output is a
+// far better outcome than failing a command for being chatty.
+func TestHandleExecRequestBoundsRunawayOutput(t *testing.T) {
+	skipOnWindows(t)
+	a, cs := newExecAgent(t)
+
+	// Comfortably past maxOutputBytes, cheap to produce.
+	overflow := maxOutputBytes + 1024*1024
+
+	a.handleExecRequest(context.Background(), &pb.ExecRequest{
+		RequestId: "exec-flood",
+		AgentId:   a.agentID,
+		Command:   fmt.Sprintf("dd if=/dev/zero bs=1024 count=%d 2>/dev/null", overflow/1024),
+	})
+
+	resp := execResponse(t, cs)
+	if !resp.Success {
+		t.Fatalf("success=false error=%q — a chatty command must not be failed for it", resp.Error)
+	}
+	if len(resp.Stdout) >= overflow {
+		t.Errorf("stdout is %d bytes, want it bounded near %d", len(resp.Stdout), maxOutputBytes)
+	}
+	// Bound plus the notice, nothing like the full flood.
+	if len(resp.Stdout) > maxOutputBytes+1024 {
+		t.Errorf("stdout is %d bytes, want at most the cap plus a short notice", len(resp.Stdout))
+	}
+	if !strings.Contains(string(resp.Stdout), "truncated") {
+		t.Error("truncated stdout carries no notice — it reads as a command that simply stopped")
+	}
+}
+
+// Stderr is bounded on the same terms as stdout.
+func TestHandleExecRequestBoundsRunawayStderr(t *testing.T) {
+	skipOnWindows(t)
+	a, cs := newExecAgent(t)
+
+	overflow := maxOutputBytes + 1024*1024
+	a.handleExecRequest(context.Background(), &pb.ExecRequest{
+		RequestId: "exec-flood-err",
+		AgentId:   a.agentID,
+		// The group's stdout is redirected to stderr first, so dd's data
+		// lands on fd 2 while dd's own diagnostics go to /dev/null.
+		Command: fmt.Sprintf("{ dd if=/dev/zero bs=1024 count=%d 2>/dev/null; } >&2", overflow/1024),
+	})
+
+	resp := execResponse(t, cs)
+	if len(resp.Stderr) > maxOutputBytes+1024 {
+		t.Errorf("stderr is %d bytes, want it bounded near %d", len(resp.Stderr), maxOutputBytes)
+	}
+	if !strings.Contains(string(resp.Stderr), "truncated") {
+		t.Error("truncated stderr carries no notice")
+	}
+}
+
+// Output that fits is passed through byte for byte, notice-free.
+func TestHandleExecRequestLeavesNormalOutputAlone(t *testing.T) {
+	skipOnWindows(t)
+	a, cs := newExecAgent(t)
+
+	a.handleExecRequest(context.Background(), &pb.ExecRequest{
+		RequestId: "exec-normal",
+		AgentId:   a.agentID,
+		Command:   "printf 'line one\nline two\n'",
+	})
+
+	resp := execResponse(t, cs)
+	if got := string(resp.Stdout); got != "line one\nline two\n" {
+		t.Errorf("stdout = %q, want the output verbatim with no notice", got)
+	}
+}

@@ -123,9 +123,10 @@ func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {
 		cmd.Stdin = bytes.NewReader(req.GetStdin())
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	stdoutBuf := newBoundedBuffer(maxOutputBytes)
+	stderrBuf := newBoundedBuffer(maxOutputBytes)
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
 
 	startedAt := time.Now()
 	err := cmd.Run()
@@ -370,8 +371,8 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 		cmdStr := fmt.Sprintf("sudo -n -u %s tee %s > /dev/null", shellQuote(becomeUser), shellQuote(destPath))
 		cmd := withTreeKill(exec.CommandContext(ctx, "sh", "-c", cmdStr))
 		cmd.Stdin = bytes.NewReader(content)
-		var stderrBuf bytes.Buffer
-		cmd.Stderr = &stderrBuf
+		stderrBuf := newBoundedBuffer(maxOutputBytes)
+		cmd.Stderr = stderrBuf
 		if err := cmd.Run(); err != nil {
 			writeErr = fmt.Errorf("sudo tee failed: %s: %w", stderrBuf.String(), err)
 		} else if req.GetMode() != 0 {
@@ -412,6 +413,30 @@ func (a *Agent) handlePutFile(ctx context.Context, req *pb.PutFileRequest) {
 	}
 
 	a.sendFileChunk(ack)
+}
+
+// readFileViaCommand runs cmd and returns its stdout as file content,
+// refusing anything over maxFileSize.
+//
+// The direct-read path stats the file and rejects oversize before reading.
+// The privileged path cannot — shelling out through sudo is precisely
+// because the agent cannot see the file itself — so the read is bounded
+// instead and hitting the bound is treated as the same refusal. Returning a
+// silently truncated file would be worse than failing: the caller would
+// write a corrupt copy and believe it had the original.
+func readFileViaCommand(cmd *exec.Cmd) ([]byte, error) {
+	stdout := newBoundedBuffer(maxFileSize)
+	stderr := newBoundedBuffer(maxOutputBytes)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%s: %w", stderr.String(), err)
+	}
+	if stdout.Truncated() {
+		return nil, fmt.Errorf("file size exceeds maximum of %d bytes", maxFileSize)
+	}
+	return stdout.Bytes(), nil
 }
 
 // handleFetchFile reads a file from the agent and sends its content back.
@@ -483,13 +508,10 @@ func (a *Agent) handleFetchFile(ctx context.Context, req *pb.FetchFileRequest) {
 		}
 		cmdStr := fmt.Sprintf("sudo -n -u %s cat %s", shellQuote(becomeUser), shellQuote(srcPath))
 		cmd := withTreeKill(exec.CommandContext(ctx, "sh", "-c", cmdStr))
-		var stdoutBuf, stderrBuf bytes.Buffer
-		cmd.Stdout = &stdoutBuf
-		cmd.Stderr = &stderrBuf
-		if err := cmd.Run(); err != nil {
-			readErr = fmt.Errorf("sudo cat failed: %s: %w", stderrBuf.String(), err)
+		if out, err := readFileViaCommand(cmd); err != nil {
+			readErr = fmt.Errorf("sudo cat failed: %w", err)
 		} else {
-			content = stdoutBuf.Bytes()
+			content = out
 			fileSize = int64(len(content))
 		}
 	} else {
@@ -634,9 +656,10 @@ func writeDeployPackage(req *pb.DeployRequest, destPath string) error {
 func (a *Agent) runDeployInstall(ctx context.Context, req *pb.DeployRequest, destPath string) *pb.DeployResponse {
 	cmd := buildCommand(ctx, req.GetInstallCommand(), req.GetBecome(), req.GetBecomeUser(), "")
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	stdoutBuf := newBoundedBuffer(maxOutputBytes)
+	stderrBuf := newBoundedBuffer(maxOutputBytes)
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
 
 	err := cmd.Run()
 
