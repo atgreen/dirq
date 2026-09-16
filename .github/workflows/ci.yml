@@ -65,6 +65,29 @@ jobs:
       - name: Cross-compile Windows amd64
         run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/dirq-agent
 
+  # The agent ships for Windows, and its process handling is genuinely
+  # different there: no process groups to signal, so cancellation walks the
+  # tree with taskkill /T instead. Cross-compiling in build-and-test proves
+  # that code compiles; only a real Windows runner proves it works.
+  windows-agent:
+    name: Agent tests (windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Test the agent on Windows
+        run: go test ./internal/agent/... -v
+
   collection-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
