@@ -68,7 +68,24 @@ DOCUMENTATION = """
 
 
 def _make_ssl_context():
-    """Create SSL context that skips verification when DIRQ_TLS_INSECURE is set."""
+    """Build the SSL context used for every request to the DirQ server.
+
+    DIRQ_TLS_CA names a CA certificate to verify the server against, the
+    same variable the server, the agent and the dirq CLI all read. Without
+    it, a default DirQ deployment - which uses a CA made by `dirq cert
+    generate` - could only be reached by turning verification off for every
+    request this plugin makes, which is a poor trade for carrying module
+    payloads and file transfers.
+
+    DIRQ_TLS_INSECURE=true still disables verification outright. A CA takes
+    precedence over it: naming one is the more specific instruction.
+    """
+    ca = os.environ.get("DIRQ_TLS_CA", "").strip()
+    if ca:
+        # A bad CA path is fatal rather than a quiet fall back to the system
+        # trust store, which would verify against something other than what
+        # was asked for and look like it worked.
+        return ssl.create_default_context(cafile=ca)
     if os.environ.get("DIRQ_TLS_INSECURE", "").lower() == "true":
         ctx = ssl.create_default_context()
         ctx.check_hostname = False

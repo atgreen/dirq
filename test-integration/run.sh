@@ -527,6 +527,52 @@ print(",".join(sorted(names)))' 2>/dev/null || echo ERR)"
   fi
 fi
 
+say "a playbook runs through the mesh"
+if ! command -v ansible-playbook >/dev/null 2>&1; then
+  echo "  skipped: ansible-playbook not installed"
+else
+  cat > "$CERTS/play.yml" <<'YML'
+---
+- name: DirQ end-to-end playbook
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Create a marker proving the playbook ran here
+      ansible.builtin.copy:
+        content: "played\n"
+        dest: /tmp/dirq-playbook-marker
+        mode: "0644"
+YML
+  # A real module, not raw: it has to be shipped to the host and executed
+  # by Python there, which is the whole point of the connection plugin.
+  PLAY_OUT="$("$BIN" run "$CERTS/play.yml" WHERE tag.env = "'prod'" 2>&1 || true)"
+  # Ask the fleet what happened rather than trusting the play recap.
+  PLAYED="$("$BIN" --json exec -- cat /tmp/dirq-playbook-marker 2>/dev/null \
+    | python3 -c '
+import sys, json
+names = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    d = json.loads(line)
+    if d.get("hostname") and d.get("success") and d.get("rc") == 0:
+        names.append(d["hostname"])
+print(",".join(sorted(names)))' 2>/dev/null || echo ERR)"
+  if [ "$PLAYED" = "web-01,web-02" ]; then
+    pass "an Ansible module ran over the mesh on exactly the targeted hosts"
+  else
+    fail "playbook (marker found on: $PLAYED)"
+  fi
+  # locked-01 matches tag.env=prod but has exec disabled. It must be
+  # skipped with a reason, not dragged in to fail the run (dirq-az3).
+  if printf '%s' "$PLAY_OUT" | grep -q "exec disabled: locked-01"; then
+    pass "an agent with exec disabled is skipped by name, not silently targeted"
+  else
+    fail "exec-disabled host not reported as skipped"
+  fi
+fi
+
 say "result"
 if [ "$FAILURES" -eq 0 ]; then
   printf '  \033[32mall checks passed\033[0m\n\n'

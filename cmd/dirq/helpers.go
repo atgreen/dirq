@@ -160,6 +160,11 @@ type queryHost struct {
 	agentID  string
 	tags     map[string]string
 	os       string // "linux", "windows", etc.
+	// execEnabled reports whether the agent accepts exec at all. A query
+	// matches on facts and tags and knows nothing about capability, so
+	// callers that are going to run something have to check this or they
+	// will target agents that cannot possibly comply.
+	execEnabled bool
 }
 
 // runQuery executes a DirQ query and returns matching hosts.
@@ -186,19 +191,21 @@ func runQuery(queryStr string, timeout int) ([]queryHost, error) {
 
 	// Fetch agent details (including tags and OS) for matched hosts.
 	type agentInfo struct {
-		tags map[string]string
-		os   string
+		tags        map[string]string
+		os          string
+		execEnabled bool
 	}
 	agentDetails := map[string]agentInfo{}
 	if hostResp, err := apiRequest("GET", "/api/v1/hosts", nil); err == nil {
 		var agents []struct {
-			ID   string            `json:"id"`
-			Tags map[string]string `json:"tags"`
-			OS   string            `json:"os"`
+			ID          string            `json:"id"`
+			Tags        map[string]string `json:"tags"`
+			OS          string            `json:"os"`
+			ExecEnabled bool              `json:"exec_enabled"`
 		}
 		if json.Unmarshal(hostResp, &agents) == nil {
 			for _, a := range agents {
-				agentDetails[a.ID] = agentInfo{tags: a.Tags, os: a.OS}
+				agentDetails[a.ID] = agentInfo{tags: a.Tags, os: a.OS, execEnabled: a.ExecEnabled}
 			}
 		}
 	}
@@ -207,7 +214,7 @@ func runQuery(queryStr string, timeout int) ([]queryHost, error) {
 	for _, r := range result.Results {
 		if r.Success && r.Hostname != "" {
 			info := agentDetails[r.AgentID]
-			hosts = append(hosts, queryHost{r.Hostname, r.AgentID, info.tags, info.os})
+			hosts = append(hosts, queryHost{r.Hostname, r.AgentID, info.tags, info.os, info.execEnabled})
 		}
 	}
 	return hosts, nil
@@ -445,11 +452,13 @@ func writeInventory(hosts []queryHost) (string, error) {
 
 // connectionPluginDir returns the path to the DirQ Ansible connection plugin.
 func connectionPluginDir() string {
-	// Check standard install paths first, then dev tree relative to binary.
-	candidates := []string{
-		"/usr/share/dirq/connection_plugins",
-		"/usr/local/share/dirq/connection_plugins",
-	}
+	// Paths relative to the running binary come first, so the plugin always
+	// matches the dirq that loaded it. With the system paths first, a
+	// checkout on a machine where dirq had ever been installed silently used
+	// the installed plugin, and edits to the working tree appeared to do
+	// nothing. An installed binary still resolves to the same place, via the
+	// PREFIX/share candidate below.
+	var candidates []string
 	exePath, _ := os.Executable()
 	if exePath != "" {
 		exeDir := filepath.Dir(exePath)
@@ -460,6 +469,10 @@ func connectionPluginDir() string {
 		// PREFIX/share/dirq/connection_plugins/
 		candidates = append(candidates, filepath.Join(exeDir, "..", "share", "dirq", "connection_plugins"))
 	}
+	candidates = append(candidates,
+		"/usr/share/dirq/connection_plugins",
+		"/usr/local/share/dirq/connection_plugins",
+	)
 	for _, dir := range candidates {
 		if absDir, err := filepath.Abs(dir); err == nil {
 			if _, err := os.Stat(absDir); err == nil {
@@ -468,4 +481,23 @@ func connectionPluginDir() string {
 		}
 	}
 	return ""
+}
+
+// execEnabledOnly drops agents that do not accept exec, returning the
+// remainder and the names skipped.
+//
+// A DirQ query matches on tags and facts; it has no notion of capability.
+// Anything that is going to run something on the matches has to filter
+// here, or it targets agents that cannot comply — and the failure surfaces
+// as whatever the first step happens to be, which is never the real
+// reason. See dirq-az3: a playbook run blamed the target's Python.
+func execEnabledOnly(hosts []queryHost) (kept []queryHost, skipped []string) {
+	for _, h := range hosts {
+		if h.execEnabled {
+			kept = append(kept, h)
+		} else {
+			skipped = append(skipped, h.hostname)
+		}
+	}
+	return kept, skipped
 }

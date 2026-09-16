@@ -83,6 +83,23 @@ Examples:
 				return nil
 			}
 
+			// A query matches on tags and facts and knows nothing about
+			// capability, so it happily returns agents registered with exec
+			// disabled. Ansible cannot do anything on those, and leaving
+			// them in aborts the whole run at whatever step touches them
+			// first — which used to be Python detection, reporting "no
+			// Python 3.8+ found" and sending people to install Python on a
+			// host that was never going to run anything (dirq-az3).
+			hosts, skipped := execEnabledOnly(hosts)
+			if len(skipped) > 0 {
+				fmt.Printf("Skipping %d host(s) with exec disabled: %s\n",
+					len(skipped), strings.Join(skipped, ", "))
+			}
+			if len(hosts) == 0 {
+				fmt.Println("No hosts matched the query have exec enabled; nothing to run.")
+				return nil
+			}
+
 			names := make([]string, len(hosts))
 			for i, h := range hosts {
 				names[i] = h.hostname
@@ -176,6 +193,12 @@ Examples:
 			}
 			if tlsInsecure {
 				proc.Env = append(proc.Env, "DIRQ_TLS_INSECURE=true")
+			}
+			// Forwarded for the same reason as the others: it may have come
+			// from client.conf rather than the environment, and without it
+			// the plugin cannot verify a DirQ-generated CA at all.
+			if tlsCA != "" {
+				proc.Env = append(proc.Env, "DIRQ_TLS_CA="+tlsCA)
 			}
 
 			return proc.Run()
