@@ -751,6 +751,26 @@ ASSERT
   else
     fail "zone-leader loss (online=$ONLINE result=$RESULT took ${ELAPSED}s)"
   fi
+
+  # The server's model of the mesh must agree with what it can actually
+  # reach. It used not to: agents that failed over to a fallback stayed
+  # recorded under the dead parent, so they read as online-but-unreachable
+  # while answering queries perfectly well (dirq-613). Reachability is
+  # derived from the topology, so this is the assertion that catches the
+  # topology going stale after a failover.
+  "$BIN" --json hosts list > "$CERTS/postchaos.json" 2>/dev/null || true
+  if python3 - "$CERTS/postchaos.json" <<'ASSERT'
+import json, sys
+hosts = json.load(open(sys.argv[1]))
+online = [h for h in hosts if h["online"]]
+assert online, "no agents online at all after the zone leader died"
+stranded = [h["hostname"] for h in online if not h.get("reachable")]
+assert not stranded, f"online but unreachable after failover: {stranded}"
+print(f"  {len(online)} online, all of them reachable")
+ASSERT
+  then pass "every surviving agent reattached and the topology followed it"
+  else fail "topology went stale after the failover"
+  fi
 fi
 
 say "result"

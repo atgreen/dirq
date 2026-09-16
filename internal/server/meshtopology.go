@@ -296,6 +296,58 @@ func (t *MeshTopology) AssignChild(id, parentID string) bool {
 	return true
 }
 
+// AttachObserved records a parent-child link that already exists in the
+// mesh, as opposed to one the server is choosing.
+//
+// AssignChild refuses when the parent is at capacity, which is right for
+// its job: it PLACES an agent, and capacity is the placement budget.
+// This is the other case. An agent has failed over to a fallback parent
+// and its new parent has reported the attachment. Refusing to record that
+// does not undo the connection — it only makes the topology disagree with
+// the mesh, and the agent stays recorded under a parent that may be dead
+// while answering queries through a live one. Everything that reads the
+// topology is then wrong: hosts graph, reachability, and the subtree walks
+// that drive failure notification and rebalancing (dirq-613).
+//
+// Reality wins here; capacity is still enforced wherever parents are
+// chosen. Returns false only when the link cannot be represented at all —
+// an unknown node, or one that would form a cycle.
+func (t *MeshTopology) AttachObserved(id, parentID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if id == parentID {
+		return false
+	}
+	n, ok := t.nodes[id]
+	if !ok {
+		return false
+	}
+	p, ok := t.nodes[parentID]
+	if !ok {
+		return false
+	}
+	// A cycle would make zoneLeaderOfLocked and the subtree walks loop
+	// forever, so refuse to record one however insistent the report.
+	for cur := p; cur != nil; {
+		if cur.id == id {
+			return false
+		}
+		if cur.parentID == "" {
+			break
+		}
+		cur = t.nodes[cur.parentID]
+	}
+
+	t.unlinkFromParentLocked(n)
+	delete(t.zoneLeaders, id)
+	n.role = "relay"
+	n.parentID = parentID
+	n.depth = p.depth + 1
+	p.children[id] = struct{}{}
+	return true
+}
+
 // Reparent moves an existing agent to a new parent.  Same constraints as
 // AssignChild.
 func (t *MeshTopology) Reparent(id, newParentID string) bool {

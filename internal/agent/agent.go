@@ -366,8 +366,13 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		// Try primary parent first.
+		// Try primary parent first. connectedTo records the address that
+		// actually worked: a.parentAddr names the primary, so logging that
+		// after a fallback succeeded reported the node that had just died
+		// and read as though the agent had reattached to a host that was
+		// down (dirq-1yr).
 		connected := false
+		connectedTo := a.parentAddr
 		err := a.connectUpstream(ctx)
 		if err == nil {
 			connected = true
@@ -386,6 +391,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 				if err := a.connectToAddr(ctx, addr, fallbackID); err == nil {
 					a.log.Info("connected to fallback parent", "fallback", i, "addr", addr)
 					connected = true
+					connectedTo = addr
 					break
 				}
 				a.log.Warn("fallback parent failed", "fallback", i, "addr", addr, "error", err)
@@ -398,6 +404,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 					// Got a new parent — try connecting to it.
 					if err := a.connectUpstream(ctx); err == nil {
 						connected = true
+						connectedTo = a.parentAddr
 					} else {
 						a.log.Warn("new parent also unreachable", "addr", a.parentAddr, "error", err)
 					}
@@ -432,7 +439,7 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 		// Reset backoff on successful connect.
 		backoff = 1 * time.Second
 
-		a.log.Info("upstream connected", "target", a.parentAddr)
+		a.log.Info("upstream connected", "target", connectedTo)
 
 		// If the cert was near expiry at load time, renew it now that we have
 		// a live connection.  Failure is non-fatal: the existing cert is still

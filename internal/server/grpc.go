@@ -439,7 +439,14 @@ func (s *Server) handlePeerConnected(ctx context.Context, pc *pb.PeerConnected) 
 	if pc.AgentId == "" || pc.ParentId == "" {
 		return
 	}
-	s.topology.AssignChild(pc.AgentId, pc.ParentId)
+	// The agent is already attached — this is a report, not a request — so
+	// record it even if the new parent is over its placement budget.
+	// Ignoring a refusal here left agents recorded under a dead parent
+	// while they answered through a live one (dirq-613).
+	if !s.topology.AttachObserved(pc.AgentId, pc.ParentId) {
+		s.log.Warn("PeerConnected: could not record the reported attachment",
+			"agent_id", pc.AgentId, "parent_id", pc.ParentId)
+	}
 	s.topology.MarkOnline(pc.AgentId)
 	if err := s.db.UpdateAgentHeartbeat(ctx, pc.AgentId); err != nil {
 		s.log.Error("PeerConnected: heartbeat update failed",
