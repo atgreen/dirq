@@ -45,3 +45,6 @@ site/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+# Local interaction-event export, same class as .beads/backup/. Ignored here
+# rather than in .beads/.gitignore, which bd manages and may rewrite.
+.beads/interactions.jsonl
