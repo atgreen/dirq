@@ -136,3 +136,26 @@ func TestGetHostIsEnrichedLikeTheList(t *testing.T) {
 		t.Errorf("role = %q, want the live topology role zone_leader, not the stored %q", got.Role, stored.Role)
 	}
 }
+
+// TestReachable_OfflineAgentIsNotReachable pins that a dead agent is not
+// reported reachable because the path to where it used to sit is healthy.
+// Observed on the container fleet: a killed agent showed online=false and
+// reachable=true for as long as it stayed dead, which is the opposite of
+// what the field is for.
+func TestReachable_OfflineAgentIsNotReachable(t *testing.T) {
+	s := newTestServer(&mockDB{}, true)
+	s.topology.AddAgent("zl-1", "zl-1", "10.0.0.1:50052")
+	s.topology.AssignZoneLeader("zl-1")
+	s.topology.AddAgent("leaf-1", "leaf-1", "10.0.0.2:50052")
+	if !s.topology.AssignChild("leaf-1", "zl-1") {
+		t.Fatal("setup failed")
+	}
+	connectStream(s, "zl-1") // the path is alive; the agent is not
+
+	agents := []db.Agent{{ID: "leaf-1", Hostname: "leaf-1", Online: false}}
+	s.enrichWithTopology(agents)
+
+	if agents[0].Reachable {
+		t.Error("an offline agent reports reachable because its zone leader has a stream")
+	}
+}

@@ -1024,20 +1024,31 @@ ASSERT
   # own parent survived so they never reattached and were never reported
   # (dirq-zwn). "How long until it recovers" had no answer.
   say "chaos: the fleet returns to full strength"
-  "$RUNTIME" start "$ZL" "$LEAF" >/dev/null 2>&1
-  RECOVER_START=$SECONDS
-  DEADLINE=$((SECONDS + 180)); BACKUP=0
-  while [ "$SECONDS" -lt "$DEADLINE" ]; do
-    BACKUP="$("$BIN" --json hosts list 2>/dev/null \
-      | python3 -c 'import sys,json;print(sum(1 for h in json.load(sys.stdin) if h["online"]))' 2>/dev/null || echo 0)"
-    [ "$BACKUP" = "${#AGENTS[@]}" ] && break
-    sleep 3
-  done
-  RECOVER_TOOK=$((SECONDS - RECOVER_START))
-  if [ "$BACKUP" = "${#AGENTS[@]}" ]; then
-    pass "all ${#AGENTS[@]} agents online again ${RECOVER_TOOK}s after restart"
+  # Confirm the fleet really is short before restarting anything.
+  # Without this the check can pass against a fleet that was never
+  # reduced, which is how an earlier version reported a recovery time of
+  # zero: it was measuring nothing.
+  BEFORE_RESTART="$("$BIN" --json hosts list 2>/dev/null \
+    | python3 -c 'import sys,json;print(sum(1 for h in json.load(sys.stdin) if h["online"]))' 2>/dev/null || echo 0)"
+  if [ "$BEFORE_RESTART" = "${#AGENTS[@]}" ]; then
+    fail "the fleet was already whole before the restart; the recovery check would prove nothing"
   else
-    fail "fleet stuck at $BACKUP/${#AGENTS[@]} online after ${RECOVER_TOOK}s"
+    "$RUNTIME" start "$ZL" "$LEAF" >/dev/null 2>&1
+    DEADLINE=$((SECONDS + 180)); BACKUP=0
+    while [ "$SECONDS" -lt "$DEADLINE" ]; do
+      BACKUP="$("$BIN" --json hosts list 2>/dev/null \
+        | python3 -c 'import sys,json;print(sum(1 for h in json.load(sys.stdin) if h["online"]))' 2>/dev/null || echo 0)"
+      [ "$BACKUP" = "${#AGENTS[@]}" ] && break
+      sleep 1
+    done
+    if [ "$BACKUP" = "${#AGENTS[@]}" ]; then
+      # No elapsed time reported: bash SECONDS has one-second resolution
+      # and recovery is well under that here, so any number it produced
+      # would be rounding noise dressed up as a measurement.
+      pass "the fleet returned to all ${#AGENTS[@]} agents online (from $BEFORE_RESTART)"
+    else
+      fail "fleet stuck at $BACKUP/${#AGENTS[@]} online, was $BEFORE_RESTART"
+    fi
   fi
 fi
 

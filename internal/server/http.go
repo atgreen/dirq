@@ -446,8 +446,14 @@ func (s *Server) enrichWithTopology(agents []db.Agent) {
 		// A broadcast reaches an agent through the zone leader at the head
 		// of its path, so that stream being live is what "reachable" means.
 		// A zone leader is its own zone leader, so this covers both.
+		//
+		// An agent that is not online is not reachable whatever the tree
+		// says: the path to where it used to sit may be perfectly healthy
+		// while the agent itself is gone. Reporting a dead agent as
+		// reachable is worse than saying nothing, because reachable exists
+		// precisely to answer "can a broadcast get to this host".
 		if zl, found := s.topology.FindZoneLeader(agents[i].ID); found {
-			agents[i].Reachable = connected[zl]
+			agents[i].Reachable = agents[i].Online && connected[zl]
 		}
 		agents[i].Role = n.Role
 		if n.ParentID == "" {
