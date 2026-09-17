@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,9 +41,11 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 
 	s.log.Info("agent registering", "hostname", req.Hostname, "os", req.Os)
 
-	// Validate registration secret if configured.
+	// Validate registration secret if configured. Compared in constant time:
+	// this is the only gate on joining the mesh, and the same codebase already
+	// takes that care when pinning the server signing key.
 	if s.cfg.RegistrationSecret != "" {
-		if req.RegistrationSecret != s.cfg.RegistrationSecret {
+		if subtle.ConstantTimeCompare([]byte(req.RegistrationSecret), []byte(s.cfg.RegistrationSecret)) != 1 {
 			s.log.Warn("registration rejected: invalid registration secret", "hostname", req.Hostname)
 			metricRegisterTotal.WithLabelValues("rejected_secret").Inc()
 			return nil, fmt.Errorf("invalid registration secret")
@@ -412,7 +415,12 @@ func (s *Server) closeAgentStream(as *agentStream) {
 	// connected through it yet, so new broadcasts targeted them
 	// and timed out.
 	subtree := s.topology.MarkSubtreeOffline(agentID)
-	if count, err := s.db.MarkAgentTreeOffline(context.Background(), agentID); err != nil {
+	// The stream's own context is already cancelled by the time we get here,
+	// so this needs a fresh one — but a background context with no deadline
+	// leaves the query nothing to rescue it if it runs long (dirq-632.14).
+	offlineCtx, cancelOffline := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelOffline()
+	if count, err := s.db.MarkAgentTreeOffline(offlineCtx, agentID); err != nil {
 		s.log.Error("failed to mark agent tree offline", "agent_id", agentID, "error", err)
 	} else {
 		s.log.Info("agent stream closed, marked subtree offline",

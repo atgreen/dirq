@@ -48,10 +48,15 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/hosts/{id}", s.authMiddleware(requireScope("readonly", s.handleGetHost)))
 	mux.HandleFunc("GET /api/v1/hosts/{id}/facts", s.authMiddleware(requireScope("readonly", s.handleGetHostFacts)))
 	mux.HandleFunc("GET /api/v1/queries", s.authMiddleware(requireScope("readonly", s.handleListQueries)))
-	mux.HandleFunc("GET /api/v1/exec_log", s.authMiddleware(requireScope("readonly", s.handleListExecLogs)))
 	mux.HandleFunc("GET /api/v1/inventory", s.authMiddleware(requireScope("readonly", s.handleInventory)))
 
 	// Write API routes (admin scope only)
+	// exec_log is admin-only despite being a read: every row carries the
+	// command line, source and destination paths of a privileged operation,
+	// and command lines routinely carry inline credentials. A readonly token
+	// is a lower-privileged principal and has no business reading the
+	// fleet's remote-execution history (dirq-632.3).
+	mux.HandleFunc("GET /api/v1/exec_log", s.authMiddleware(requireScope("admin", s.handleListExecLogs)))
 	mux.HandleFunc("PUT /api/v1/hosts/{id}/tags", s.authMiddleware(requireScope("admin", s.handleSetTags)))
 	mux.HandleFunc("PATCH /api/v1/hosts/{id}/tags", s.authMiddleware(requireScope("admin", s.handleMergeTags)))
 	mux.HandleFunc("DELETE /api/v1/hosts/{id}/tags/{key}", s.authMiddleware(requireScope("admin", s.handleDeleteTag)))

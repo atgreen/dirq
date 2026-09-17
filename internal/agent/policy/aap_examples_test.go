@@ -115,6 +115,30 @@ func TestAAPBanking(t *testing.T) {
 			reasonHas: "high-assurance host",
 		},
 		{
+			// The finding: input.tags carries the agent's own agent.conf
+			// tags, never the server-side tags an operator sets with
+			// `dirq hosts tag`. A host classified only through the admin
+			// API therefore arrives with no env tag at all, and the
+			// classification must not read that as "not production"
+			// (dirq-632.15).
+			name:      "untagged host is treated as high-assurance",
+			in:        Input{Operation: "exec", AAPUser: "svc-ansible-nonprod", AAPJobTemplate: "whatever", AAPJobID: "20"},
+			wantAllow: false,
+			reasonHas: "high-assurance host",
+		},
+		{
+			name:      "unrecognized env is treated as high-assurance",
+			in:        Input{Operation: "exec", Tags: map[string]string{"env": "prd"}, AAPUser: "svc-ansible-nonprod", AAPJobTemplate: "whatever", AAPJobID: "21"},
+			wantAllow: false,
+			reasonHas: "high-assurance host",
+		},
+		{
+			name:      "PCI scope outranks a non-production env tag",
+			in:        Input{Operation: "exec", Tags: map[string]string{"env": "dev", "scope": "pci"}, AAPUser: "svc-ansible-nonprod", AAPJobTemplate: "whatever", AAPJobID: "22"},
+			wantAllow: false,
+			reasonHas: "high-assurance host",
+		},
+		{
 			name:      "nonprod host allows any automation account",
 			in:        Input{Operation: "exec", Tags: map[string]string{"env": "dev"}, AAPUser: "svc-ansible-nonprod", AAPJobTemplate: "whatever", AAPJobID: "5"},
 			wantAllow: true,

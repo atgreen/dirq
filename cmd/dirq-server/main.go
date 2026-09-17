@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -74,9 +75,9 @@ func main() {
 	isPostgres := strings.HasPrefix(cfg.DBURL, "postgres://") || strings.HasPrefix(cfg.DBURL, "postgresql://")
 
 	if isPostgres {
-		log.Info("using PostgreSQL backend", "url", cfg.DBURL)
+		log.Info("using PostgreSQL backend", "url", redactDSN(cfg.DBURL))
 	} else {
-		log.Info("using SQLite backend", "url", cfg.DBURL)
+		log.Info("using SQLite backend", "url", redactDSN(cfg.DBURL))
 		// Ensure the directory for the SQLite file exists.
 		dsn := strings.TrimPrefix(cfg.DBURL, "sqlite://")
 		dir := filepath.Dir(dsn)
@@ -128,9 +129,14 @@ func main() {
 				// of logging it, to prevent credential leakage through logs.
 				tokenFile := filepath.Join(config.DataDir(), "bootstrap-token")
 				if writeErr := os.WriteFile(tokenFile, []byte(plaintext+"\n"), 0600); writeErr != nil {
-					log.Error("failed to write bootstrap token file", "error", writeErr)
-					// Fall back to logging if file write fails.
-					log.Info("bootstrap token: " + plaintext)
+					// Never fall back to logging the token: logs are read by
+					// people and systems that are not DirQ admins, and this
+					// one is an admin credential. Without the file the server
+					// has no usable token anyway, so refuse to start and let
+					// the operator fix the data directory.
+					log.Error("failed to write bootstrap token file — refusing to start rather than log an admin token",
+						"file", tokenFile, "error", writeErr)
+					os.Exit(1)
 				} else {
 					log.Info("NO API TOKENS FOUND — bootstrap token created",
 						"file", tokenFile)
@@ -151,6 +157,23 @@ func main() {
 		log.Error("server error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// redactDSN strips the password from a database URL so it can be logged.
+// A Postgres DSN carries its credentials inline, and the startup line that
+// announced the backend was printing them in full on every boot
+// (dirq-632.4). Anything that does not parse as a URL with a password is
+// returned unchanged — a SQLite path has nothing to hide.
+func redactDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || u.User == nil {
+		return dsn
+	}
+	if _, hasPassword := u.User.Password(); !hasPassword {
+		return dsn
+	}
+	u.User = url.UserPassword(u.User.Username(), "xxxxx")
+	return u.String()
 }
 
 // cfgInt returns env var as int, then config file value, then fallback.

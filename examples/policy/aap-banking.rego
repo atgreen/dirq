@@ -10,9 +10,19 @@
 #   * A single sanctioned break-glass template is permitted but flagged with a
 #     distinct reason so the SIEM can alert and reviewers can find every use.
 #
-# Host sensitivity comes from agent tags (set in agent.conf): env=prod and
-# scope=pci. Tag those hosts at provisioning time via your configuration
-# management so the classification cannot be spoofed by the request.
+# Host sensitivity comes from agent tags, and note WHICH tags: `input.tags` is
+# the agent's own `agent.conf` (plus DIRQ_TAGS), NOT the server-side tags an
+# operator sets with `dirq hosts tag`. Nothing pushes server tags down to an
+# agent, so a host classified only through the admin tag API arrives here with
+# no `env` at all. Classify at provisioning time, in agent.conf, via your
+# configuration management — which also means the classification cannot be
+# spoofed by the request.
+#
+# The classification below therefore fails CLOSED: a host is high-assurance
+# unless it explicitly says otherwise. Written the other way round — deriving
+# "high assurance" from a tag that has to be present — a missing or mistyped
+# tag silently selects the permissive branch on exactly the hosts this policy
+# exists to protect, and `allow` stays true so nothing looks wrong.
 
 package dirq.agent
 
@@ -31,8 +41,19 @@ break_glass_template := "break-glass-shell"
 break_glass_users := {"oncall-sre-lead"}
 
 # ── Host classification (from agent tags) ─────────────────────────────
-high_assurance if input.tags.env == "prod"
-high_assurance if input.tags.scope == "pci"
+# Fail closed: absent, empty or unrecognized tags leave a host high-assurance.
+# Only an explicit, named non-production environment relaxes the rules, and
+# PCI scope overrides that however the host is labelled.
+nonprod_envs := {"dev", "test", "staging", "nonprod"}
+
+pci_scoped if input.tags.scope == "pci"
+
+default high_assurance := true
+
+high_assurance := false if {
+	nonprod_envs[input.tags.env]
+	not pci_scoped
+}
 
 # ── Common gates ──────────────────────────────────────────────────────
 has_attribution if {

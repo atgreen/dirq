@@ -424,6 +424,9 @@ func TestScopeEnforcement_ReadonlyTokenOnWriteEndpoints(t *testing.T) {
 		{"POST", "/api/v1/exec", `{"agent_id":"a1","command":"id"}`},
 		{"POST", "/api/v1/put_file", `{"agent_id":"a1","dest_path":"/tmp/f","content":"x"}`},
 		{"POST", "/api/v1/fetch_file", `{"agent_id":"a1","src_path":"/tmp/f"}`},
+		// A read, but of admin-shaped data: every row carries the command
+		// line of a privileged operation (dirq-632.3).
+		{"GET", "/api/v1/exec_log", ""},
 	}
 
 	for _, ep := range writeEndpoints {
@@ -462,7 +465,6 @@ func TestScopeEnforcement_ReadonlyTokenOnReadEndpoints(t *testing.T) {
 		{"GET", "/api/v1/hosts/h1"},
 		{"GET", "/api/v1/hosts/h1/facts"},
 		{"GET", "/api/v1/queries"},
-		{"GET", "/api/v1/exec_log"},
 		{"GET", "/api/v1/inventory"},
 	}
 

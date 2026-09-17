@@ -14,6 +14,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// maxTreeDepth bounds the recursive parent-chain walks below. The mesh is a
+// handful of levels deep (server -> zone leader -> relay -> leaf), so this is
+// far beyond any real topology; it exists because a cycle in parent_id makes
+// an uncapped WITH RECURSIVE ... UNION ALL walk run forever, wedging the
+// connection with no deadline to rescue it (dirq-632.14).
+const maxTreeDepth = 64
+
 // RegisterAgent inserts a new agent and returns the created record.
 func (d *DB) RegisterAgent(ctx context.Context, p db.RegisterAgentParams) (db.Agent, error) {
 	// Marshal nil tags as {} — a JSON null would turn the jsonb
@@ -161,26 +168,28 @@ func (d *DB) MarkStaleAgentsOffline(ctx context.Context, threshold time.Duration
 // TouchAgentTree refreshes last_seen_at for an agent and all its descendants.
 func (d *DB) TouchAgentTree(ctx context.Context, rootID string) error {
 	_, err := d.pool.Exec(ctx, `
-		WITH RECURSIVE subtree AS (
-			SELECT id FROM agents WHERE id = $1
+		WITH RECURSIVE subtree(id, depth) AS (
+			SELECT id, 0 FROM agents WHERE id = $1
 			UNION ALL
-			SELECT a.id FROM agents a JOIN subtree s ON a.parent_id = s.id
+			SELECT a.id, s.depth + 1 FROM agents a JOIN subtree s ON a.parent_id = s.id
+			WHERE s.depth < $2
 		)
 		UPDATE agents SET last_seen_at = now()
-		WHERE id IN (SELECT id FROM subtree) AND online = true`, rootID)
+		WHERE id IN (SELECT id FROM subtree) AND online = true`, rootID, maxTreeDepth)
 	return err
 }
 
 // MarkAgentTreeOffline marks an agent and all its descendants offline.
 func (d *DB) MarkAgentTreeOffline(ctx context.Context, rootID string) (int64, error) {
 	tag, err := d.pool.Exec(ctx, `
-		WITH RECURSIVE subtree AS (
-			SELECT id FROM agents WHERE id = $1
+		WITH RECURSIVE subtree(id, depth) AS (
+			SELECT id, 0 FROM agents WHERE id = $1
 			UNION ALL
-			SELECT a.id FROM agents a JOIN subtree s ON a.parent_id = s.id
+			SELECT a.id, s.depth + 1 FROM agents a JOIN subtree s ON a.parent_id = s.id
+			WHERE s.depth < $2
 		)
 		UPDATE agents SET online = false
-		WHERE id IN (SELECT id FROM subtree) AND online = true`, rootID)
+		WHERE id IN (SELECT id FROM subtree) AND online = true`, rootID, maxTreeDepth)
 	if err != nil {
 		return 0, err
 	}

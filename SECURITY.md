@@ -152,7 +152,12 @@ API tokens carry a scope: **readonly** or **admin**.
 | Scope | Allowed Operations |
 |---|---|
 | readonly | Query fleet, list hosts, view facts, view inventory, view status |
-| admin | All readonly operations plus: tag management, token management, remote execution, file transfer, package deploy |
+| admin | All readonly operations plus: tag management, token management, remote execution, file transfer, package deploy, and reading the exec audit log |
+
+The exec audit log (`/api/v1/exec_log`) is admin-only even though it is a
+read. Every row carries the command line and the source and destination paths
+of a privileged operation, and command lines routinely carry inline
+credentials, so it is admin-shaped data however it is fetched.
 
 Scope is enforced per-endpoint by the `requireScope` middleware.
 A readonly token that attempts to call an admin endpoint receives

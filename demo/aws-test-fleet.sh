@@ -32,8 +32,17 @@ LINUX_COUNT="${LINUX_COUNT:-3}"
 WIN_COUNT="${WIN_COUNT:-2}"
 KEY_NAME="${DIRQ_KEY_NAME:-dirq-test}"
 TAG_PREFIX="dirq-test"
-WIN_ADMIN_PASS="${DIRQ_WIN_PASSWORD:-DirQ-Test-2026!}"
-REGISTRATION_SECRET="${DIRQ_REGISTRATION_SECRET:-dirq-aws-test-secret}"
+# Secrets are generated per fleet and kept in STATE_DIR — never defaulted to a
+# literal. This script provisions internet-reachable hosts from a public repo,
+# so a default here is a published credential on every fleet whose operator did
+# not think to override it. Set DIRQ_WIN_PASSWORD / DIRQ_REGISTRATION_SECRET to
+# pin your own; init_secrets() fills in the rest.
+WIN_ADMIN_PASS=""
+REGISTRATION_SECRET=""
+
+# Ingress is restricted to one CIDR. Override with DIRQ_ALLOWED_CIDR (e.g. your
+# office range); the default is the address this machine appears to come from.
+ALLOWED_CIDR="${DIRQ_ALLOWED_CIDR:-}"
 REPLICAS_PER_VM="${DIRQ_REPLICAS_PER_VM:-1}"
 
 # Multi-VH listen-port range.  Each VH binds base+i, so with N replicas we
@@ -71,6 +80,45 @@ aws_() { aws --region "$REGION" "$@"; }
 
 save_state() { echo "$2" > "$STATE_DIR/$1"; }
 load_state() { cat "$STATE_DIR/$1" 2>/dev/null || echo ""; }
+
+# init_secrets resolves each secret in order: an explicit environment
+# variable, then a value saved from a previous run, then a fresh random one.
+# Generated values are written to STATE_DIR (0600) so a re-run of `up` keeps
+# the fleet's existing registration secret rather than orphaning the agents.
+init_secrets() {
+    REGISTRATION_SECRET="${DIRQ_REGISTRATION_SECRET:-$(load_state registration-secret)}"
+    if [[ -z "$REGISTRATION_SECRET" ]]; then
+        REGISTRATION_SECRET="$(openssl rand -hex 24)"
+        log "Generated a registration secret: $STATE_DIR/registration-secret"
+    fi
+    save_state registration-secret "$REGISTRATION_SECRET"
+
+    WIN_ADMIN_PASS="${DIRQ_WIN_PASSWORD:-$(load_state windows-password)}"
+    if [[ -z "$WIN_ADMIN_PASS" ]]; then
+        # Base64 for entropy, with / and + translated out so the value stays
+        # boring for `net user` and for the single-quoted PowerShell literal it
+        # lands in; the suffix guarantees Windows complexity rules are met.
+        WIN_ADMIN_PASS="$(openssl rand -base64 18 | tr -d '\n' | tr '/+' 'xy')Aa1!"
+        log "Generated a Windows Administrator password: $STATE_DIR/windows-password"
+    fi
+    save_state windows-password "$WIN_ADMIN_PASS"
+
+    chmod 600 "$STATE_DIR/registration-secret" "$STATE_DIR/windows-password"
+}
+
+# init_cidr decides what the security group will let in. Everything this fleet
+# exposes — SSH, RDP, Grafana, the DirQ API — is management surface, so it is
+# scoped to one address rather than the whole internet. Mesh ports are handled
+# separately: agents reach each other through the security group itself.
+init_cidr() {
+    if [[ -z "$ALLOWED_CIDR" ]]; then
+        local ip
+        ip="$(curl -fsS --max-time 10 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')" || true
+        [[ -n "$ip" ]] || die "could not detect your public IP; set DIRQ_ALLOWED_CIDR (e.g. 203.0.113.4/32)"
+        ALLOWED_CIDR="$ip/32"
+    fi
+    log "Restricting management ingress to $ALLOWED_CIDR"
+}
 
 check_prereqs() {
     command -v aws >/dev/null || die "aws CLI not found. Install: sudo dnf install awscli2"
@@ -160,6 +208,9 @@ cmd_up() {
     check_prereqs
     resolve_version
     mkdir -p "$STATE_DIR"
+    chmod 700 "$STATE_DIR"
+    init_secrets
+    init_cidr
 
     # ── SSH key pair ───────────────────────────────────────
     if [[ ! -f "$STATE_DIR/$KEY_NAME.pem" ]]; then
@@ -191,13 +242,21 @@ cmd_up() {
             --vpc-id "$vpc_id" \
             --query 'GroupId' --output text)
 
+        # Management surface: only the operator's address.
         aws_ ec2 authorize-security-group-ingress --group-id "$sg_id" \
             --ip-permissions \
-            "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=0.0.0.0/0}]" \
-            "IpProtocol=tcp,FromPort=3000,ToPort=3000,IpRanges=[{CidrIp=0.0.0.0/0}]" \
-            "IpProtocol=tcp,FromPort=3389,ToPort=3389,IpRanges=[{CidrIp=0.0.0.0/0}]" \
-            "IpProtocol=tcp,FromPort=8080,ToPort=8080,IpRanges=[{CidrIp=0.0.0.0/0}]" \
-            "IpProtocol=tcp,FromPort=50051,ToPort=$LISTEN_PORT_HIGH,IpRanges=[{CidrIp=0.0.0.0/0}]" \
+            "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$ALLOWED_CIDR}]" \
+            "IpProtocol=tcp,FromPort=3000,ToPort=3000,IpRanges=[{CidrIp=$ALLOWED_CIDR}]" \
+            "IpProtocol=tcp,FromPort=3389,ToPort=3389,IpRanges=[{CidrIp=$ALLOWED_CIDR}]" \
+            "IpProtocol=tcp,FromPort=8080,ToPort=8080,IpRanges=[{CidrIp=$ALLOWED_CIDR}]" \
+            --output text > /dev/null
+
+        # Mesh ports: agents dial each other's relay listeners and the
+        # server's gRPC port, so the source is the security group itself
+        # rather than any CIDR. Nothing outside the fleet needs to reach these.
+        aws_ ec2 authorize-security-group-ingress --group-id "$sg_id" \
+            --ip-permissions \
+            "IpProtocol=tcp,FromPort=50051,ToPort=$LISTEN_PORT_HIGH,UserIdGroupPairs=[{GroupId=$sg_id}]" \
             --output text > /dev/null
     elif (( REPLICAS_PER_VM > 1 )); then
         # SG already exists — widen the relay port range to cover all replicas.
@@ -205,7 +264,7 @@ cmd_up() {
         log "Widening existing security group to ports 50051-$LISTEN_PORT_HIGH for $REPLICAS_PER_VM replicas/VM"
         aws_ ec2 authorize-security-group-ingress --group-id "$sg_id" \
             --ip-permissions \
-            "IpProtocol=tcp,FromPort=50051,ToPort=$LISTEN_PORT_HIGH,IpRanges=[{CidrIp=0.0.0.0/0}]" \
+            "IpProtocol=tcp,FromPort=50051,ToPort=$LISTEN_PORT_HIGH,UserIdGroupPairs=[{GroupId=$sg_id}]" \
             --output text > /dev/null 2>&1 || true
     fi
     save_state sg_id "$sg_id"
@@ -589,7 +648,7 @@ WINEOF
     echo "  Agents install automatically via UserData (2-5 minutes)."
     echo "  Linux setup log: /var/log/dirq-setup.log"
     echo "  Windows setup log: C:\\dirq-setup.log"
-    echo "  RDP credentials: Administrator / $WIN_ADMIN_PASS"
+    echo "  RDP credentials: Administrator / \$(cat $STATE_DIR/windows-password)"
     echo
     echo "  Tear down:"
     echo "    make aws-down   (or: $0 down)"
@@ -678,6 +737,10 @@ case "${1:-}" in
         echo "  DIRQ_KEY_NAME            EC2 key pair name (default: dirq-test)"
         echo "  DIRQ_WIN_PASSWORD        Windows admin password"
         echo "  DIRQ_REGISTRATION_SECRET Agent registration secret"
+        echo "  DIRQ_ALLOWED_CIDR        Ingress CIDR for SSH/RDP/Grafana/API (default: this host's public IP /32)"
+        echo
+        echo "  The Windows password and registration secret are generated per fleet"
+        echo "  when unset, and kept in .dirq-aws-state/ (mode 0600)."
         echo "  DIRQ_VERSION             DirQ version (default: latest release)"
         exit 1
         ;;
