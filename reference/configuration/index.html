@@ -1893,6 +1893,12 @@
 <td>Pre-shared secret for agent registration (see <a href="../../explanation/security/">Security</a>)</td>
 </tr>
 <tr>
+<td><code>agent_origin_checks</code></td>
+<td><code>DIRQ_AGENT_ORIGIN_CHECKS</code></td>
+<td><code>observe</code></td>
+<td>What to do when an agent message claims an origin outside the sending stream's subtree: <code>off</code>, <code>observe</code> (count and log), or <code>enforce</code> (drop). Watch <code>dirq_agent_origin_violations_total</code> before switching to <code>enforce</code></td>
+</tr>
+<tr>
 <td><code>leader_election</code></td>
 <td><code>DIRQ_LEADER_ELECTION</code></td>
 <td><code>false</code></td>
