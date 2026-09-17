@@ -717,38 +717,58 @@ func compareNumbers(actual float64, op string, expected float64) bool {
 
 // matchLike provides SQL LIKE matching where % matches any sequence and _ matches one character.
 func matchLike(s, pattern string) bool {
-	return matchLikeDP(strings.ToLower(s), strings.ToLower(pattern), 0, 0)
+	return matchLikePattern(strings.ToLower(s), strings.ToLower(pattern))
 }
 
-func matchLikeDP(s, p string, si, pi int) bool {
-	for pi < len(p) {
-		if p[pi] == '%' {
-			pi++
-			// Skip consecutive %
-			for pi < len(p) && p[pi] == '%' {
-				pi++
-			}
-			if pi == len(p) {
-				return true
-			}
-			for i := si; i <= len(s); i++ {
-				if matchLikeDP(s, p, i, pi) {
-					return true
-				}
-			}
-			return false
-		}
-		if si >= len(s) {
-			return false
-		}
-		if p[pi] == '_' || p[pi] == s[si] {
+// matchLikePattern implements SQL LIKE — '%' matches any run of characters,
+// '_' matches exactly one — by scanning the subject once and remembering only
+// the most recent '%'.
+//
+// The remembering is the whole point. The previous implementation recursed
+// over every suffix position at every '%', so each added wildcard multiplied
+// the work by roughly the subject length: 8 wildcards against a 50-byte
+// package name took half a second, 12 took a hundred, 16 would have taken
+// hours — and the pattern comes from a readonly API token, evaluated once per
+// installed package on every agent in the fleet (dirq-632.13).
+//
+// Here, a mismatch after a '%' does not explore a tree of alternatives; it
+// rewinds to one position past where that '%' last started matching and
+// carries on. That is enough to find a match whenever one exists, because a
+// '%' only ever needs to grow by one character at a time, and it bounds the
+// work at len(s) x len(p) instead of exponential in the wildcard count.
+func matchLikePattern(s, p string) bool {
+	var si, pi int
+	// lastStar is the pattern index of the most recent '%'; resumeAt is how
+	// much of the subject it had consumed when we committed to it. Both -1
+	// until the first '%' is seen, which is what makes a mismatch before any
+	// wildcard an immediate no.
+	lastStar, resumeAt := -1, -1
+
+	for si < len(s) {
+		switch {
+		case pi < len(p) && (p[pi] == '_' || p[pi] == s[si]):
 			si++
 			pi++
-		} else {
+		case pi < len(p) && p[pi] == '%':
+			lastStar = pi
+			resumeAt = si
+			pi++
+		case lastStar >= 0:
+			// Mismatch with a wildcard behind us: let it swallow one more
+			// character and retry the rest of the pattern from there.
+			resumeAt++
+			si = resumeAt
+			pi = lastStar + 1
+		default:
 			return false
 		}
 	}
-	return si == len(s)
+
+	// Trailing wildcards may match nothing; anything else left over does not.
+	for pi < len(p) && p[pi] == '%' {
+		pi++
+	}
+	return pi == len(p)
 }
 
 func toFloat64(v any) (float64, error) {

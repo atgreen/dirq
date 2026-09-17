@@ -45,6 +45,8 @@ WHERE cpu.model IS NOT NULL
 
 **Operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `NOT LIKE`, `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`
 
+`LIKE` matching is case-insensitive: `%` matches any run of characters, `_` matches exactly one. A pattern is evaluated once per element of every array module the query touches — every installed package, every service — on every agent the query reaches, so patterns are capped at 1024 bytes. Real patterns are a package or hostname glob, well inside that.
+
 ## Tag targeting
 
 Agent tags are available as `tag.*` fields in WHERE conditions. The server evaluates tag conditions before dispatching — only matching agents receive the query.

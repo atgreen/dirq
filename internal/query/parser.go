@@ -613,11 +613,22 @@ func (p *parser) parseInExpr(field string, negated bool) (Expr, error) {
 	return &InExpr{Field: field, Values: values, Negated: negated}, nil
 }
 
+// maxLikePatternBytes bounds a LIKE pattern. Matching is linear in
+// len(subject) x len(pattern), and a pattern is evaluated once per element of
+// every array module the query touches — thousands of packages per host,
+// across the whole fleet. The request body cap alone would allow a megabyte of
+// pattern, which buys an attacker far more work per value than any real query
+// needs: a fleet LIKE pattern is a hostname or package glob, tens of bytes.
+const maxLikePatternBytes = 1024
+
 func (p *parser) parseLikeExpr(field string, negated bool) (Expr, error) {
 	p.advance() // consume LIKE
 	t, err := p.expect(tkString)
 	if err != nil {
 		return nil, p.errorf("expected string pattern after LIKE at position %d", p.cur().pos)
+	}
+	if len(t.text) > maxLikePatternBytes {
+		return nil, p.errorf("LIKE pattern is %d bytes, over the %d-byte limit", len(t.text), maxLikePatternBytes)
 	}
 	return &LikeExpr{Field: field, Pattern: t.text, Negated: negated}, nil
 }
