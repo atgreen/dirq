@@ -116,7 +116,7 @@ identically to typing each word as a separate argument.
 
 ### dirq exec — execute a command or script across the fleet in parallel
 
-    dirq exec -- uptime
+    dirq exec -- cat /etc/os-release
     dirq exec WHERE tag.env = 'prod' -- openssl version
     dirq exec --become WHERE tag.role = 'webserver' -- systemctl status nginx
     dirq exec WHERE tag.env = 'prod' --script ./health-check.sh

@@ -577,6 +577,10 @@ type execMultiRequest struct {
 	BecomeMethod string            `json:"become_method"`
 	Environment  map[string]string `json:"environment"`
 	Timeout      int               `json:"timeout"`
+	// BottomUp dispatches targets deepest-mesh-depth first, one wave per
+	// depth, so a relay is never executed while an agent beneath it is still
+	// running (e.g. `reboot`). Off = the historical single broadcast.
+	BottomUp bool `json:"bottom_up"`
 	// AAP attribution
 	AAPJobID       string `json:"aap_job_id"`
 	AAPJobTemplate string `json:"aap_job_template"`
@@ -798,57 +802,128 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 
 	requestID := fmt.Sprintf("execm-%d", time.Now().UnixNano())
 
-	// Create broadcast session to collect responses.  Hard timeout
-	// equals the command timeout plus a transport grace: the agent
-	// kills the command at command-timeout, then needs a moment to
-	// flush its ExecResponse back up the mesh.  Without the grace we
-	// race the agent's reply and report a false "did not respond".
+	// Group targets into dispatch waves. Without --bottom-up that is a single
+	// wave holding everyone — byte-for-byte the historical broadcast. With it,
+	// targets are ordered deepest-mesh-depth first so a relay is never executed
+	// while any agent beneath it is still running (see targetIDWavesByDepthDesc).
+	waves := [][]string{targetIDs}
+	if req.BottomUp {
+		waves = s.targetIDWavesByDepthDesc(targets)
+	}
+
+	metricInflightSessions.WithLabelValues("exec").Inc()
+	defer metricInflightSessions.WithLabelValues("exec").Dec()
+
+	opStart := time.Now()
+	outcome := "complete"
+	totalAccounted := 0
+
+	for wi, wave := range waves {
+		// A single wave keeps the historical request ID exactly; multi-wave
+		// runs suffix it so each wave's agents key their responses distinctly.
+		waveReqID := requestID
+		if len(waves) > 1 {
+			waveReqID = fmt.Sprintf("%s-w%d", requestID, wi)
+		}
+
+		waveOutcome, accounted := s.dispatchExecWave(ctx, enc, flusher, waveReqID, wi, wave, &req, stdinBytes, scriptBytes, timeout)
+		totalAccounted += accounted
+
+		// A wave that didn't fully account (sign failure, hard timeout, or
+		// client cancellation) breaks the bottom-up ordering guarantee — the
+		// state of the agents beneath the next wave is unknown — so we stop
+		// rather than act on a relay whose subtree may still be running.
+		// Command failures (non-zero rc) are terminal responses and do NOT
+		// stop the run.
+		if waveOutcome != "complete" {
+			outcome = waveOutcome
+			if len(waves) > 1 {
+				// Tell the operator the shallower waves were deliberately not
+				// attempted, so a stopped bottom-up run never reads as done.
+				enc.Encode(execMultiResult{
+					Type:  "result",
+					Error: fmt.Sprintf("bottom-up run stopped after wave %d (%s); shallower waves not attempted", wi, waveOutcome),
+				})
+				flusher.Flush()
+			}
+			break
+		}
+	}
+
+	dur := time.Since(opStart).Seconds()
+	missing := len(targetIDs) - totalAccounted
+	if outcome == "complete" && missing > 0 {
+		outcome = "incomplete"
+	}
+	metricBroadcastTotal.WithLabelValues("exec", outcome).Inc()
+	metricBroadcastDuration.WithLabelValues("exec").Observe(dur)
+	if missing > 0 {
+		metricBroadcastMissingTotal.WithLabelValues("exec").Add(float64(missing))
+	}
+}
+
+// dispatchExecWave registers a per-wave broadcast session, dispatches the wave
+// to the mesh, and streams its results. The session-map entry is removed via
+// defer, so a panic while streaming cannot leak it (metricInflightSessions,
+// deferred in the caller, then stays in sync). Returns the wave outcome
+// ("complete", "hard_timeout", "canceled", or "incomplete" on a signing
+// failure) and how many of the wave's agents were accounted.
+func (s *Server) dispatchExecWave(ctx context.Context, enc *json.Encoder, flusher http.Flusher, waveReqID string, wi int, wave []string, req *execMultiRequest, stdin, script []byte, timeout int) (string, int) {
+	// Hard timeout equals the command timeout plus a transport grace: the
+	// agent kills the command at command-timeout, then needs a moment to flush
+	// its ExecResponse back up the mesh. Without the grace we race the reply.
 	bs := &execBroadcastSession{
-		requestID:         requestID,
-		results:           make(chan *pb.ExecResponse, len(targets)),
+		requestID:         waveReqID,
+		results:           make(chan *pb.ExecResponse, len(wave)),
 		startedAt:         time.Now(),
 		timeout:           time.Duration(timeout)*time.Second + transportGrace,
-		sessionAccounting: newSessionAccounting(targetIDs),
+		sessionAccounting: newSessionAccounting(wave),
 	}
 
 	execBroadcastSessionsMu.Lock()
-	execBroadcastSessions[requestID] = bs
+	execBroadcastSessions[waveReqID] = bs
 	execBroadcastSessionsMu.Unlock()
-
-	// Outcome classification: set by exit path, read by the single defer.
-	// Defaults to "complete" because the clean drain at the end of the
-	// function is the dominant exit and an unset outcome means we got
-	// there without a timeout / cancellation.
-	outcome := "complete"
-	metricInflightSessions.WithLabelValues("exec").Inc()
-	defer func() {
-		metricInflightSessions.WithLabelValues("exec").Dec()
-		dur := time.Since(bs.startedAt).Seconds()
-		missing := bs.Total() - bs.AccountedCount()
-		if outcome == "complete" && missing > 0 {
-			outcome = "incomplete"
-		}
-		metricBroadcastTotal.WithLabelValues("exec", outcome).Inc()
-		metricBroadcastDuration.WithLabelValues("exec").Observe(dur)
-		if missing > 0 {
-			metricBroadcastMissingTotal.WithLabelValues("exec").Add(float64(missing))
-		}
-	}()
 	defer func() {
 		execBroadcastSessionsMu.Lock()
-		delete(execBroadcastSessions, requestID)
+		delete(execBroadcastSessions, waveReqID)
 		execBroadcastSessionsMu.Unlock()
 	}()
 
-	// Build one broadcast message with all target IDs.
-	msg := &pb.ServerMessage{
+	msg := buildExecMsg(waveReqID, wave, req, stdin, script, timeout)
+	if err := s.signServerMessage(msg); err != nil {
+		enc.Encode(execMultiResult{
+			Type:    "result",
+			Success: false,
+			Error:   "sign failed: " + err.Error(),
+		})
+		flusher.Flush()
+		return "incomplete", 0
+	}
+
+	sent, failedSubtrees := s.broadcastExecToZoneLeaders(msg, bs)
+	s.log.Info("exec broadcast sent",
+		"request_id", waveReqID,
+		"wave", wi,
+		"targets", len(wave),
+		"zone_leaders", sent,
+		"failed_subtrees", len(failedSubtrees),
+	)
+
+	return s.streamExecResults(ctx, enc, flusher, bs), bs.AccountedCount()
+}
+
+// buildExecMsg assembles the (unsigned) exec broadcast message for one wave of
+// target agent IDs. Only the listed agents execute; the rest of the mesh
+// relays it. Shared by the single-broadcast and bottom-up wave paths.
+func buildExecMsg(requestID string, targetIDs []string, req *execMultiRequest, stdin, script []byte, timeout int) *pb.ServerMessage {
+	return &pb.ServerMessage{
 		Payload: &pb.ServerMessage_ExecRequest{
 			ExecRequest: &pb.ExecRequest{
 				RequestId:      requestID,
 				TargetAgentIds: targetIDs,
 				Command:        req.Command,
-				Stdin:          stdinBytes,
-				Script:         scriptBytes,
+				Stdin:          stdin,
+				Script:         script,
 				ScriptName:     req.ScriptName,
 				Become:         req.Become,
 				BecomeUser:     req.BecomeUser,
@@ -861,27 +936,6 @@ func (s *Server) handleExecMulti(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
-
-	if err := s.signServerMessage(msg); err != nil {
-		enc.Encode(execMultiResult{
-			Type:    "result",
-			Success: false,
-			Error:   "sign failed: " + err.Error(),
-		})
-		flusher.Flush()
-		return
-	}
-
-	sent, failedSubtrees := s.broadcastExecToZoneLeaders(msg, bs)
-
-	s.log.Info("exec broadcast sent",
-		"request_id", requestID,
-		"targets", len(targetIDs),
-		"zone_leaders", sent,
-		"failed_subtrees", len(failedSubtrees),
-	)
-
-	outcome = s.streamExecResults(ctx, enc, flusher, bs)
 }
 
 // broadcastExecToZoneLeaders fans the exec request out to every connected

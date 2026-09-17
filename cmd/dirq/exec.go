@@ -23,6 +23,7 @@ func execCmd() *cobra.Command {
 		becomeUser   string
 		becomeMethod string
 		timeout      int
+		bottomUp     bool
 	)
 
 	cmd := &cobra.Command{
@@ -41,10 +42,11 @@ Script handling by platform:
   Windows: .ps1 files run with PowerShell. .bat/.cmd run with cmd.exe.
 
 Examples:
-  dirq exec -- uptime
+  dirq exec -- cat /etc/os-release
   dirq exec WHERE tag.env = 'prod' -- du -h
   dirq exec WHERE os_info.os = 'windows' -- where myprogram.exe
   dirq exec --become WHERE tag.role = 'webserver' -- systemctl restart nginx
+  dirq exec --bottom-up -- reboot -r now
   dirq exec WHERE tag.env = 'prod' --script ./health-check.sh
   dirq exec WHERE os_info.os = 'windows' --script ./audit.ps1`,
 		Args:               cobra.ArbitraryArgs,
@@ -80,6 +82,7 @@ Examples:
 				"become_user":   becomeUser,
 				"become_method": becomeMethod,
 				"timeout":       timeout,
+				"bottom_up":     bottomUp,
 			}
 
 			if scriptFile != "" {
@@ -247,6 +250,8 @@ Examples:
 	cmd.Flags().StringVar(&becomeUser, "become-user", "", "user to become (default: root)")
 	cmd.Flags().StringVar(&becomeMethod, "become-method", "", "privilege escalation method (default: sudo)")
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "timeout in seconds")
+	cmd.Flags().BoolVar(&bottomUp, "bottom-up", false,
+		"run deepest-mesh-depth agents first, one depth per wave, so a relay is never run while an agent beneath it still is (e.g. reboot)")
 
 	return cmd
 }

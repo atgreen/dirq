@@ -24,6 +24,7 @@ func deployCmd() *cobra.Command {
 	// at all (dirq-uni).
 	var become = true
 	var becomeUser string
+	var bottomUp bool
 
 	cmd := &cobra.Command{
 		Use:   "deploy [package] [WHERE ...]",
@@ -98,8 +99,10 @@ Examples:
 				"content":         base64.StdEncoding.EncodeToString(pkgContent),
 				"mode":            0644,
 				"install_command": installCmd,
-				"become":          true,
+				"become":          become,
+				"become_user":     becomeUser,
 				"timeout":         timeout,
+				"bottom_up":       bottomUp,
 			})
 
 			resp, err := apiStreamRequest("POST", "/api/v1/deploy", bytes.NewReader(body))
@@ -164,6 +167,18 @@ Examples:
 			}
 
 			fmt.Printf("\nDeploy complete: %d succeeded, %d failed\n", totalSuccess, totalFail)
+
+			// A bottom-up run stops at the first wave that doesn't fully
+			// report, and any run can lose hosts to a mesh timeout, so the
+			// shallower/unreached targets never produce a result line. Without
+			// this a partial deploy reads as a clean success.
+			received := totalSuccess + totalFail
+			if received < header.TotalTargets {
+				fmt.Printf("%d/%d hosts reported; %d not attempted or did not reply "+
+					"(mesh timeout, or a --bottom-up wave stopped the run)\n",
+					received, header.TotalTargets, header.TotalTargets-received)
+			}
+
 			if totalFail > 0 {
 				return fmt.Errorf("%d deployment(s) failed", totalFail)
 			}
@@ -177,6 +192,8 @@ Examples:
 	// No --become-method: DeployRequest has no field to carry it, and a
 	// flag that is silently ignored is worse than one that is absent.
 	cmd.Flags().StringVar(&becomeUser, "become-user", "", "user to become (default: root)")
+	cmd.Flags().BoolVar(&bottomUp, "bottom-up", false,
+		"install on deepest-mesh-depth agents first, one depth per wave, so a relay is never updated while an agent beneath it is still installing")
 
 	return cmd
 }

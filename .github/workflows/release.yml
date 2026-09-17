@@ -363,6 +363,22 @@ jobs:
             esac
           done
 
+      - name: Sign Ansible collection tarball
+        # The Galaxy collection tarball is built under collection/atgreen/dirq
+        # and published with the release, but its name starts with "atgreen-"
+        # rather than "dirq-", so the "for f in dirq-*" loop above never signed
+        # it — every release shipped it unsigned next to signed artifacts
+        # (dirq-a72). Sign it here and stage the bundle in dist/ so it rides the
+        # existing signed-artifacts upload and lands on the release beside the
+        # tarball, which is still published from build-artifacts (identical
+        # bytes, so the detached bundle verifies against it).
+        run: |
+          cd artifacts
+          for f in collection/atgreen/dirq/atgreen-dirq-*.tar.gz; do
+            [ -e "$f" ] || continue
+            cosign sign-blob --yes "$f" --bundle "dist/$(basename "$f").bundle"
+          done
+
       - name: Sign Windows binaries
         run: |
           cd artifacts/dist

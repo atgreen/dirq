@@ -65,6 +65,9 @@ type deployRequest struct {
 	Become         bool   `json:"become"`
 	BecomeUser     string `json:"become_user"`
 	Timeout        int    `json:"timeout"`
+	// BottomUp installs deepest-mesh-depth first, one wave per depth, so a
+	// relay is never updated while an agent beneath it is still installing.
+	BottomUp bool `json:"bottom_up"`
 	// AAP attribution. Used for the server-side aap_user binding check. The
 	// DeployRequest proto does not yet carry these fields to the agent, so an
 	// agent-side deploy policy cannot see aap_user — the server binding is the
@@ -140,42 +143,111 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 
 	requestID := fmt.Sprintf("deploy-%d", time.Now().UnixNano())
 
+	// Group targets into dispatch waves. Without --bottom-up that is a single
+	// wave holding everyone — the historical broadcast. With it, targets are
+	// ordered deepest-mesh-depth first so a relay is never updated while any
+	// agent beneath it is still installing (see targetIDWavesByDepthDesc).
+	waves := [][]string{targetIDs}
+	if req.BottomUp {
+		waves = s.targetIDWavesByDepthDesc(targets)
+	}
+
+	metricInflightSessions.WithLabelValues("deploy").Inc()
+	defer metricInflightSessions.WithLabelValues("deploy").Dec()
+
+	opStart := time.Now()
+	outcome := "complete"
+	totalAccounted := 0
+
+	for wi, wave := range waves {
+		waveReqID := requestID
+		if len(waves) > 1 {
+			waveReqID = fmt.Sprintf("%s-w%d", requestID, wi)
+		}
+
+		waveOutcome, accounted := s.dispatchDeployWave(ctx, enc, flusher, waveReqID, wi, wave, &req, content, timeout)
+		totalAccounted += accounted
+
+		// A wave that didn't fully account (sign failure, hard timeout, or
+		// cancellation) breaks the bottom-up ordering guarantee, so we stop
+		// rather than update a relay whose subtree may still be installing. A
+		// non-zero install rc is a terminal response and does NOT stop the run.
+		if waveOutcome != "complete" {
+			outcome = waveOutcome
+			if len(waves) > 1 {
+				enc.Encode(deployResultLine{
+					Type:  "result",
+					Error: fmt.Sprintf("bottom-up run stopped after wave %d (%s); shallower waves not attempted", wi, waveOutcome),
+				})
+				flusher.Flush()
+			}
+			break
+		}
+	}
+
+	dur := time.Since(opStart).Seconds()
+	missing := len(targetIDs) - totalAccounted
+	if outcome == "complete" && missing > 0 {
+		outcome = "incomplete"
+	}
+	metricBroadcastTotal.WithLabelValues("deploy", outcome).Inc()
+	metricBroadcastDuration.WithLabelValues("deploy").Observe(dur)
+	if missing > 0 {
+		metricBroadcastMissingTotal.WithLabelValues("deploy").Add(float64(missing))
+	}
+}
+
+// dispatchDeployWave registers a per-wave deploy session, dispatches the wave,
+// and streams its results. The session-map entry is removed via defer so a
+// panic while streaming cannot leak it. Returns the wave outcome ("complete",
+// "hard_timeout", "canceled", or "incomplete" on a signing failure) and how
+// many of the wave's agents were accounted.
+func (s *Server) dispatchDeployWave(ctx context.Context, enc *json.Encoder, flusher http.Flusher, waveReqID string, wi int, wave []string, req *deployRequest, content []byte, timeout int) (string, int) {
 	// Hard timeout = install timeout + transport grace, same shape as exec.
 	ds := &deploySession{
-		requestID:         requestID,
-		results:           make(chan *pb.DeployResponse, len(targets)),
+		requestID:         waveReqID,
+		results:           make(chan *pb.DeployResponse, len(wave)),
 		startedAt:         time.Now(),
 		timeout:           time.Duration(timeout)*time.Second + transportGrace,
-		sessionAccounting: newSessionAccounting(targetIDs),
+		sessionAccounting: newSessionAccounting(wave),
 	}
 
 	deploySessionsMu.Lock()
-	deploySessions[requestID] = ds
+	deploySessions[waveReqID] = ds
 	deploySessionsMu.Unlock()
-
-	outcome := "complete"
-	metricInflightSessions.WithLabelValues("deploy").Inc()
-	defer func() {
-		metricInflightSessions.WithLabelValues("deploy").Dec()
-		dur := time.Since(ds.startedAt).Seconds()
-		missing := ds.Total() - ds.AccountedCount()
-		if outcome == "complete" && missing > 0 {
-			outcome = "incomplete"
-		}
-		metricBroadcastTotal.WithLabelValues("deploy", outcome).Inc()
-		metricBroadcastDuration.WithLabelValues("deploy").Observe(dur)
-		if missing > 0 {
-			metricBroadcastMissingTotal.WithLabelValues("deploy").Add(float64(missing))
-		}
-	}()
-
 	defer func() {
 		deploySessionsMu.Lock()
-		delete(deploySessions, requestID)
+		delete(deploySessions, waveReqID)
 		deploySessionsMu.Unlock()
 	}()
 
-	msg := &pb.ServerMessage{
+	msg := buildDeployMsg(waveReqID, wave, req, content, timeout)
+	if err := s.signServerMessage(msg); err != nil {
+		enc.Encode(deployResultLine{
+			Type:    "result",
+			Success: false,
+			Error:   "sign failed: " + err.Error(),
+		})
+		flusher.Flush()
+		return "incomplete", 0
+	}
+
+	sent, failedSubtrees := s.broadcastDeployToZoneLeaders(msg, ds)
+	s.log.Info("deploy broadcast sent",
+		"request_id", waveReqID,
+		"wave", wi,
+		"targets", len(wave),
+		"zone_leaders", sent,
+		"failed_subtrees", len(failedSubtrees),
+	)
+
+	return s.streamDeployResults(ctx, enc, flusher, ds), ds.AccountedCount()
+}
+
+// buildDeployMsg assembles the (unsigned) deploy broadcast message for one wave
+// of target agent IDs. Shared by the single-broadcast and bottom-up wave paths.
+func buildDeployMsg(requestID string, targetIDs []string, req *deployRequest, content []byte, timeout int) *pb.ServerMessage {
+	return &pb.ServerMessage{
 		Payload: &pb.ServerMessage_DeployRequest{
 			DeployRequest: &pb.DeployRequest{
 				RequestId:      requestID,
@@ -190,27 +262,6 @@ func (s *Server) handleBroadcastDeploy(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
-
-	if err := s.signServerMessage(msg); err != nil {
-		enc.Encode(deployResultLine{
-			Type:    "result",
-			Success: false,
-			Error:   "sign failed: " + err.Error(),
-		})
-		flusher.Flush()
-		return
-	}
-
-	sent, failedSubtrees := s.broadcastDeployToZoneLeaders(msg, ds)
-
-	s.log.Info("deploy broadcast sent",
-		"request_id", requestID,
-		"targets", len(targetIDs),
-		"zone_leaders", sent,
-		"failed_subtrees", len(failedSubtrees),
-	)
-
-	outcome = s.streamDeployResults(ctx, enc, flusher, ds)
 }
 
 // decodeDeployRequest decodes and validates a broadcast-deploy request,
