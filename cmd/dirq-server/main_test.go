@@ -19,8 +19,8 @@ func TestRedactDSN(t *testing.T) {
 	}{
 		{
 			"postgres with password",
-			"postgres://dirq:hunter2@db.internal:5432/dirq?sslmode=require",
-			"postgres://dirq:xxxxx@db.internal:5432/dirq?sslmode=require",
+			"postgres://dirq:hunter2@db.internal:5432/dirq?sslmode=require", // notsecret
+			"postgres://dirq:xxxxx@db.internal:5432/dirq?sslmode=require",   // notsecret
 		},
 		{
 			"postgresql scheme",
