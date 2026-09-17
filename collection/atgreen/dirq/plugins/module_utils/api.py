@@ -18,21 +18,49 @@ class DirQClient:
     """Simple HTTP client for the DirQ server REST API."""
 
     def __init__(self, server_url: str, token: str = "", timeout: int = 600,
-                 tls_insecure: bool | None = None):
+                 tls_insecure: bool | None = None, tls_ca: str | None = None):
         self.server_url = server_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self._ssl_context = self._build_ssl_context(tls_insecure, tls_ca)
 
-        # Build SSL context for HTTPS requests.
-        self._ssl_context = None
-        if self.server_url.startswith("https://"):
-            insecure = tls_insecure
-            if insecure is None:
-                insecure = os.environ.get("DIRQ_TLS_INSECURE", "").lower() == "true"
-            if insecure:
-                self._ssl_context = ssl.create_default_context()
-                self._ssl_context.check_hostname = False
-                self._ssl_context.verify_mode = ssl.CERT_NONE
+    def _build_ssl_context(self, tls_insecure, tls_ca):
+        """Decide how the server certificate is verified.
+
+        DIRQ_TLS_CA names a CA to verify against - the same variable the
+        server, the agents and the dirq CLI all read. It matters because
+        `dirq cert generate` produces a self-signed CA that is in no system
+        trust store, so without this option the only working configuration
+        against a default deployment was to turn verification off for every
+        request. These plugins carry the DirQ API token on each one
+        (dirq-632.6).
+
+        A CA takes precedence over DIRQ_TLS_INSECURE: naming one is the more
+        specific instruction. A CA path that cannot be read is fatal rather
+        than a quiet fall back to the system trust store, which would verify
+        against something other than what was asked for and look like it
+        worked.
+        """
+        if not self.server_url.startswith("https://"):
+            return None
+
+        ca = tls_ca
+        if ca is None:
+            ca = os.environ.get("DIRQ_TLS_CA", "")
+        ca = (ca or "").strip()
+        if ca:
+            return ssl.create_default_context(cafile=ca)
+
+        insecure = tls_insecure
+        if insecure is None:
+            insecure = os.environ.get("DIRQ_TLS_INSECURE", "").lower() == "true"
+        if insecure:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+
+        return None
 
     def request(self, method: str, path: str, data: dict | None = None) -> dict | list:
         url = self.server_url + path

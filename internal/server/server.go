@@ -207,13 +207,16 @@ func (s *Server) runTopologySnapshotter(ctx context.Context) {
 }
 
 func (s *Server) snapshotTopologyOnce(ctx context.Context) {
-	// Walk every node and write its current (role, parent_id) to the DB.
-	// Fire-and-forget; the topology mutex is released for each write.
-	for _, id := range s.topology.allNodeIDs() {
-		n, ok := s.topology.Get(id)
-		if !ok {
-			continue
-		}
+	// Take ONE consistent view of the tree, then write it.
+	//
+	// Reading node by node — re-acquiring the topology lock for each — let a
+	// parent swap land between two reads, so the snapshot could persist
+	// A.parent=B (read early) together with B.parent=A (read late): a cycle
+	// that never existed in memory, where the in-memory topology refuses to
+	// record one. The recursive walks over parent_id then have a cycle to get
+	// lost in, and it survives a restart because it is on disk
+	// (dirq-632.14.1).
+	for _, n := range s.topology.Snapshot() {
 		if n.Role != "" {
 			s.db.SetAgentRole(ctx, n.ID, n.Role)
 		}

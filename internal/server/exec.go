@@ -785,7 +785,12 @@ func (s *Server) resolveBroadcastTargets(ctx context.Context, queryStr string, p
 	agents := allAgents
 	if query.HasTagConditions(parsed.Where) || query.HasHostnameCondition(parsed.Where) {
 		agents = make([]db.Agent, 0, len(allAgents))
-		for _, a := range allAgents {
+		for i, a := range allAgents {
+			// The pre-filter walks the whole fleet; a caller that has given up
+			// should not keep the handler busy doing it (dirq-632.16).
+			if i%256 == 0 && ctx.Err() != nil {
+				break
+			}
 			if query.MatchesAgentRecord(parsed.Where, a.Tags, a.Hostname) {
 				agents = append(agents, a)
 			}

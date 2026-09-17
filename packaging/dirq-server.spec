@@ -38,8 +38,24 @@ install -m 0644 LICENSE %{buildroot}/usr/share/licenses/dirq-server/LICENSE
 %config(noreplace) /etc/dirq/server.conf
 %license /usr/share/licenses/dirq-server/LICENSE
 
+%pre
+# System account for the service. Created before %%files so the packaged
+# paths can be owned correctly, and idempotent so upgrades are no-ops.
+getent group dirq >/dev/null || groupadd -r dirq
+getent passwd dirq >/dev/null || \
+    useradd -r -g dirq -d /var/lib/dirq -s /sbin/nologin \
+            -c "DirQ server" dirq
+exit 0
+
 %post
 systemctl daemon-reload
+# An install that predates the dirq user left /var/lib/dirq owned by root,
+# and the service can no longer read its own signing key and TLS material.
+# Hand the directory over rather than letting the upgrade fail to start.
+if [ -d /var/lib/dirq ]; then
+    chown -R dirq:dirq /var/lib/dirq || :
+    chmod 0700 /var/lib/dirq || :
+fi
 if [ "$1" -ge 2 ]; then
     systemctl try-restart dirq-server 2>/dev/null || true
 fi

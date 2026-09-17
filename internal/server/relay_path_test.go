@@ -174,3 +174,58 @@ func TestDispatchExecRoutesToTheOwningZoneLeader(t *testing.T) {
 		t.Errorf("an unrelated zone leader received %d copies of a single-agent request", n)
 	}
 }
+
+// The snapshot has to describe one instant. Reading node by node let a parent
+// swap land between two reads, so the persisted tree could contain a cycle
+// that never existed in memory — and the recursive walks over parent_id then
+// had one to get lost in, on disk, surviving restarts (dirq-632.14.1).
+func TestSnapshotIsConsistentUnderConcurrentReparenting(t *testing.T) {
+	topo := NewMeshTopology(DefaultTopologyConfig())
+	topo.AddAgent("zl", "zl", "10.0.0.1:50052")
+	topo.AssignZoneLeader("zl")
+	for _, id := range []string{"a", "b"} {
+		topo.AddAgent(id, id, "10.0.0.5:50052")
+		if !topo.AssignChild(id, "zl") {
+			t.Fatalf("fixture: could not attach %s", id)
+		}
+	}
+
+	// Swap a and b's parents back and forth while snapshotting. Every
+	// snapshot must describe a tree, never a cycle.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			topo.AttachObserved("a", "b")
+			topo.AttachObserved("a", "zl")
+			topo.AttachObserved("b", "a")
+			topo.AttachObserved("b", "zl")
+		}
+	}()
+
+	for i := 0; i < 2000; i++ {
+		parent := map[string]string{}
+		for _, n := range topo.Snapshot() {
+			parent[n.ID] = n.ParentID
+		}
+		for id := range parent {
+			seen := map[string]bool{}
+			for cur := id; cur != ""; cur = parent[cur] {
+				if seen[cur] {
+					close(stop)
+					<-done
+					t.Fatalf("snapshot %d contains a parent cycle reachable from %q: %v", i, id, parent)
+				}
+				seen[cur] = true
+			}
+		}
+	}
+	close(stop)
+	<-done
+}

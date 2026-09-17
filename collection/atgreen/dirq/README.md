@@ -110,7 +110,9 @@ The connection plugin routes `exec_command`, `put_file`, and `fetch_file` throug
 
 ### TLS
 
-For servers with self-signed certificates, set `DIRQ_TLS_INSECURE=true` in the environment. This applies to both the connection and inventory plugins.
+DirQ's own `dirq cert generate` produces a self-signed CA, which is in no system trust store. Point the plugins at it with `DIRQ_TLS_CA=/path/to/ca.crt` (or the `dirq_tls_ca` / `tls_ca` option) — the same variable the server, the agents and the `dirq` CLI already read. It applies to the connection, inventory and cache plugins.
+
+`DIRQ_TLS_INSECURE=true` still disables verification entirely. Prefer the CA: every request these plugins make carries your DirQ API token, so an unverified connection puts an admin credential in front of anyone on the path. A CA takes precedence when both are set.
 
 ## Fact Cache Plugin
 

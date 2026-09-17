@@ -57,6 +57,7 @@ class CacheModule(BaseCacheModule):
             or "http://localhost:8080"
         )
         self._token = os.environ.get("DIRQ_TOKEN", "")
+        self._tls_ca = os.environ.get("DIRQ_TLS_CA", "")
         self._cache = {}
         self._loaded = False
 
@@ -65,7 +66,8 @@ class CacheModule(BaseCacheModule):
             return
 
         from ansible_collections.atgreen.dirq.plugins.module_utils.api import DirQClient
-        client = DirQClient(self._server_url, self._token)
+        client = DirQClient(self._server_url, self._token,
+                            tls_ca=self._tls_ca or None)
 
         try:
             inv = client.get("/api/v1/inventory")

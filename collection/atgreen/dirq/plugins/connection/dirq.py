@@ -46,6 +46,18 @@ DOCUMENTATION = """
                 - name: dirq_token
             env:
                 - name: DIRQ_TOKEN
+        dirq_tls_ca:
+            description:
+                - Path to a CA certificate used to verify the DirQ server.
+                - Takes precedence over I(dirq_tls_insecure).
+                - Needed for a default deployment, where C(dirq cert generate)
+                  produces a self-signed CA that is in no system trust store.
+            default: ""
+            type: str
+            vars:
+                - name: dirq_tls_ca
+            env:
+                - name: DIRQ_TLS_CA
         dirq_exec_timeout:
             description: Timeout in seconds for exec operations.
             default: 300
@@ -101,7 +113,8 @@ class Connection(ConnectionBase):
             )
 
         from ansible_collections.atgreen.dirq.plugins.module_utils.api import DirQClient
-        self._client = DirQClient(server_url, token)
+        self._client = DirQClient(server_url, token,
+                                  tls_ca=self.get_option("dirq_tls_ca") or None)
 
         # Route by stable dirq_agent_id (set by inventory plugin). Fall back
         # to a single-host lookup by hostname if the var isn't present.

@@ -43,6 +43,15 @@ DOCUMENTATION = """
             type: str
             env:
                 - name: DIRQ_TOKEN
+        tls_ca:
+            description:
+                - Path to a CA certificate used to verify the DirQ server.
+                - Needed for a default deployment, where C(dirq cert generate)
+                  produces a self-signed CA that is in no system trust store.
+            required: false
+            type: str
+            env:
+                - name: DIRQ_TLS_CA
         query:
             description: >
                 Optional DirQ query to filter which hosts appear in the inventory.
@@ -156,6 +165,7 @@ class InventoryModule(BaseInventoryPlugin):
 
         server_url = self.get_option("server_url") or os.environ.get("DIRQ_SERVER_URL")
         token = self.get_option("token") or os.environ.get("DIRQ_TOKEN", "")
+        tls_ca = self.get_option("tls_ca") or os.environ.get("DIRQ_TLS_CA", "")
         auto_connection = self.get_option("auto_connection")
         if auto_connection is None:
             auto_connection = True
@@ -164,7 +174,7 @@ class InventoryModule(BaseInventoryPlugin):
             raise AnsibleParserError("server_url is required")
 
         from ansible_collections.atgreen.dirq.plugins.module_utils.api import DirQClient
-        client = DirQClient(server_url, token)
+        client = DirQClient(server_url, token, tls_ca=tls_ca or None)
 
         try:
             inv = client.get("/api/v1/inventory")

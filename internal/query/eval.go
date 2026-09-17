@@ -4,6 +4,7 @@
 package query
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -529,9 +530,22 @@ var arrayModuleKeys = map[string]string{
 // For scalar modules (cpu, memory, os_info), it's a pass/fail check.
 //
 // Returns the filtered data map (modules with no matching data are removed).
-func FilterCollectedData(conditions []*Condition, data map[string]any) map[string]any {
+// cancelCheckInterval is how many array elements are filtered between
+// cancellation checks. Checking every element would put a channel read in the
+// inner loop of the hot path; checking this often keeps the response to a
+// cancelled query well under a millisecond either way.
+const cancelCheckInterval = 256
+
+// FilterCollectedData applies WHERE conditions to collected module data,
+// abandoning the work if ctx is cancelled.
+//
+// The context matters because this runs on every agent, once per element of
+// every array module a query touches — thousands of packages per host. It used
+// to take no context at all, so when the server's query timeout expired the
+// agents carried on filtering for a query nobody was waiting for (dirq-632.16).
+func FilterCollectedData(ctx context.Context, conditions []*Condition, data map[string]any) (map[string]any, error) {
 	if len(conditions) == 0 {
-		return data
+		return data, nil
 	}
 
 	// Group conditions by module.
@@ -545,6 +559,9 @@ func FilterCollectedData(conditions []*Condition, data map[string]any) map[strin
 
 	result := make(map[string]any, len(data))
 	for module, moduleData := range data {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		conds, hasConds := moduleConditions[module]
 		if !hasConds {
 			result[module] = moduleData
@@ -576,7 +593,12 @@ func FilterCollectedData(conditions []*Condition, data map[string]any) map[strin
 		}
 
 		var filtered []any
-		for _, item := range items {
+		for i, item := range items {
+			if i%cancelCheckInterval == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
 			entry, ok := item.(map[string]any)
 			if !ok {
 				continue
@@ -593,7 +615,7 @@ func FilterCollectedData(conditions []*Condition, data map[string]any) map[strin
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // AllFilteredModulesPresent returns true if every module referenced in a WHERE

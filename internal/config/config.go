@@ -16,6 +16,7 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,14 +80,30 @@ func DataDir() string {
 	}
 
 	// Try creating the preferred directory.
-	if err := os.MkdirAll(preferred, 0700); err == nil {
+	if err := os.MkdirAll(preferred, 0700); err == nil && dirIsPrivate(preferred) {
 		return preferred
 	}
 
-	// Fall back to a user-private temp directory.
+	// Fall back to a temp directory — but only if we can trust it. MkdirAll
+	// happily succeeds on a directory that already exists and leaves its owner
+	// and mode alone, so on a shared host a local user can create this path
+	// first and own the subtree we are about to write a signing key into.
 	fallback := filepath.Join(os.TempDir(), "dirq-data")
 	os.MkdirAll(fallback, 0700)
-	return fallback
+	if dirIsPrivate(fallback) {
+		return fallback
+	}
+
+	// Neither location is trustworthy. Return the preferred path anyway: every
+	// caller is about to write key material or a credential, and failing on a
+	// directory we could not create is the right outcome — far better than
+	// succeeding into one somebody else controls. Say why, because the
+	// permission error the caller reports will not explain itself.
+	fmt.Fprintf(os.Stderr,
+		"dirq: refusing to use %s — it is not a private directory owned by this user, "+
+			"and %s is not writable. Create %s owned by this account (mode 0700).\n",
+		fallback, preferred, preferred)
+	return preferred
 }
 
 // Load reads a config file. Returns an empty File (not an error) if the

@@ -12,5 +12,25 @@ Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
 
+# The server answers HTTP and gRPC on unprivileged ports and owns nothing
+# outside its state directory, so it has no reason to be root (dirq-632.10).
+# StateDirectory creates /var/lib/dirq owned by this user, which is also what
+# lets the process keep its signing key and TLS material somewhere private.
+User=dirq
+Group=dirq
+StateDirectory=dirq
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
 [Install]
 WantedBy=multi-user.target

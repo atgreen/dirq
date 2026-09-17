@@ -4,6 +4,7 @@
 package query
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -112,3 +113,36 @@ func BenchmarkMatchLikeManyWildcards(b *testing.B) {
 		matchLike(subject, pattern)
 	}
 }
+
+// Agent-side filtering runs on every managed host, once per element of every
+// array module a query touches. It used to take no context, so when the
+// server's query timeout expired the agents kept filtering for a query nobody
+// was waiting for (dirq-632.16).
+func TestFilterCollectedDataHonoursCancellation(t *testing.T) {
+	packages := make([]any, 5000)
+	for i := range packages {
+		packages[i] = map[string]any{"name": "pkg", "version": "1.0"}
+	}
+	data := map[string]any{
+		"packages": map[string]any{"packages": packages},
+	}
+	conds := []*Condition{{Field: "packages.name", Operator: "=", Value: &Value{String: strPtr("pkg")}}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := FilterCollectedData(ctx, conds, data); err == nil {
+		t.Fatal("filtering ran to completion for a cancelled query")
+	}
+
+	// And an uncancelled query still filters.
+	got, err := FilterCollectedData(context.Background(), conds, data)
+	if err != nil {
+		t.Fatalf("filtering a live query failed: %v", err)
+	}
+	if got == nil {
+		t.Fatal("filtering a live query returned nothing")
+	}
+}
+
+func strPtr(s string) *string { return &s }

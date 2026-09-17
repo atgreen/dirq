@@ -2,7 +2,28 @@
 set -e
 
 if [ "$1" = "configure" ]; then
+    # System account for the service (dirq-632.10). Idempotent: an upgrade
+    # finds it already there.
+    if ! getent group dirq >/dev/null; then
+        addgroup --system dirq
+    fi
+    if ! getent passwd dirq >/dev/null; then
+        adduser --system --ingroup dirq --home /var/lib/dirq \
+                --no-create-home --disabled-login \
+                --gecos "DirQ server" dirq
+    fi
+
     systemctl daemon-reload
+
+    # An install that predates the dirq user left /var/lib/dirq owned by
+    # root, and the service can no longer read its own signing key and TLS
+    # material. Hand the directory over rather than letting the upgrade fail
+    # to start.
+    if [ -d /var/lib/dirq ]; then
+        chown -R dirq:dirq /var/lib/dirq || true
+        chmod 0700 /var/lib/dirq || true
+    fi
+
     if systemctl is-active --quiet dirq-server 2>/dev/null; then
         systemctl restart dirq-server
     fi

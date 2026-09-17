@@ -5,6 +5,12 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# The agent stays root deliberately. Its job is to run operator-authorized
+# commands on this host, write files anywhere on it, and escalate with sudo
+# for become — NoNewPrivileges alone would break that, and an unprivileged
+# agent could not do the work it exists for. The controls that bound it are
+# exec_enabled, the server-side scopes, and the agent-side OPA policy, not
+# the unit file. See SECURITY.md.
 Type=simple
 ExecStart=/usr/bin/dirq-agent
 EnvironmentFile=-/etc/sysconfig/dirq-agent

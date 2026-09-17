@@ -665,6 +665,22 @@ func (t *MeshTopology) FindZoneLeader(id string) (string, bool) {
 	return zl, zl != ""
 }
 
+// Snapshot returns every node as of one instant, under a single lock
+// acquisition. Callers that persist or export the tree need this rather than
+// a walk of Get() calls: a parent swap between two individual reads produces a
+// picture that was never true, and for parent pointers specifically it can
+// produce a cycle the live topology would have refused (dirq-632.14.1).
+func (t *MeshTopology) Snapshot() []NodeInfo {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	out := make([]NodeInfo, 0, len(t.nodes))
+	for _, n := range t.nodes {
+		out = append(out, t.nodeInfoLocked(n))
+	}
+	return out
+}
+
 // PathFromZoneLeader returns the chain of agent IDs from the zone leader at
 // the head of id's parent chain down to id itself, inclusive. It is the route
 // a message addressed to one agent should take, and it is nil when the chain
@@ -800,6 +816,12 @@ func (t *MeshTopology) Get(id string) (NodeInfo, bool) {
 	if !ok {
 		return NodeInfo{}, false
 	}
+	return t.nodeInfoLocked(n), true
+}
+
+// nodeInfoLocked projects a node into its public shape. Caller holds the lock.
+// Shared by Get and Snapshot so the two cannot describe a node differently.
+func (t *MeshTopology) nodeInfoLocked(n *meshNode) NodeInfo {
 	return NodeInfo{
 		ID:         n.id,
 		Hostname:   n.hostname,
@@ -811,7 +833,7 @@ func (t *MeshTopology) Get(id string) (NodeInfo, bool) {
 		FlapScore:  t.currentFlapLocked(n),
 		Flaky:      t.isFlakyLocked(n),
 		Domain:     n.domain,
-	}, true
+	}
 }
 
 // allNodeIDs returns a snapshot of every agent_id known to the topology.

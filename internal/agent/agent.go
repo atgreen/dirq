@@ -321,7 +321,20 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// Step 3: Start serving downstream peers. Every agent listens — the
 	// topology manager may assign children to any node at any time.
-	go a.serveRelay(ctx, lis)
+	//
+	// A TLS failure here is fatal rather than a downgrade, and it happens
+	// before Serve blocks, so surface it the same way a failed port bind is
+	// surfaced: as a Run() error rather than a line in a log nobody reads.
+	relayErr := make(chan error, 1)
+	go func() { relayErr <- a.serveRelay(ctx, lis) }()
+	select {
+	case err := <-relayErr:
+		if err != nil {
+			return fmt.Errorf("relay server: %w", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		// Serve is blocking, which means it started cleanly.
+	}
 
 	// Step 4: Connect and run, reconnecting on failure.
 	return a.connectLoop(ctx)
@@ -1165,7 +1178,14 @@ func (a *Agent) executeQuery(ctx context.Context, qr *pb.QueryRequest) {
 	// Apply agent-side filtering (array-aware: filters into packages, services, etc.)
 	if len(qr.Filters) > 0 {
 		conds := protoFiltersToConditions(qr.Filters)
-		collected = query.FilterCollectedData(conds, collected)
+		var err error
+		collected, err = query.FilterCollectedData(ctx, conds, collected)
+		if err != nil {
+			// The query was abandoned upstream. Nobody is waiting for this
+			// result, so stop working on it rather than finishing and sending.
+			a.log.Info("query filtering abandoned", "query_id", qr.QueryId, "reason", err)
+			return
+		}
 
 		// Check if all WHERE-referenced modules survived filtering.
 		// If a module was referenced in a condition but is missing from the
@@ -1341,15 +1361,21 @@ func (a *Agent) floodDownstreamsLocked(msg *pb.ServerMessage) {
 // serveRelay runs the downstream gRPC server on the pre-bound listener. The
 // listener is bound synchronously in Run() so port-bind failures surface as
 // Run() errors.
-func (a *Agent) serveRelay(ctx context.Context, lis net.Listener) {
+func (a *Agent) serveRelay(ctx context.Context, lis net.Listener) error {
 	var serverOpts []grpc.ServerOption
 	if a.tlsConfig.Enabled() {
 		creds, err := tlsutil.ServerCredentials(a.tlsConfig)
 		if err != nil {
-			a.log.Error("relay TLS setup failed, using insecure", "error", err)
-		} else {
-			serverOpts = append(serverOpts, grpc.Creds(creds))
+			// Fail closed. Serving this listener without TLS would drop
+			// encryption AND the client-certificate binding that ties a
+			// downstream peer to its agent ID, leaving a bearer token as the
+			// only gate — a silent downgrade nobody asked for, announced only
+			// in a log line (dirq-632.9). The dial side already fails closed
+			// here; this is the other half.
+			lis.Close()
+			return fmt.Errorf("relay TLS setup failed: %w", err)
 		}
+		serverOpts = append(serverOpts, grpc.Creds(creds))
 	}
 	// Add keepalive policy to allow client pings without ENHANCE_YOUR_CALM.
 	serverOpts = append(serverOpts,
@@ -1368,7 +1394,9 @@ func (a *Agent) serveRelay(ctx context.Context, lis net.Listener) {
 
 	if err := a.grpcSv.Serve(lis); err != nil {
 		a.log.Error("relay server error", "error", err)
+		return err
 	}
+	return nil
 }
 
 // RelayStream handles a downstream peer connecting to this agent.
