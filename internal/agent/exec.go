@@ -918,7 +918,15 @@ func encodeUTF16Base64(s string) string {
 
 // runningAs reports whether this process already has the identity of the
 // named user, so privilege escalation would be a no-op.
-func runningAs(name string) bool {
+//
+// A variable so tests can pin the answer. Escalation behaviour must not
+// depend on the uid of whoever runs the suite: these tests passed on a
+// developer machine and on CI, then failed inside the Debian package
+// build, which runs as root and so legitimately skipped the sudo wrapper
+// the tests asserted.
+var runningAs = runningAsReal
+
+func runningAsReal(name string) bool {
 	if name == "" || name == "root" {
 		return os.Geteuid() == 0
 	}

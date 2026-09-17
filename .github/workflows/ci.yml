@@ -55,6 +55,9 @@ jobs:
         run: go test ./... -race
         env:
           DIRQ_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+          # This job provides the service, so a missing URL here is a
+          # broken workflow rather than an environment without a database.
+          DIRQ_REQUIRE_POSTGRES: "1"
 
       - name: Vet
         run: go vet ./...

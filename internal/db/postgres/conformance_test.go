@@ -42,8 +42,17 @@ var schemaSeq atomic.Int64
 func TestConformance(t *testing.T) {
 	base := os.Getenv("DIRQ_TEST_POSTGRES_URL")
 	if base == "" {
-		if os.Getenv("CI") != "" {
-			t.Fatal("DIRQ_TEST_POSTGRES_URL not set under CI; the postgres conformance suite must not be skipped there")
+		// Fail rather than skip only where a postgres service was
+		// promised. This used to key off CI, which every GitHub Actions
+		// job sets — including the Debian package build, which runs
+		// `go test ./...` with no database and no reason to have one, and
+		// which duly failed the first time a release was cut. The guard
+		// still does its job: if build-and-test loses its service
+		// container, that job sets DIRQ_REQUIRE_POSTGRES and this fails
+		// loudly instead of quietly reporting a meaningless green.
+		if os.Getenv("DIRQ_REQUIRE_POSTGRES") != "" {
+			t.Fatal("DIRQ_REQUIRE_POSTGRES is set but DIRQ_TEST_POSTGRES_URL is not; " +
+				"the postgres service this job promised is missing")
 		}
 		t.Skip("DIRQ_TEST_POSTGRES_URL not set; skipping postgres conformance tests")
 	}

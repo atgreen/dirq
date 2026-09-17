@@ -146,6 +146,11 @@ func decodeUTF16Base64(t *testing.T, s string) string {
 // ─────────────────────────────────────────────────────────
 
 func TestBuildCommandUnix(t *testing.T) {
+	// These cases describe escalation from an unprivileged agent. Pin the
+	// identity check so the expectations hold wherever the suite runs —
+	// as root the wrapper is correctly skipped, which is covered by
+	// TestBuildCommandUnixSkipsPointlessEscalation.
+	notTheUser(t)
 	ctx := context.Background()
 	tests := []struct {
 		name         string
@@ -1008,20 +1013,21 @@ func TestHandleExecRequestLeavesNormalOutputAlone(t *testing.T) {
 func TestBuildCommandUnixSkipsPointlessEscalation(t *testing.T) {
 	skipOnWindows(t)
 
-	alreadyRoot := os.Geteuid() == 0
-	cmd := buildCommandUnix(context.Background(), "echo hi", true, "", "sudo")
-	joined := strings.Join(cmd.Args, " ")
+	t.Run("already the target user: no wrapper", func(t *testing.T) {
+		alreadyTheUser(t)
+		cmd := buildCommandUnix(context.Background(), "echo hi", true, "", "sudo")
+		if joined := strings.Join(cmd.Args, " "); strings.Contains(joined, "sudo") {
+			t.Errorf("already root, command still escalates: %q", joined)
+		}
+	})
 
-	if alreadyRoot {
-		if strings.Contains(joined, "sudo") {
-			t.Errorf("running as root, command still escalates: %q", joined)
+	t.Run("not the target user: escalation stays", func(t *testing.T) {
+		notTheUser(t)
+		cmd := buildCommandUnix(context.Background(), "echo hi", true, "", "sudo")
+		if joined := strings.Join(cmd.Args, " "); !strings.Contains(joined, "sudo") {
+			t.Errorf("not root, command does not escalate: %q", joined)
 		}
-	} else {
-		// Not root, so escalation is the whole point and must remain.
-		if !strings.Contains(joined, "sudo") {
-			t.Errorf("running as non-root, command does not escalate: %q", joined)
-		}
-	}
+	})
 }
 
 // Escalating to a genuinely different user must still go through sudo,
@@ -1029,6 +1035,7 @@ func TestBuildCommandUnixSkipsPointlessEscalation(t *testing.T) {
 func TestBuildCommandUnixStillEscalatesToAnotherUser(t *testing.T) {
 	skipOnWindows(t)
 
+	notTheUser(t)
 	cmd := buildCommandUnix(context.Background(), "echo hi", true, "someone-else", "sudo")
 	if joined := strings.Join(cmd.Args, " "); !strings.Contains(joined, "sudo") {
 		t.Errorf("escalation to another user was skipped: %q", joined)
@@ -1048,4 +1055,21 @@ func TestRunningAs(t *testing.T) {
 	if runningAs("definitely-not-a-real-user") {
 		t.Error("runningAs reported a match for a user that does not exist")
 	}
+}
+
+// notTheUser pins runningAs to false for the duration of a test, so
+// escalation expectations do not depend on the uid running the suite.
+func notTheUser(t *testing.T) {
+	t.Helper()
+	saved := runningAs
+	t.Cleanup(func() { runningAs = saved })
+	runningAs = func(string) bool { return false }
+}
+
+// alreadyTheUser is the opposite: pin runningAs to true.
+func alreadyTheUser(t *testing.T) {
+	t.Helper()
+	saved := runningAs
+	t.Cleanup(func() { runningAs = saved })
+	runningAs = func(string) bool { return true }
 }
