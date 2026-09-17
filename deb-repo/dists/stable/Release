@@ -2,13 +2,13 @@ Origin: dirq
 Label: dirq
 Suite: stable
 Codename: stable
-Date: Fri, 07 Aug 2026 11:53:00 +0000
+Date: Thu, 17 Sep 2026 10:04:51 +0000
 Architectures: amd64
 Components: main
 Description: DirQ APT repository
 MD5Sum:
- ae65b6d22dd00e77437e460e974309d2             1867 main/binary-amd64/Packages
- 10697d804cedf38f41528d1b03a5d3f9              888 main/binary-amd64/Packages.gz
+ e3bb8cc1da17cc21ee4e74458d0ad53d             1867 main/binary-amd64/Packages
+ 2f5f4ea4aea6ae9118c3a05d0aaa400e              886 main/binary-amd64/Packages.gz
 SHA256:
- cd0fb92ec3c25fdbef426644ae39a8a2bbe469de321cc57ce2e75dcd65b226e5             1867 main/binary-amd64/Packages
- 72c705f8b3a81c580bd1f8e7fcfde18bd2ce70aabf9c6da25163561eb9d62bf6              888 main/binary-amd64/Packages.gz
+ f06ca2beacb474f0e90c8f34fc5bc318334eea5e0fb5a703ad951039eea70b7b             1867 main/binary-amd64/Packages
+ 35d19cd7690d2f19db0988718f7d6bc99fe3d9906112c65cf5f477bda6ba1a99              886 main/binary-amd64/Packages.gz

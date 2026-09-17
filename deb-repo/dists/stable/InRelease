@@ -5,29 +5,29 @@ Origin: dirq
 Label: dirq
 Suite: stable
 Codename: stable
-Date: Fri, 07 Aug 2026 11:53:00 +0000
+Date: Thu, 17 Sep 2026 10:04:51 +0000
 Architectures: amd64
 Components: main
 Description: DirQ APT repository
 MD5Sum:
- ae65b6d22dd00e77437e460e974309d2             1867 main/binary-amd64/Packages
- 10697d804cedf38f41528d1b03a5d3f9              888 main/binary-amd64/Packages.gz
+ e3bb8cc1da17cc21ee4e74458d0ad53d             1867 main/binary-amd64/Packages
+ 2f5f4ea4aea6ae9118c3a05d0aaa400e              886 main/binary-amd64/Packages.gz
 SHA256:
- cd0fb92ec3c25fdbef426644ae39a8a2bbe469de321cc57ce2e75dcd65b226e5             1867 main/binary-amd64/Packages
- 72c705f8b3a81c580bd1f8e7fcfde18bd2ce70aabf9c6da25163561eb9d62bf6              888 main/binary-amd64/Packages.gz
+ f06ca2beacb474f0e90c8f34fc5bc318334eea5e0fb5a703ad951039eea70b7b             1867 main/binary-amd64/Packages
+ 35d19cd7690d2f19db0988718f7d6bc99fe3d9906112c65cf5f477bda6ba1a99              886 main/binary-amd64/Packages.gz
 -----BEGIN PGP SIGNATURE-----
 
-iQIzBAEBCgAdFiEEre3Ac/FORwuD3v8b8p/ZFuMdNcsFAmp1xx0ACgkQ8p/ZFuMd
-Ncvojw//dqKfKF3jcRKefq2L5OfbDCk/yqSuvlOeRTgKiPqHWJr8lNT1u4tjUD/B
-Ylq+rqcuLJQnWoWTZ+C0zSTozqeNGGGvVh9f+NzW92Ih7b7nPciF5HVjt3qj2S/F
-lk30wmosgVGY/qXeeYM/v/l3/h8vxIbbUezL4tOzMjr6q8LUrC+JmRCDf91PCXRi
-XlqWC/t+OXq2qwSSDbp18/KQJHYqxhDnmRHlxP8Qqyy+ad/A/7jjT8haIoVIPNgQ
-BqWOvfZ9o2cYlBx2B/JU/4NECLsL9/S2WZ8/i5QmcmKyVzTE2KFhjH7F9OLDrXfK
-45JOZWFrCYVuqOnZWBRN/uwr5WLAMETcuq6270ulcWo/BbsKQykOjMlB6cbUJqcz
-ufZOijwXHFzVjgo1ETkxAM7r6Ty8nAKISLAb0UHXgLe/VoJXIv4quwQCw9iErtML
-XxsTlnoJgJh9/92DEZ6D67BRcIB4DWUbcG+NFDDZvtYghf4D6swbpJxYK1AeCDE5
-tMyLm6BR405x3+JUhu85DiSpseduKry+dqOacraSjzKki6sbh4piLKsPKyuqqm4I
-3cMlK9qpQxEraAQ2ptRrNbYUtRInp9FygjYIiwRV8p2Lpk37QFiJf6JULH/z37nc
-Ip4WtLufmT8c+7gGqTr9GVkpZj8wV82GoU1yE+Vb9nOVqxIE//s=
-=OUl5
+iQIzBAEBCgAdFiEEre3Ac/FORwuD3v8b8p/ZFuMdNcsFAmqru0MACgkQ8p/ZFuMd
+Ncv/zw/+ITLVZsfJchVMP/eM3Si/TzWsvxJCaTTZ/ceJMfhQ1APpmAd5Gi6rgTXc
+K0YuUee0JJfEPSa7SqkvbbtavDrNfPJPjlJb1sToIywD5o284k5NCofeKgFvGWAo
+WmRtxzfCDDk5eQ0uVmCCIiTS++SY4thdJZfpY4G8ugvBvYyp0vyoYdO3Ds5p7Nac
+uepIuk8h7LbXWnLUB9Gm16Hi1egAT1C9PoBw5IYa/pWm78rnwn4w7tg58uVOhVsA
+PwirkOCzfFAf8sRYCd7tZN5MCjD+2vv9BzXX6bFBPK+Fow3vYiYVobfT6sD5GqeP
+XDS3Xtev8qMKbHKyPOgbbMdOm8PHLr4NXRyvCuELirpqi5FWFIsOr+II6Lnqycw+
+fKhLlCjwvDhq5rdC3dYLl4T4rs1/9Ya3/XsiC9ep3rRUKHe5JYEmL+YpAA2lM6Ky
+KhcL+l6KYqMU+tTcFFTmJvQrbAgDbE/z/rKPbGTpN/IYA3cAv8kkPOQLJpG0kkcd
+p5fw+fYIR7hxj36l7Ii+5mpb9R81ffhSuzIHQgceAGhoF0zRT/lU/GkSESPT1dG2
+e2LyEdON1Ukh8KgGd0aNOPqykMqwsjXdTwj02TFBc9msLT0gdNnMfUMMWoLsohgl
+iTBkv9uIjAqGQSdV3f5VgOuyKw6igCoSvl4OVwbJUHmp5aPDOfk=
+=ZWup
 -----END PGP SIGNATURE-----
