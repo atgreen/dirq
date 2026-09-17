@@ -29,34 +29,44 @@ const (
 	// check in the exec/file handlers still applies — it is not
 	// topology-derived and so carries no false-positive risk.
 	OriginOff OriginMode = "off"
-	// OriginObserve verifies and counts but never rejects. This is the
-	// default: reattachment lag can make a legitimate late message look
-	// foreign, and the metric is how we find out how often that happens
-	// before anyone turns on enforcement.
+	// OriginObserve verifies and counts but never rejects. Useful for a
+	// fleet that wants to watch dirq_agent_origin_violations_total before
+	// committing, or to diagnose a fleet where enforcement is dropping
+	// something it should not.
 	OriginObserve OriginMode = "observe"
-	// OriginEnforce drops messages that fail the check.
+	// OriginEnforce drops messages that fail the check. The default: a
+	// control that is on by default is the only kind that protects anyone,
+	// and the ordering argument says legitimate traffic does not trip it —
+	// a relay announces a child (PeerConnected) before forwarding anything
+	// from it, and gRPC streams preserve order, so the topology knows where
+	// an agent sits before its traffic arrives. What enforcement does drop
+	// is a message still in flight down a path the agent has already left;
+	// that is stale by definition, and the metric still counts it.
 	OriginEnforce OriginMode = "enforce"
 )
 
-// ParseOriginMode maps a config string to a mode, falling back to observe for
-// anything unrecognized — an operator typo must not silently disable the
-// check, and must not silently start dropping traffic either.
-func ParseOriginMode(s string) OriginMode {
-	switch OriginMode(s) {
-	case OriginOff:
-		return OriginOff
-	case OriginEnforce:
-		return OriginEnforce
+// DefaultOriginMode is what an unset configuration means.
+const DefaultOriginMode = OriginEnforce
+
+// ParseOriginMode maps a config string to a mode. The second return value is
+// false when the string was not recognized, so the caller can say so rather
+// than letting a typo quietly decide a security setting: an unrecognized value
+// resolves to the default, never to the weakest option.
+func ParseOriginMode(s string) (OriginMode, bool) {
+	switch m := OriginMode(s); m {
+	case OriginOff, OriginObserve, OriginEnforce:
+		return m, true
 	default:
-		return OriginObserve
+		return DefaultOriginMode, false
 	}
 }
 
-// originMode returns the configured mode, defaulting an unset config to
-// observe.
+// originMode returns the configured mode. The zero value is an unset config,
+// which means the default rather than the weakest setting — a Server built
+// without touching this field enforces.
 func (s *Server) originMode() OriginMode {
 	if s.cfg.AgentOriginChecks == "" {
-		return OriginObserve
+		return DefaultOriginMode
 	}
 	return s.cfg.AgentOriginChecks
 }

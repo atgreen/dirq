@@ -236,6 +236,31 @@ Because relays forward messages without re-signing, a compromised relay
 cannot forge server-originated commands. It can drop or delay messages,
 but it cannot fabricate new ones.
 
+### Agent Message Origin
+
+Messages travelling the other way — query results, exec responses, topology
+reports — are not signed. A zone leader's stream carries its whole subtree
+multiplexed onto one connection, so the mTLS certificate authenticates the
+zone leader and nothing else, while each message names its own origin in a
+payload field.
+
+The server therefore checks every claim against the stream it arrived on:
+
+- a terminal response must name the agent its request was dispatched to;
+- a claimed origin must be the sending stream itself or an agent beneath it
+  in the mesh;
+- a relay may only report an attachment to itself or below it, and may only
+  report losing a child it actually had.
+
+A compromised **leaf** is confined to speaking for itself. A compromised
+**relay or zone leader** can still speak for agents in its own subtree —
+closing that requires per-message signatures from each agent, which is not
+yet implemented.
+
+Controlled by `agent_origin_checks` (`DIRQ_AGENT_ORIGIN_CHECKS`), which
+enforces by default; `observe` counts violations in
+`dirq_agent_origin_violations_total` without dropping anything.
+
 ### Replay Protection
 
 - **Session tokens** expire after 24 hours and include a timestamp in

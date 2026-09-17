@@ -49,8 +49,7 @@ func main() {
 		AuthDisabled:       config.EnvOr("DIRQ_AUTH_DISABLED", fileCfg, "auth_disabled", "false") == "true",
 		RequireAAPBinding:  config.EnvOr("DIRQ_REQUIRE_AAP_BINDING", fileCfg, "require_aap_binding", "false") == "true",
 		RegistrationSecret: config.EnvOr("DIRQ_REGISTRATION_SECRET", fileCfg, "registration_secret", ""),
-		AgentOriginChecks: server.ParseOriginMode(
-			config.EnvOr("DIRQ_AGENT_ORIGIN_CHECKS", fileCfg, "agent_origin_checks", string(server.OriginObserve))),
+		AgentOriginChecks: originChecks(fileCfg, log),
 		LeaderElection:     config.EnvOr("DIRQ_LEADER_ELECTION", fileCfg, "leader_election", "false") == "true",
 		FactFlushInterval:  cfgDur("DIRQ_FACT_FLUSH_INTERVAL", fileCfg, "fact_flush_interval", 0),
 		FactFlushSize:      cfgInt("DIRQ_FACT_FLUSH_SIZE", fileCfg, "fact_flush_size", 0),
@@ -157,6 +156,23 @@ func main() {
 		log.Error("server error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// originChecks resolves the agent-origin-check mode, warning rather than
+// silently accepting a value nobody meant to write. An unrecognized setting
+// resolves to the default, so a typo cannot weaken the check.
+func originChecks(fileCfg *config.File, log *slog.Logger) server.OriginMode {
+	raw := config.EnvOr("DIRQ_AGENT_ORIGIN_CHECKS", fileCfg, "agent_origin_checks", string(server.DefaultOriginMode))
+	mode, ok := server.ParseOriginMode(raw)
+	if !ok {
+		log.Warn("unrecognized agent_origin_checks value — using the default",
+			"value", raw, "using", string(mode))
+	}
+	if mode != server.OriginEnforce {
+		log.Warn("agent origin checks are not enforcing — messages claiming another agent's identity will be counted but acted on",
+			"mode", string(mode))
+	}
+	return mode
 }
 
 // redactDSN strips the password from a database URL so it can be logged.

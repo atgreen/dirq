@@ -386,6 +386,53 @@ func TestTargetMismatchIsRejectedEvenWhenChecksAreOff(t *testing.T) {
 	}
 }
 
+// The zero value of the config field means "unset", and unset must mean the
+// default — not the weakest setting. A Server built without touching this
+// field enforces, so a deployment that never heard of the option is still
+// protected.
+func TestUnsetConfigEnforces(t *testing.T) {
+	s := originTestServer(t)
+	s.cfg.AgentOriginChecks = ""
+
+	if got := s.originMode(); got != OriginEnforce {
+		t.Fatalf("unset AgentOriginChecks resolved to %q, want %q", got, OriginEnforce)
+	}
+
+	es := s.newExecSession(t, "exec-1", "leaf-b")
+	s.handleExecResponse("zl-a", &pb.ExecResponse{
+		RequestId: "exec-1",
+		AgentId:   "leaf-b",
+		Success:   true,
+	})
+	select {
+	case got := <-es.result:
+		t.Fatalf("a forged response was accepted under the default config: %+v", got)
+	default:
+	}
+}
+
+func TestParseOriginMode(t *testing.T) {
+	cases := []struct {
+		in     string
+		want   OriginMode
+		wantOK bool
+	}{
+		{"off", OriginOff, true},
+		{"observe", OriginObserve, true},
+		{"enforce", OriginEnforce, true},
+		// A typo resolves to the default, never to the weakest option.
+		{"enforcce", DefaultOriginMode, false},
+		{"", DefaultOriginMode, false},
+		{"OFF", DefaultOriginMode, false},
+	}
+	for _, c := range cases {
+		got, ok := ParseOriginMode(c.in)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("ParseOriginMode(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.wantOK)
+		}
+	}
+}
+
 // ─────────────────────────────────────────────────────────
 // Subtree predicate
 // ─────────────────────────────────────────────────────────
