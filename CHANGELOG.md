@@ -5,6 +5,47 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.26.0] - 2026-09-17
+
+This release is the result of building an end-to-end test that runs a real
+server and a real thirteen-agent mesh in containers, and fixing everything
+it found. Most of the entries below describe faults that no unit test
+could reach, because they only exist between processes.
+
+### Security
+
+- **The CLI and the Ansible connection plugin can now verify the server's certificate.** Both offered only two modes — skip verification entirely, or trust the system store — and DirQ's own `dirq cert generate` produces a self-signed CA that is in neither. Against a default deployment the only working configuration was to accept any certificate, and the server actively recommended it: the `client.conf` it generates contained `tls_insecure: true`. Every CLI call and every Ansible task therefore ran over a connection open to interception, while the server dutifully served TLS. Both now read `tls_ca` / `DIRQ_TLS_CA` — the same variable the server and agents already use — and the server writes that instead. A CA that cannot be read is a hard error rather than a silent fall back to the system store.
+- **A deploy filtered by hostname or by a fact now installs only on the matching hosts.** The deploy path carried its own copy of the exec path's target resolution that tested for tag conditions only. A query filtering on hostname or on a fact field contains no tag condition, so the filter was skipped entirely and the package installed on *every* online exec-enabled agent — silently, with a header line claiming the whole fleet was the intended target. Deploy now shares the exec resolver.
+- **Command output can no longer exhaust an agent's memory.** stdout and stderr were accumulated in unbounded buffers, so a command that printed without stopping grew the agent's heap until the host ran out of memory. Output is now capped at 10 MB per stream, with truncation reported rather than silent. The same audit found `fetch_file` reading a file entirely into memory when `become` was set, bypassing the `maxFileSize` limit the direct-read path enforces.
+
+### Added
+
+- **Hosts report `reachable` alongside `online`.** `online` means the agent registered; `reachable` means a broadcast can actually get to it right now — the agent is online *and* the zone leader at the head of its path holds a live stream. The two differ for a window after a zone leader dies, which is exactly when an operator is trying to understand why a query came back with agents missing.
+- **A zone leader is replaced when one dies.** Leader slots were filled only by new registrations or by a saturated tree, so a fleet that lost a leader and never gained a host stayed short indefinitely; losing the last one left every orphan self-promoting and the mesh flat. One relay is now promoted per leader death — at most one, preferring a relay that already has children so only its own upstream link moves, skipping any node whose flap score marks it unreliable.
+- **`dirq --config` / `DIRQ_CONFIG_FILE`** selects a client config file, instead of always reading `~/.config/dirq/client.conf`. Anything invoking the CLI previously inherited whoever was running it.
+- **`dirq deploy --become` / `--become-user`**, matching `exec`. Deploy previously forced privilege escalation with no way to turn it off.
+
+### Fixed
+
+- **A relay agent no longer dies when it has no upstream connection.** Forwarding a child's traffic dereferenced a nil stream if the parent had not yet attached upstream, or was mid-reconnect — the agent process crashed, taking its entire subtree off the mesh. Only reachable in a tree deep enough to relay, which is why it survived this long.
+- **Agents swept offline by an ancestor's death come back.** Losing a node marks its whole subtree offline, which is correct at that instant. But nothing ever marked them online again unless they reattached, and a descendant whose own parent survived never does — so it stayed offline forever while running perfectly well, executing relayed broadcasts whose answers were discarded. The fleet silently shrank with every failure. Agents now re-announce their children on attaching upstream, and the server restores the reported agent's subtree.
+- **The server's topology follows a failover.** An agent that re-homed onto a fallback parent already at capacity stayed recorded under its dead parent, so `dirq hosts graph` drew a tree that did not exist and reachability was computed from a corpse.
+- **`dirq run` no longer targets agents that cannot execute.** A playbook run built its inventory from a query, which knows nothing about capability, so an agent with exec disabled was included and the whole run aborted reporting "no Python 3.8+ found" — sending people to install Python on a host that was never going to run anything.
+- **`dirq deploy` works on hosts without `sudo`.** Deploy hardcoded privilege escalation, so on an agent already running as root with no sudo installed — DirQ's own container image, for one — every deploy failed with `rc=127`, which reads as a missing package manager.
+- **A quoted command after `exec --` reaches the agent intact.** Arguments were joined with plain spaces, so `-- sh -c 'printf "a b" > /f'` was re-split and the agent ran something else.
+- **Merging tags onto an agent that registered without any no longer panics** the HTTP handler.
+- **Stopping a server whose startup failed no longer segfaults**, which used to bury the startup error that caused it.
+- **A timed-out exec kills the whole process tree on Windows**, not just the named process. Work spawned by a cancelled command kept running on a host that had been told to stop.
+- **The Ansible connection plugin beside the binary is used in preference to an installed one**, so editing it in a checkout has an effect.
+
+### Changed
+
+- **Arguments after `exec --` are grouped as written.** A single argument is still a shell command line, so `-- "ls /tmp | wc -l"` pipes as before. Several arguments are now a command vector with their boundaries preserved, which means spreading shell syntax across separate arguments — `-- ls /tmp \| wc -l` — no longer reaches a shell; use the single-argument form.
+
+### Documentation
+
+- **Corrected two pages that described behaviour the code does not have.** The CLI reference taught `tls_insecure: true` as the normal client configuration, and the deploy guide described a depth-first rolling strategy with a `--parallel` flag — promising that a parent is never updated while its children are mid-install, for the express use case of upgrading `dirq-agent` across a live fleet. No such ordering exists and the flag never did. Also documented client-side TLS verification, the `online`/`reachable` distinction, and `exec` argument grouping.
+
 ## [0.25.1] - 2026-08-07
 
 ### Security
