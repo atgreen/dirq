@@ -10,6 +10,40 @@ import (
 	"strings"
 )
 
+// validPackageName reports whether s is a well-formed package-name hint safe to
+// pass as a positional argument to rpm/dpkg-query. Hints originate from a
+// readonly query's WHERE clause (packages.name = '…'), so a hostile value must
+// never be parseable as a command-line option: rpm treats a leading-dash
+// argument like "--pipe=<cmd>" as an option and runs <cmd> through a shell.
+// We require a real package-name shape — [A-Za-z0-9._+-], no leading dash —
+// which cannot be mistaken for a flag. This validation and the "--" separator
+// in CollectFiltered are belt and braces.
+func validPackageName(s string) bool {
+	if s == "" || s[0] == '-' {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '+' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// filterPackageNames drops any hint that is not a well-formed package name.
+func filterPackageNames(hints []string) []string {
+	out := hints[:0:0]
+	for _, h := range hints {
+		if validPackageName(h) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // PackagesModule collects installed package information.
 type PackagesModule struct{}
 
@@ -41,11 +75,21 @@ func (p *PackagesModule) CollectFiltered(nameHints []string) (map[string]any, er
 		return p.Collect()
 	}
 
+	// Drop any hint that isn't a well-formed package name. A readonly query
+	// controls these values, and an option-shaped hint (e.g. "--pipe=<cmd>")
+	// is command execution via rpm. If nothing survives, fall back to a full
+	// enumeration rather than running the query tool with no operands.
+	nameHints = filterPackageNames(nameHints)
+	if len(nameHints) == 0 {
+		return p.Collect()
+	}
+
 	var packages []any
 
 	if rpmPath, err := exec.LookPath("rpm"); err == nil {
-		// rpm -q kernel openssl → only query specific packages.
-		args := append([]string{"-q", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"}, nameHints...)
+		// rpm -q kernel openssl → only query specific packages. "--" stops
+		// option parsing so a hint can never be read as a flag.
+		args := append([]string{"-q", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n", "--"}, nameHints...)
 		cmd := exec.Command(rpmPath, args...)
 		out, err := cmd.Output()
 		if err != nil {
@@ -57,8 +101,9 @@ func (p *PackagesModule) CollectFiltered(nameHints []string) (map[string]any, er
 		}
 		packages = parseTabSeparated(string(out), "rpm")
 	} else if dpkgPath, err := exec.LookPath("dpkg-query"); err == nil {
-		// dpkg-query -W kernel openssl
-		args := append([]string{"-W", "-f=${Package}\t${Version}\t${Architecture}\n"}, nameHints...)
+		// dpkg-query -W kernel openssl. "--" stops option parsing so a hint
+		// can never be read as a flag.
+		args := append([]string{"-W", "-f=${Package}\t${Version}\t${Architecture}\n", "--"}, nameHints...)
 		cmd := exec.Command(dpkgPath, args...)
 		out, err := cmd.Output()
 		if err != nil {
