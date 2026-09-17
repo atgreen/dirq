@@ -711,6 +711,35 @@ answeringCount() {
     | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d.get("results",[])))' 2>/dev/null || echo ERR
 }
 
+say "a quoted inline command survives the trip to the agent"
+# Joining the arguments after -- with plain spaces destroyed argument
+# boundaries, so a shell program passed as one argument was re-split and
+# the agent ran something else entirely (dirq-2uf). Three things at once
+# here: quotes, an escape sequence, and a redirect.
+"$BIN" --json exec WHERE hostname = "'web-01'" -- sh -c 'printf "one\ntwo\n" > /tmp/dirq-quoting-check' > "$CERTS/quote-write.json" 2>&1 || true
+"$BIN" --json exec WHERE hostname = "'web-01'" -- cat /tmp/dirq-quoting-check > "$CERTS/quote-read.json" 2>&1 || true
+if python3 - "$CERTS/quote-write.json" "$CERTS/quote-read.json" <<'ASSERT'
+import base64, json, sys
+
+def one(path):
+    rows = [json.loads(l) for l in open(path) if l.strip().startswith("{")]
+    rows = [r for r in rows if r.get("hostname")]
+    assert len(rows) == 1, f"{len(rows)} results in {path}, want 1"
+    return rows[0]
+
+w = one(sys.argv[1])
+err = base64.b64decode(w.get("stderr") or "").decode()
+assert w.get("rc") == 0, f"the write failed: rc={w.get('rc')} stderr={err!r}"
+assert "usage" not in err.lower(), f"the command arrived mangled: {err!r}"
+
+r = one(sys.argv[2])
+got = base64.b64decode(r.get("stdout") or "").decode()
+assert got == "one\ntwo\n", f"file content is {got!r}, want 'one\\ntwo\\n'"
+ASSERT
+then pass "quotes, escapes and a redirect all reached the agent intact"
+else fail "inline command quoting"
+fi
+
 say "grep searches a file across the fleet"
 # Plant a known file on the prod hosts, then find it through the mesh.
 # Via --script rather than an inline command: quoting a multi-line redirect

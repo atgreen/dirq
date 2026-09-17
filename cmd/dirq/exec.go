@@ -71,7 +71,7 @@ Examples:
 				return fmt.Errorf("provide a command after -- or use --script <file>")
 			}
 
-			commandStr := strings.Join(commandParts, " ")
+			commandStr := joinRemoteCommand(commandParts)
 			queryStr := buildWhereQuery(whereArgs)
 
 			payload := map[string]any{
