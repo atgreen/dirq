@@ -148,3 +148,75 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 		s.mu.Unlock()
 	}
 }
+
+// fillVacantZoneLeaderSlot promotes one relay when a zone leader has been
+// lost and the fleet is now below MaxZoneLeaders.
+//
+// This is the piece registration_batcher.go's comment assumed existed:
+// slots left open by a diversity-constrained batch were said to be filled
+// by "the rebalancer's promote a relay with children path". That path went
+// away with the proactive rebalancer and nothing replaced it, so a fleet
+// that lost a zone leader and never registered a new agent stayed a leader
+// short for good — and if it lost the last one, every orphan self-promoted
+// through RequestPeers and the mesh went flat.
+//
+// Deliberately event-driven and not a ticker. The proactive rebalancer was
+// removed because periodic reshuffling moved agents mid-broadcast and
+// violated IP diversity; this fires at most once per zone-leader death,
+// promotes at most one agent, and prefers a relay that already has
+// children so only that agent's upstream link moves while its subtree
+// stays where it is.
+func (s *Server) fillVacantZoneLeaderSlot() {
+	want := s.topoCfg.MaxZoneLeaders
+	if have := s.topology.CountOnlineZoneLeaders(); have >= want {
+		return
+	}
+
+	id, ok := s.topology.FindPromotionCandidate()
+	if !ok {
+		s.log.Info("zone-leader slot open but no suitable candidate to promote",
+			"online_zone_leaders", s.topology.CountOnlineZoneLeaders(), "max", want)
+		return
+	}
+
+	node, _ := s.topology.Get(id)
+	s.topology.AssignZoneLeader(id)
+	metricOrphanReassign.WithLabelValues("promote_slot").Inc()
+	s.log.Info("promoted a relay to fill a vacant zone-leader slot",
+		"agent_id", id, "hostname", node.Hostname,
+		"online_zone_leaders", s.topology.CountOnlineZoneLeaders(), "max", want)
+
+	// Tell the agent, so it reconnects straight to the server.
+	//
+	// This has to go out through every zone-leader stream rather than to
+	// the agent's own, the way reassignOrphans does. The candidate we
+	// prefer is a relay carrying children, and a relay by definition holds
+	// no direct server stream — so a direct send could never reach exactly
+	// the agent we most want to promote. Agents relay a PeerUpdate aimed at
+	// someone else on down the tree, so a broadcast finds it wherever it
+	// sits. Without this the topology records a promotion the agent never
+	// hears about, and its subtree reads as unreachable because their new
+	// zone leader has no stream.
+	msg := &pb.ServerMessage{
+		Payload: &pb.ServerMessage_PeerUpdate{
+			PeerUpdate: &pb.PeerUpdate{
+				TargetAgentId: id,
+				NewRole:       pb.AgentRole_AGENT_ROLE_ZONE_LEADER,
+				NewParentAddr: "",
+			},
+		},
+	}
+	if s.signer != nil {
+		s.signServerMessage(msg)
+	}
+	s.mu.Lock()
+	for _, as := range s.streams {
+		select {
+		case as.send <- msg:
+		default:
+			s.log.Warn("zone leader send buffer full while broadcasting a promotion",
+				"zone_leader", as.agentID, "target", id)
+		}
+	}
+	s.mu.Unlock()
+}

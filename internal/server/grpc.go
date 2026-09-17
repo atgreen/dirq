@@ -428,6 +428,12 @@ func (s *Server) closeAgentStream(as *agentStream) {
 	// children actually reattach — see reassignOrphans for the
 	// rationale.
 	go s.reassignOrphans(context.Background(), agentID)
+
+	// If that was a zone leader, the fleet is now one short. Fill the slot
+	// from the existing agents; nothing else does, so without this the
+	// count only ever recovers when a new agent happens to register
+	// (dirq-zyc).
+	go s.fillVacantZoneLeaderSlot()
 }
 
 // handlePeerConnected commits a fallback-parent reattachment. A relay

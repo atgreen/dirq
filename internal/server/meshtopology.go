@@ -354,6 +354,59 @@ func (t *MeshTopology) Reparent(id, newParentID string) bool {
 	return t.AssignChild(id, newParentID)
 }
 
+// FindPromotionCandidate picks a relay to promote into a vacant
+// zone-leader slot, or reports that nothing suitable exists.
+//
+// Preference order, and why each matters:
+//
+//   - Already has children. It is carrying traffic, so its reachability
+//     is proven rather than assumed, and promoting it moves only its own
+//     upstream link — its subtree stays attached to it. That bounded
+//     disruption is the difference between this and the proactive
+//     rebalancer that was removed for shuffling the tree mid-broadcast.
+//   - In a failure domain with no zone leader, matching the diversity
+//     rule the registration batcher already applies, so a promotion does
+//     not stack a second leader into a rack that has one.
+//   - Not flapping. The flap score exists to identify nodes that keep
+//     rebooting, and promoting one puts a subtree behind it.
+//
+// Ties break on ID so the choice is deterministic and testable rather
+// than dependent on map iteration order.
+func (t *MeshTopology) FindPromotionCandidate() (string, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	domainHasZL := make(map[string]bool)
+	for id := range t.zoneLeaders {
+		if n, ok := t.nodes[id]; ok && n.online && n.domain != "" {
+			domainHasZL[n.domain] = true
+		}
+	}
+
+	best := ""
+	bestScore := -1
+	for id, n := range t.nodes {
+		if !n.online || n.role == "zone_leader" {
+			continue
+		}
+		if t.isFlakyLocked(n) {
+			continue
+		}
+		// Higher is better: children matter most, diversity next.
+		score := 0
+		if len(n.children) > 0 {
+			score += 2
+		}
+		if n.domain == "" || !domainHasZL[n.domain] {
+			score++
+		}
+		if score > bestScore || (score == bestScore && id < best) {
+			best, bestScore = id, score
+		}
+	}
+	return best, best != ""
+}
+
 // PromoteToZL promotes an existing agent into a zone leader.  Used by the
 // orphan-promotion escape hatch when the tree saturates.
 func (t *MeshTopology) PromoteToZL(id string) {

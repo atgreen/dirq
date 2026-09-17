@@ -973,24 +973,49 @@ ASSERT
     fail "zone-leader loss (online=$ONLINE result=$RESULT took ${ELAPSED}s)"
   fi
 
+  # Losing a leader used to cost one permanently: slots were filled only by
+  # new registrations or a saturated tree, so a fleet that never gained a
+  # host stayed short, and losing the last leader flattened the mesh
+  # entirely (dirq-zyc). One relay is now promoted per leader death.
+  DEADLINE=$((SECONDS + 90)); ZLCOUNT=0
+  while [ "$SECONDS" -lt "$DEADLINE" ]; do
+    ZLCOUNT="$("$BIN" --json hosts list 2>/dev/null \
+      | python3 -c 'import sys,json;print(sum(1 for h in json.load(sys.stdin) if h["online"] and h["role"] == "zone_leader"))' 2>/dev/null || echo 0)"
+    [ "$ZLCOUNT" = "$MAX_ZONE_LEADERS" ] && break
+    sleep 2
+  done
+  if [ "$ZLCOUNT" = "$MAX_ZONE_LEADERS" ]; then
+    pass "the zone-leader count recovered to $MAX_ZONE_LEADERS by promoting a relay"
+  else
+    fail "zone-leader count stuck at $ZLCOUNT, want $MAX_ZONE_LEADERS"
+  fi
+
   # The server's model of the mesh must agree with what it can actually
   # reach. It used not to: agents that failed over to a fallback stayed
   # recorded under the dead parent, so they read as online-but-unreachable
   # while answering queries perfectly well (dirq-613). Reachability is
-  # derived from the topology, so this is the assertion that catches the
-  # topology going stale after a failover.
-  "$BIN" --json hosts list > "$CERTS/postchaos.json" 2>/dev/null || true
-  if python3 - "$CERTS/postchaos.json" <<'ASSERT'
+  # derived from the topology, so this catches the topology going stale.
+  #
+  # Polled, and placed after the promotion check, because a leader's death
+  # now causes two waves of change — the failover and then the promotion —
+  # and a snapshot taken between them catches the mesh mid-settle.
+  DEADLINE=$((SECONDS + 90)); STRANDED=unknown
+  while [ "$SECONDS" -lt "$DEADLINE" ]; do
+    "$BIN" --json hosts list > "$CERTS/postchaos.json" 2>/dev/null || true
+    STRANDED="$(python3 - "$CERTS/postchaos.json" <<'ASSERT' 2>/dev/null || echo unknown
 import json, sys
 hosts = json.load(open(sys.argv[1]))
 online = [h for h in hosts if h["online"]]
-assert online, "no agents online at all after the zone leader died"
-stranded = [h["hostname"] for h in online if not h.get("reachable")]
-assert not stranded, f"online but unreachable after failover: {stranded}"
-print(f"  {len(online)} online, all of them reachable")
+print(",".join(h["hostname"] for h in online if not h.get("reachable")) or "none")
 ASSERT
-  then pass "every surviving agent reattached and the topology followed it"
-  else fail "topology went stale after the failover"
+)"
+    [ "$STRANDED" = none ] && break
+    sleep 2
+  done
+  if [ "$STRANDED" = none ]; then
+    pass "every surviving agent reattached and the topology followed it"
+  else
+    fail "online but unreachable after the failover settled: $STRANDED"
   fi
 fi
 
