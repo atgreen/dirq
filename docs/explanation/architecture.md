@@ -57,7 +57,12 @@ The server always holds exactly `DIRQ_MAX_ZONE_LEADERS` connections regardless o
 
 The live mesh shape is held **in memory** by the server (`MeshTopology`, RWMutex-protected maps for nodes, ZLs, parent/child links, depth cache). Registration, fan-out, and dispatch all read this directly — no DB round-trips on hot paths. `agents.role` and `agents.parent_id` are best-effort snapshots persisted every 30 s for operator visibility and rehydrated on restart. The CLI overlays the in-memory view onto DB records before serializing, so `dirq hosts list` always reflects live truth.
 
-Registration arrivals flow through a **burst-aware batcher** (default 200 ms window, 200 max batch). On flush, the assigner prefers one zone leader per distinct source IP — so a thundering herd from a single subnet can't fill all ZL slots from one host, and a two-pass greedy additionally spreads zone leaders across distinct *failure domains* (subnets) before filling remaining slots. There is no proactive rebalancer; reactive recovery (`reassignOrphans` on stream close, fallback parents + orphan promotion via `RequestPeers`) handles every churn case the old proactive paths used to.
+Registration arrivals flow through a **burst-aware batcher** (default 200 ms window, 200 max batch). On flush, the assigner prefers one zone leader per distinct source IP — so a thundering herd from a single subnet can't fill all ZL slots from one host, and a two-pass greedy additionally spreads zone leaders across distinct *failure domains* (subnets) before filling remaining slots. There is no proactive rebalancer — the periodic one was removed because it moved agents mid-broadcast and violated IP diversity. Recovery is event-driven instead, and fires on the events that matter rather than on a clock:
+
+- `reassignOrphans` on stream close hints the dead node's direct children toward a new parent.
+- Agents re-home themselves through their own connect loop: primary parent, then fallbacks, then `RequestPeers`, which promotes the agent when the tree has no room.
+- When a zone leader dies and the fleet drops below `max_zone_leaders`, one relay is promoted to fill the slot — at most one per death, preferring a relay that already has children so only its own upstream link moves, skipping any node whose flap score marks it unreliable.
+- An agent re-announces its current children whenever it attaches upstream, so a subtree marked offline when an ancestor died is counted again as soon as the route is restored.
 
 ## Related
 

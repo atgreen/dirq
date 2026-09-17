@@ -24,3 +24,27 @@
 | `GET` | `/healthz` | Liveness — process is up |
 | `GET` | `/readyz` | Readiness — this pod is the active leader (200) or a standby (503); always 200 when leader election is disabled |
 | `GET` | `/metrics` | Prometheus scrape (unauth; see [Observability](observability.md)) |
+
+## The host record
+
+`GET /api/v1/hosts` and `/api/v1/hosts/{id}` return the stored agent
+record with live mesh state overlaid on top of it, so `role`, `parent_id`
+and `reachable` always reflect the current tree rather than the database's
+last snapshot.
+
+Two fields answer different questions, and the difference matters when a
+broadcast comes back with agents missing:
+
+| Field | Means |
+|-------|-------|
+| `online` | The agent has registered and the server has not since concluded it is gone |
+| `reachable` | A broadcast can get to it right now: the agent is online **and** the zone leader at the head of its path holds a live stream to the server |
+
+An agent can be `online` but not `reachable` for a short window after a
+zone leader dies — it is up, but the route to it is being rebuilt. A
+broadcast issued in that window counts it as missing. An agent that is not
+`online` is never `reachable`.
+
+`exec_enabled` is separate again: it reports whether the agent accepts
+commands at all. Query and fact collection work regardless; `exec`,
+`deploy` and `dirq run` skip agents without it.

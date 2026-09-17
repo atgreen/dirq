@@ -8,12 +8,41 @@ For quick ad-hoc tasks that don't need a full Ansible playbook, `dirq exec` runs
 ## Commands
 
 ```bash
-dirq exec -- uptime
+dirq exec -- hostname -f
 dirq exec WHERE tag.env = 'prod' -- openssl version
 dirq exec --become WHERE tag.role = 'webserver' -- systemctl restart nginx
-dirq exec -- hostname -f
 dirq exec --json -- df -h /
 ```
+
+### Shell syntax and quoting
+
+Everything after `--` reaches the agent as it was written, and the agent
+runs it through a shell. How the arguments are grouped decides what the
+shell sees.
+
+Pass **one quoted argument** when you want shell syntax — pipes,
+redirects, `&&`, variable expansion on the remote host:
+
+```bash
+dirq exec -- "ls /var/log | wc -l"
+dirq exec -- "systemctl is-active nginx && echo up"
+dirq exec -- 'printf "%s\n" "$HOSTNAME" > /tmp/name'
+```
+
+Quote it locally so your own shell does not expand `$HOSTNAME` or apply
+the redirect before dirq ever sees it.
+
+Pass **separate arguments** for a plain command. Each is kept whole, so a
+value containing spaces stays one argument:
+
+```bash
+dirq exec -- touch "/tmp/file with spaces"
+dirq exec -- grep -e "needle in haystack" /var/log/messages
+```
+
+Spreading shell syntax across separate arguments does not work — escaping
+a pipe as `-- ls /tmp \| wc -l` passes a literal `|` to `ls`. Use the
+single-argument form instead.
 
 ## Scripts
 

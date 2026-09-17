@@ -71,6 +71,32 @@ DIRQ_TLS_CERT=./certs/server.crt DIRQ_TLS_KEY=./certs/server.key dirq-server
 DIRQ_TLS_CA=./certs/ca.crt dirq-agent
 ```
 
+## Let clients verify the server
+
+The CLI and the Ansible connection plugin both talk to the server's REST
+API, and both need to know which CA to trust. With a self-signed
+deployment that CA is the one the server generated, so it is not in any
+system trust store — point clients at it explicitly:
+
+```
+# ~/.config/dirq/client.conf
+server_url: https://dirq-server:8080
+token: <your-api-token>
+tls_ca: /etc/dirq/ca.crt
+```
+
+Copy the CA certificate to the client machine and give `tls_ca` its path.
+The server writes a ready-to-copy `client.conf` at
+`/var/lib/dirq/client.conf` with the right path already filled in.
+
+`DIRQ_TLS_CA` and `--tls-ca` set the same thing, and `dirq run` forwards
+the value to Ansible so the connection plugin uses it too.
+
+!!! warning "`tls_insecure` accepts any certificate"
+    `tls_insecure: true` disables verification entirely, which leaves the
+    connection open to interception even though the server is serving TLS.
+    It exists for throwaway setups. If both are set, `tls_ca` wins.
+
 ## Rotate certificates
 
 Rotate certificates across the fleet without downtime:

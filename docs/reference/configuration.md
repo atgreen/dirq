@@ -138,7 +138,11 @@ restrictions) ship under [`examples/policy/`](https://github.com/atgreen/dirq/tr
 `policy_file` configured, agent behavior is unchanged. See
 [SECURITY.md](../explanation/security.md) for the full model.
 
-#### TLS (server and agent)
+#### TLS (server, agent and CLI)
+
+`tls_ca` is read by all three, so one value works everywhere — the server
+to verify agents, agents to verify the server, and the CLI to verify the
+server's REST endpoint. The Ansible connection plugin reads it too.
 
 | Config key | Environment variable | Default | Description |
 |-----------|----------|---------|-------------|
@@ -146,7 +150,7 @@ restrictions) ship under [`examples/policy/`](https://github.com/atgreen/dirq/tr
 | `tls_ca_key` | `DIRQ_TLS_CA_KEY` | | CA private key path (server only — enables per-agent mTLS cert issuance) |
 | `tls_cert` | `DIRQ_TLS_CERT` | | This process's certificate path |
 | `tls_key` | `DIRQ_TLS_KEY` | | This process's private key path |
-| `tls_insecure` | `DIRQ_TLS_INSECURE` | `false` | Skip cert verification (agent only) |
+| `tls_insecure` | `DIRQ_TLS_INSECURE` | `false` | Accept any certificate. Prefer `tls_ca`; where both are set the CA wins |
 | `tls_disabled` | `DIRQ_TLS_DISABLED` | `false` | Disable TLS entirely (not recommended) |
 
 Example agent config with TLS and registration secret:
