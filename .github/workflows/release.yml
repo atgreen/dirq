@@ -334,11 +334,33 @@ jobs:
       - name: Create tarballs and sign
         run: |
           cd artifacts/dist
-          for bin in dirq-*; do
-            case "$bin" in *.exe) continue ;; esac
-            chmod +x "$bin"
-            tar czf "${bin}.tar.gz" "$bin"
-            cosign sign-blob --yes "${bin}.tar.gz" --bundle "${bin}.tar.gz.bundle"
+          # dist/ holds raw binaries AND the macOS tarballs the build job
+          # already assembled, so this loop has to tell them apart. It used
+          # to archive everything it matched, which tarred those packages a
+          # second time: the signature landed on
+          # dirq-<version>-darwin-<arch>.tar.gz.tar.gz while the real
+          # package went out unsigned, and the signed name extracted to
+          # another tarball rather than to its contents (dirq-lq7).
+          for f in dirq-*; do
+            case "$f" in
+              *.exe)
+                # Signed as-is by the next step; Windows ships bare .exe.
+                continue
+                ;;
+              *.bundle|*.sig|*.pem)
+                # Never sign a signature.
+                continue
+                ;;
+              *.tar.gz|*.tgz|*.zip)
+                # Already an archive. Sign what the build job produced.
+                cosign sign-blob --yes "$f" --bundle "${f}.bundle"
+                ;;
+              *)
+                chmod +x "$f"
+                tar czf "${f}.tar.gz" "$f"
+                cosign sign-blob --yes "${f}.tar.gz" --bundle "${f}.tar.gz.bundle"
+                ;;
+            esac
           done
 
       - name: Sign Windows binaries
