@@ -134,6 +134,15 @@ var (
 	// Registration + mesh churn
 	// ─────────────────────────────────────────────────────────
 
+	// metricOriginViolations counts agent messages whose claimed origin did
+	// not match the stream they arrived on. The action label separates
+	// observe-mode accounting from actual drops, so an operator can watch the
+	// rate before switching enforcement on.
+	metricOriginViolations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "dirq_agent_origin_violations_total",
+		Help: "Agent messages claiming an origin outside the sending stream's subtree, by message kind and action taken.",
+	}, []string{"kind", "action"})
+
 	metricRegisterTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "dirq_register_total",
 		Help: "Agent Register RPC outcomes (ok, rejected_secret, rejected_other).",

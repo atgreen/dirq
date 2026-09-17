@@ -35,12 +35,17 @@ var (
 	deploySessionsMu sync.RWMutex
 )
 
-func (s *Server) handleDeployResponse(resp *pb.DeployResponse) {
+func (s *Server) handleDeployResponse(origin string, resp *pb.DeployResponse) {
 	deploySessionsMu.RLock()
 	ds, ok := deploySessions[resp.RequestId]
 	deploySessionsMu.RUnlock()
 
 	if ok {
+		// Origin before accounting, for the same reason as exec: a forged
+		// response that reaches ClaimAgent costs the victim its slot.
+		if !s.originAllows(origin, resp.AgentId, "deploy_response") {
+			return
+		}
 		// First-terminal-wins gate.
 		if ds.ClaimAgent(resp.AgentId) {
 			select {

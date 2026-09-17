@@ -620,6 +620,41 @@ func (t *MeshTopology) FindFallbackParents(primaryID string, count int) []db.Age
 	return out
 }
 
+// IsWithinSubtree reports whether id sits at or beneath ancestorID in the
+// mesh. Walking up from id costs O(depth) rather than enumerating the whole
+// subtree, and it is the predicate the origin checks ask of every inbound
+// claim: is this sender entitled to speak for this agent?
+//
+// A node is within its own subtree. An unknown ancestor, an unknown id, or a
+// parent chain that cycles all answer false — an origin check must never be
+// satisfied by a relationship the topology cannot actually trace.
+func (t *MeshTopology) IsWithinSubtree(ancestorID, id string) bool {
+	if ancestorID == "" || id == "" {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if _, ok := t.nodes[ancestorID]; !ok {
+		return false
+	}
+	seen := map[string]bool{}
+	for cur := id; cur != ""; {
+		if seen[cur] {
+			return false // cycle
+		}
+		seen[cur] = true
+		if cur == ancestorID {
+			return true
+		}
+		n, ok := t.nodes[cur]
+		if !ok {
+			return false
+		}
+		cur = n.parentID
+	}
+	return false
+}
+
 // FindZoneLeader walks an agent's parent chain to the zone leader at
 // the root.  Returns ("", false) if the agent has no parent chain
 // (orphaned or unknown).

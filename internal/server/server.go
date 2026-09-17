@@ -54,6 +54,9 @@ type Config struct {
 	AuthDisabled          bool          // DIRQ_AUTH_DISABLED=true to allow anonymous API access
 	RequireAAPBinding     bool          // opt-in (default false): when true, write endpoints reject tokens not bound to the asserted aap_user
 	RegistrationSecret    string        // pre-shared secret for agent registration
+	// AgentOriginChecks controls what happens when an agent message claims an
+	// origin outside the sending stream's subtree. Empty means observe.
+	AgentOriginChecks OriginMode
 	LeaderElection        bool          // when true, only the elected leader marks itself ready
 	FileCfg               *config.File  // parsed config file (for TLS/signing fallback)
 

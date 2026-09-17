@@ -24,21 +24,37 @@ import (
 
 type execSession struct {
 	requestID string
-	result    chan any // receives *pb.ExecResponse, *pb.FileChunk, or *pb.FetchFileResponse
-	startedAt time.Time
-	timeout   time.Duration
+	// targetAgentID is the agent this request was dispatched to. Responses
+	// are correlated on (request_id, agent_id): the request id alone is not
+	// an authorization, and any agent that sees the request — which, with
+	// fan-out routing, is most of them — could otherwise answer for the
+	// target (dirq-632.2).
+	targetAgentID string
+	result        chan any // receives *pb.ExecResponse, *pb.FileChunk, or *pb.FetchFileResponse
+	startedAt     time.Time
+	timeout       time.Duration
 }
 
 // ─────────────────────────────────────────────────────────
 // Server-side exec handlers (from gRPC stream)
 // ─────────────────────────────────────────────────────────
 
-func (s *Server) handleExecResponse(resp *pb.ExecResponse) {
+func (s *Server) handleExecResponse(origin string, resp *pb.ExecResponse) {
+	// Checked before the session lookup so a rejected response leaves no
+	// trace anywhere — including the audit log below, which is otherwise
+	// written even for a response no session was waiting on.
+	if !s.originAllows(origin, resp.AgentId, "exec_response") {
+		return
+	}
+
 	s.execMu.RLock()
 	es, ok := s.execSessions[resp.RequestId]
 	s.execMu.RUnlock()
 
 	if ok {
+		if s.originTargetMismatch(es.targetAgentID, resp.AgentId, "exec_response") {
+			return
+		}
 		select {
 		case es.result <- resp:
 		default:
@@ -60,12 +76,18 @@ func (s *Server) handleExecResponse(resp *pb.ExecResponse) {
 	}()
 }
 
-func (s *Server) handleFileChunk(chunk *pb.FileChunk) {
+func (s *Server) handleFileChunk(origin string, chunk *pb.FileChunk) {
 	s.execMu.RLock()
 	es, ok := s.execSessions[chunk.RequestId]
 	s.execMu.RUnlock()
 
 	if ok {
+		if s.originTargetMismatch(es.targetAgentID, chunk.AgentId, "file_chunk") {
+			return
+		}
+		if !s.originAllows(origin, chunk.AgentId, "file_chunk") {
+			return
+		}
 		select {
 		case es.result <- chunk:
 		default:
@@ -73,12 +95,18 @@ func (s *Server) handleFileChunk(chunk *pb.FileChunk) {
 	}
 }
 
-func (s *Server) handleFetchResponse(resp *pb.FetchFileResponse) {
+func (s *Server) handleFetchResponse(origin string, resp *pb.FetchFileResponse) {
 	s.execMu.RLock()
 	es, ok := s.execSessions[resp.RequestId]
 	s.execMu.RUnlock()
 
 	if ok {
+		if s.originTargetMismatch(es.targetAgentID, resp.AgentId, "fetch_response") {
+			return
+		}
+		if !s.originAllows(origin, resp.AgentId, "fetch_response") {
+			return
+		}
 		select {
 		case es.result <- resp:
 		default:
@@ -92,10 +120,11 @@ func (s *Server) handleFetchResponse(resp *pb.FetchFileResponse) {
 
 func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.ServerMessage, requestID string, timeout time.Duration) (any, error) {
 	es := &execSession{
-		requestID: requestID,
-		result:    make(chan any, 1),
-		startedAt: time.Now(),
-		timeout:   timeout,
+		requestID:     requestID,
+		targetAgentID: agentID,
+		result:        make(chan any, 1),
+		startedAt:     time.Now(),
+		timeout:       timeout,
 	}
 
 	s.execMu.Lock()
@@ -625,13 +654,19 @@ var (
 	execBroadcastSessionsMu sync.RWMutex
 )
 
-func (s *Server) handleExecBroadcastResponse(resp *pb.ExecResponse) {
+func (s *Server) handleExecBroadcastResponse(origin string, resp *pb.ExecResponse) {
 	// Check broadcast sessions first.
 	execBroadcastSessionsMu.RLock()
 	bs, ok := execBroadcastSessions[resp.RequestId]
 	execBroadcastSessionsMu.RUnlock()
 
 	if ok {
+		// Origin first: a forged response must not reach ClaimAgent, or it
+		// takes the victim's accounting slot and the victim's real answer is
+		// then discarded as a duplicate.
+		if !s.originAllows(origin, resp.AgentId, "exec_response") {
+			return
+		}
 		// First-terminal-wins gate.  Drop the response if a synthetic
 		// disconnect failure already accounted for this agent.
 		if bs.ClaimAgent(resp.AgentId) {
@@ -645,7 +680,7 @@ func (s *Server) handleExecBroadcastResponse(resp *pb.ExecResponse) {
 	}
 
 	// Fall through to single-agent exec session handling.
-	s.handleExecResponse(resp)
+	s.handleExecResponse(origin, resp)
 }
 
 // decodeExecMultiRequest parses and validates the exec_multi request body,

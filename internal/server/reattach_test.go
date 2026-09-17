@@ -54,7 +54,7 @@ func TestPeerConnectedRestoresTheWholeSubtree(t *testing.T) {
 	}
 
 	// mid reattaches elsewhere and its new parent reports it.
-	s.handlePeerConnected(context.Background(), &pb.PeerConnected{
+	s.handlePeerConnected(context.Background(), "zl", &pb.PeerConnected{
 		AgentId:  "mid",
 		ParentId: "zl",
 	})
@@ -74,7 +74,7 @@ func TestPeerConnectedDoesNotRestoreUpwards(t *testing.T) {
 	s := chain(t)
 	s.topology.MarkSubtreeOffline("zl")
 
-	s.handlePeerConnected(context.Background(), &pb.PeerConnected{
+	s.handlePeerConnected(context.Background(), "zl", &pb.PeerConnected{
 		AgentId:  "leaf",
 		ParentId: "mid",
 	})
@@ -95,7 +95,7 @@ func TestPeerConnectedIgnoresIncompleteReports(t *testing.T) {
 		{AgentId: "", ParentId: "zl"},
 		{AgentId: "mid", ParentId: ""},
 	} {
-		s.handlePeerConnected(context.Background(), pc)
+		s.handlePeerConnected(context.Background(), "zl", pc)
 	}
 	if onlineIn(s, "mid") {
 		t.Error("an incomplete PeerConnected was acted on")

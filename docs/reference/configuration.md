@@ -67,6 +67,7 @@ If the config file doesn't exist, it is silently ignored — all values fall bac
 | `auth_disabled` | `DIRQ_AUTH_DISABLED` | `false` | Disable API auth (not recommended) |
 | `require_aap_binding` | `DIRQ_REQUIRE_AAP_BINDING` | `false` | When true, reject write ops whose `aap_user` the token isn't bound to, and forbid unbound tokens from write ops (see [Security](../explanation/security.md)) |
 | `registration_secret` | `DIRQ_REGISTRATION_SECRET` | | Pre-shared secret for agent registration (see [Security](../explanation/security.md)) |
+| `agent_origin_checks` | `DIRQ_AGENT_ORIGIN_CHECKS` | `observe` | What to do when an agent message claims an origin outside the sending stream's subtree: `off`, `observe` (count and log), or `enforce` (drop). Watch `dirq_agent_origin_violations_total` before switching to `enforce` |
 | `leader_election` | `DIRQ_LEADER_ELECTION` | `false` | Enable Postgres advisory-lock leader election for multi-pod HA (see [HA.md](../explanation/high-availability.md)) |
 | `fact_flush_interval` | `DIRQ_FACT_FLUSH_INTERVAL` | `250ms` | Fact-cache batch flush interval |
 | `fact_flush_size` | `DIRQ_FACT_FLUSH_SIZE` | `5000` | Distinct (agent_id, module) keys per flush |

@@ -113,7 +113,9 @@ func fakeZoneLeader(t *testing.T, s *Server, succeed map[string]bool, silent map
 						if silent[id] {
 							continue
 						}
-						s.handleQueryResult(&pb.QueryResult{
+						// Each agent answers for itself, which is what the
+						// origin check expects of a self-report.
+						s.handleQueryResult(id, &pb.QueryResult{
 							QueryId: qr.QueryId,
 							AgentId: id,
 							Success: succeed[id],
@@ -127,7 +129,7 @@ func fakeZoneLeader(t *testing.T, s *Server, succeed map[string]bool, silent map
 				// hard timeout while a test inspects the header.
 				if dr := msg.GetDeployRequest(); dr != nil {
 					for _, id := range dr.TargetAgentIds {
-						s.handleDeployResponse(&pb.DeployResponse{
+						s.handleDeployResponse(id, &pb.DeployResponse{
 							RequestId: dr.RequestId,
 							AgentId:   id,
 							Success:   true,

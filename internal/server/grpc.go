@@ -353,11 +353,11 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 			// Legacy heartbeat — ignored. Liveness is now tracked via
 			// stream presence and PeerDisconnected notifications.
 		case *pb.AgentMessage_PeerConnected:
-			s.handlePeerConnected(ctx, p.PeerConnected)
+			s.handlePeerConnected(ctx, agentID, p.PeerConnected)
 		case *pb.AgentMessage_PeerDisconnected:
-			s.handlePeerDisconnected(ctx, p.PeerDisconnected)
+			s.handlePeerDisconnected(ctx, agentID, p.PeerDisconnected)
 		case *pb.AgentMessage_QueryResult:
-			s.handleQueryResult(p.QueryResult)
+			s.handleQueryResult(agentID, p.QueryResult)
 		case *pb.AgentMessage_AggregatedResult:
 			// Unpack batched results from a zone leader's subtree.
 			s.log.Info("received aggregated result",
@@ -365,17 +365,20 @@ func (s *Server) AgentStream(stream pb.DirQServer_AgentStreamServer) error {
 				"count", len(p.AggregatedResult.Results),
 				"from", agentID,
 			)
+			// The batch is re-enveloped by the zone leader, so each inner
+			// result is checked on its own claimed origin — the envelope
+			// says nothing about who produced the records inside it.
 			for _, r := range p.AggregatedResult.Results {
-				s.handleQueryResult(r)
+				s.handleQueryResult(agentID, r)
 			}
 		case *pb.AgentMessage_ExecResponse:
-			s.handleExecBroadcastResponse(p.ExecResponse)
+			s.handleExecBroadcastResponse(agentID, p.ExecResponse)
 		case *pb.AgentMessage_FileChunk:
-			s.handleFileChunk(p.FileChunk)
+			s.handleFileChunk(agentID, p.FileChunk)
 		case *pb.AgentMessage_FetchResponse:
-			s.handleFetchResponse(p.FetchResponse)
+			s.handleFetchResponse(agentID, p.FetchResponse)
 		case *pb.AgentMessage_DeployResponse:
-			s.handleDeployResponse(p.DeployResponse)
+			s.handleDeployResponse(agentID, p.DeployResponse)
 		default:
 			s.log.Warn("unknown message type from agent", "agent_id", agentID)
 		}
@@ -441,8 +444,20 @@ func (s *Server) closeAgentStream(as *agentStream) {
 // we need to commit the new parent_id and flip the agent back to online,
 // the only case where the server learns about a reattachment without the
 // agent itself re-registering.
-func (s *Server) handlePeerConnected(ctx context.Context, pc *pb.PeerConnected) {
+func (s *Server) handlePeerConnected(ctx context.Context, origin string, pc *pb.PeerConnected) {
 	if pc.AgentId == "" || pc.ParentId == "" {
+		return
+	}
+	// A relay reports attachments to itself, or forwards a report from
+	// somewhere beneath it. Naming a parent outside its own subtree means
+	// describing a part of the mesh it has no route to.
+	//
+	// Known gap (Layer 2 / dirq-632.2): this does NOT stop a hostile relay
+	// from claiming a healthy foreign agent as its own child, because
+	// parent_id is then the sender and a genuine cross-zone failover looks
+	// identical. Distinguishing the two needs the rebalancer to declare the
+	// moves it expects; see dirq-632.2.2.
+	if !s.originAllows(origin, pc.ParentId, "peer_connected") {
 		return
 	}
 	// The agent is already attached — this is a report, not a request — so
@@ -485,9 +500,17 @@ func (s *Server) handlePeerConnected(ctx context.Context, pc *pb.PeerConnected) 
 
 // handlePeerDisconnected marks a lost child and its entire subtree
 // offline after a relay reported the disconnect.
-func (s *Server) handlePeerDisconnected(ctx context.Context, pd *pb.PeerDisconnected) {
+func (s *Server) handlePeerDisconnected(ctx context.Context, origin string, pd *pb.PeerDisconnected) {
 	deadID := pd.AgentId
 	if deadID == "" {
+		return
+	}
+	// You can only lose a child you had. Unlike an attachment report there is
+	// no legitimate cross-zone case here, so this rule is exact — and it is
+	// the one that matters most, because a disconnect is sticky: nothing
+	// flips an agent back online until it reconnects, and every broadcast
+	// skips it meanwhile.
+	if !s.originAllows(origin, deadID, "peer_disconnected") {
 		return
 	}
 	metricPeerDisconnectTotal.Inc()
@@ -763,7 +786,10 @@ drain:
 	return outcome, nil
 }
 
-func (s *Server) handleQueryResult(result *pb.QueryResult) {
+func (s *Server) handleQueryResult(origin string, result *pb.QueryResult) {
+	if !s.originAllows(origin, result.AgentId, "query_result") {
+		return
+	}
 	if result.CollectedAt == nil {
 		result.CollectedAt = timestamppb.Now()
 	}
