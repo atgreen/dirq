@@ -4,6 +4,7 @@
 package server
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -64,7 +65,15 @@ func (s *Server) rateLimitMiddleware(rl *rateLimiter, next http.HandlerFunc) htt
 		// Fall back to remote IP if no token (auth disabled).
 		key := r.Header.Get("Authorization")
 		if key == "" {
-			key = r.RemoteAddr
+			// RemoteAddr carries the ephemeral source port, which is
+			// different on every connection — keyed on that, each request got
+			// a fresh bucket and the limiter did nothing at all while the map
+			// grew without bound. Key on the host alone.
+			if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				key = host
+			} else {
+				key = r.RemoteAddr
+			}
 		}
 		if !rl.allow(key) {
 			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)

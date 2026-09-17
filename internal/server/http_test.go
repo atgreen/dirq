@@ -762,3 +762,58 @@ func TestBucketingHelpers(t *testing.T) {
 		}
 	})
 }
+
+// The fallback rate-limit key used RemoteAddr, which carries the ephemeral
+// source port — so every request got a fresh bucket, the limiter did nothing,
+// and the bucket map grew without bound (dirq-632.12).
+func TestRateLimitKeyIgnoresTheSourcePort(t *testing.T) {
+	s := newTestServer(&mockDB{}, true)
+	rl := newRateLimiter(1, 1) // one request, then refuse
+	handler := s.rateLimitMiddleware(rl, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	codes := []int{}
+	for _, port := range []string{"51000", "51001", "51002"} {
+		req := httptest.NewRequest("POST", "/api/v1/query", nil)
+		req.RemoteAddr = "198.51.100.7:" + port
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+		codes = append(codes, rec.Code)
+	}
+
+	if codes[0] != http.StatusOK {
+		t.Fatalf("first request from a fresh client got %d, want 200", codes[0])
+	}
+	if codes[1] != http.StatusTooManyRequests || codes[2] != http.StatusTooManyRequests {
+		t.Errorf("the same client from new source ports was not rate limited: %v", codes)
+	}
+}
+
+// SECURITY.md documented these limits before they were applied.
+func TestFileAndDeployEndpointsAreRateLimited(t *testing.T) {
+	mock := &mockDB{
+		tokens: []mockToken{{plaintext: "admin-token", token: db.Token{Scope: "admin"}}},
+	}
+	s := newTestServer(mock, false)
+	mux := s.setupHTTPRoutes()
+
+	// The broadcast bucket is 10/s with a burst of 20, so a burst past that
+	// must start refusing. Deploy is the one that ships a package fleet-wide.
+	refused := false
+	for i := 0; i < 40; i++ {
+		req := httptest.NewRequest("POST", "/api/v1/deploy",
+			strings.NewReader(`{"query":"SELECT hostname","dest_path":"/tmp/p","content":""}`))
+		req.Header.Set("Authorization", "Bearer admin-token")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			refused = true
+			break
+		}
+	}
+	if !refused {
+		t.Error("deploy accepted an unbounded burst; the broadcast limit is not applied")
+	}
+}

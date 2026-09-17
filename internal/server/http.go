@@ -67,9 +67,13 @@ func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	// Exec endpoints (admin scope only)
 	mux.HandleFunc("POST /api/v1/exec", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(singleExecRL, s.handleExecCommand))))
 	mux.HandleFunc("POST /api/v1/exec_multi", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(broadcastRL, s.handleExecMulti))))
-	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.handlePutFile)))
-	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.handleFetchFile)))
-	mux.HandleFunc("POST /api/v1/deploy", s.authMiddleware(requireScope("admin", s.handleBroadcastDeploy)))
+	// File transfer shares the single-host budget with exec: Ansible drives
+	// both from the same forks. Deploy is a broadcast that ships a package
+	// binary to the whole fleet, so it belongs in the tighter bucket. These
+	// limits were documented in SECURITY.md before they were applied.
+	mux.HandleFunc("POST /api/v1/put_file", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(singleExecRL, s.handlePutFile))))
+	mux.HandleFunc("POST /api/v1/fetch_file", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(singleExecRL, s.handleFetchFile))))
+	mux.HandleFunc("POST /api/v1/deploy", s.authMiddleware(requireScope("admin", s.rateLimitMiddleware(broadcastRL, s.handleBroadcastDeploy))))
 	mux.HandleFunc("POST /api/v1/rotate", s.authMiddleware(requireScope("admin", s.handleRotate)))
 
 	// Status endpoint (authenticated, readonly)

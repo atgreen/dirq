@@ -17,7 +17,9 @@ import (
 )
 
 func mcpCmd() *cobra.Command {
-	return &cobra.Command{
+	var allowWrite bool
+
+	cmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Start MCP (Model Context Protocol) stdio server",
 		Long: `Start an MCP server over stdio, exposing dirq fleet management
@@ -36,14 +38,27 @@ Configure in Claude Desktop's claude_desktop_config.json:
         }
       }
     }
-  }`,
+  }
+
+Read-only by default. The tools that change the fleet — dirq_exec and
+dirq_hosts_tag — are exposed only with --allow-write, because the data the
+model reads (hostnames, tags, facts, command output) is supplied by the managed
+hosts themselves. A host that puts instructions in its own hostname is talking
+to a model holding an admin token, and "the model produced a tool call" is not
+authorization. Turn writes on when you want an agent that can act, knowing that
+is what you are turning on.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMCPServer()
+			return runMCPServer(allowWrite)
 		},
 	}
+
+	cmd.Flags().BoolVar(&allowWrite, "allow-write", false,
+		"expose the tools that change the fleet (dirq_exec, dirq_hosts_tag)")
+
+	return cmd
 }
 
-func runMCPServer() error {
+func runMCPServer(allowWrite bool) error {
 	s := mcpserver.NewMCPServer("dirq", version,
 		mcpserver.WithToolCapabilities(true),
 	)
@@ -51,13 +66,22 @@ func runMCPServer() error {
 	s.AddTool(mcpHostsListTool(), handleMCPHostsList)
 	s.AddTool(mcpHostsShowTool(), handleMCPHostsShow)
 	s.AddTool(mcpHostsFactsTool(), handleMCPHostsFacts)
-	s.AddTool(mcpHostsTagTool(), handleMCPHostsTag)
 	s.AddTool(mcpQueryTool(), handleMCPQuery)
-	s.AddTool(mcpExecTool(), handleMCPExec)
 	s.AddTool(mcpCVETool(), handleMCPCVE)
 	s.AddTool(mcpErrataTool(), handleMCPErrata)
 	s.AddTool(mcpKBTool(), handleMCPKB)
 	s.AddTool(mcpGraphTool(), handleMCPGraph)
+
+	// Write tools are opt-in. Everything above returns data the managed hosts
+	// supply — hostnames, tags, facts, command output — straight into a model
+	// that holds an admin token. Exposing exec alongside it by default means a
+	// host that writes instructions into its own hostname is one convincing
+	// sentence away from running commands on its neighbours. `dirq ask` draws
+	// the same line by only ever offering read-only tools.
+	if allowWrite {
+		s.AddTool(mcpExecTool(), handleMCPExec)
+		s.AddTool(mcpHostsTagTool(), handleMCPHostsTag)
+	}
 
 	return mcpserver.ServeStdio(s)
 }

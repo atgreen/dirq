@@ -100,7 +100,7 @@ demo: demo-down build  ## Start local demo (server + 10 agents)
 	@echo
 	@echo "Setup:"
 	@echo "  export DIRQ_SERVER_URL=https://localhost:19080"
-	@echo "  export DIRQ_TLS_INSECURE=true"
+	@printf "  export DIRQ_TLS_CA=%s/ca.crt\n" "$(DEMO_CERTS)"
 	@printf "  export DIRQ_TOKEN=%s\n" "$$(podman exec dirq-server-server cat /var/lib/dirq/bootstrap-token 2>/dev/null)"
 	@echo
 	@echo "Try:"

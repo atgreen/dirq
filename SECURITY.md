@@ -368,6 +368,14 @@ before answering.
 - The LLM suggests `dirq exec` commands when changes are needed but
   cannot execute them
 
+The `dirq mcp` server is a different surface with the same problem. It is
+read-only by default: `dirq_exec` and `dirq_hosts_tag` are exposed only with
+`--allow-write`. The tools an MCP client can always call return data the
+managed hosts supply — hostnames, tags, facts, command output — to a model
+holding an admin token, so a host that writes instructions into its own
+hostname is addressing that model directly. A tool call the model decided to
+make is not authorization, and a guardrail in a prompt is not a control.
+
 **Prompt injection hardening:**
 - The system prompt restricts the LLM to fleet-related questions only;
   general knowledge, coding help, and conversation are refused
