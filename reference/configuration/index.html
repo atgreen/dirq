@@ -1895,8 +1895,8 @@
 <tr>
 <td><code>agent_origin_checks</code></td>
 <td><code>DIRQ_AGENT_ORIGIN_CHECKS</code></td>
-<td><code>observe</code></td>
-<td>What to do when an agent message claims an origin outside the sending stream's subtree: <code>off</code>, <code>observe</code> (count and log), or <code>enforce</code> (drop). Watch <code>dirq_agent_origin_violations_total</code> before switching to <code>enforce</code></td>
+<td><code>enforce</code></td>
+<td>What to do when an agent message claims an origin outside the sending stream's subtree: <code>enforce</code> (drop), <code>observe</code> (count and log only), or <code>off</code>. Violations are counted in <code>dirq_agent_origin_violations_total</code> in every mode except <code>off</code>; drop to <code>observe</code> only to diagnose a fleet where enforcement is rejecting something it should not</td>
 </tr>
 <tr>
 <td><code>leader_election</code></td>
