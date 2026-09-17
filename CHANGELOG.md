@@ -5,6 +5,12 @@ All notable changes to DirQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.26.1] - 2026-09-17
+
+### Fixed
+
+- **macOS release tarballs are signed as built, rather than archived a second time.** The release signing step archived everything its glob matched, including the macOS tarballs the build already assembled — binary plus Ansible connection plugin plus LICENSE. Those were tarred again and it was the double-wrapped copy that got signed, so in 0.26.0 `dirq-0.26.0-darwin-<arch>.tar.gz` shipped with no signature while `dirq-0.26.0-darwin-<arch>.tar.gz.tar.gz` carried one and extracted to another tarball rather than to its contents. macOS users could not verify the artifact they would reasonably download. Linux and Windows were unaffected. The double-wrapped assets have been removed from the 0.26.0 release; its `checksums.sha256` still lists them.
+
 ## [0.26.0] - 2026-09-17
 
 This release is the result of building an end-to-end test that runs a real
