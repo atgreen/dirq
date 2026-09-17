@@ -74,7 +74,7 @@ func TestWavesDeepestFirst(t *testing.T) {
 			pos[id] = wi
 		}
 	}
-	if !(pos["leaf-a"] < pos["relay"] && pos["relay"] < pos["zl"]) {
+	if pos["leaf-a"] >= pos["relay"] || pos["relay"] >= pos["zl"] {
 		t.Errorf("ancestor ordering violated: %v", pos)
 	}
 }

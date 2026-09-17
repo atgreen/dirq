@@ -447,6 +447,53 @@ then pass "the command ran on both prod web hosts and nowhere else"
 else fail "exec targeting"
 fi
 
+say "exec --bottom-up runs deeper agents before their parents"
+# The wave dispatcher's whole promise is ordering: with --bottom-up the server
+# dispatches one mesh-depth at a time, deepest first, and does not start a
+# shallower wave until the deeper one has fully reported. Prove it end-to-end.
+# Each exec-enabled agent stamps the nanosecond it ran (all containers share
+# one host clock, so the stamps are comparable); then we read the stamps back
+# and assert every child ran strictly before its parent. Only a real relay tree
+# can exercise this — a flat mesh has no parent to be out-ordered.
+"$BIN" exec --bottom-up -- sh -c 'date +%s%N > /tmp/dirq-bu-ts' >/dev/null 2>&1 || true
+BU_TS="$("$BIN" --json exec -- cat /tmp/dirq-bu-ts 2>&1 || true)"
+if python3 - "$BU_TS" "$(hosts_json)" <<'PY'
+import base64, json, sys
+lines = [json.loads(l) for l in sys.argv[1].splitlines() if l.strip().startswith("{")]
+ts = {}
+for l in lines:
+    if l.get("type") == "header" or not l.get("hostname"):
+        continue
+    if not l.get("success") or l.get("rc", 0) != 0:
+        continue  # exec-disabled/denied hosts never stamped; skip them
+    out = base64.b64decode(l.get("stdout") or "").decode().strip()
+    if out.isdigit():
+        ts[l["hostname"]] = int(out)
+
+hosts = json.loads(sys.argv[2])
+name_of = {h["id"]: h["hostname"] for h in hosts}
+
+pairs = 0
+for h in hosts:
+    pid = h.get("parent_id")
+    if not pid:
+        continue
+    child, parent = h["hostname"], name_of.get(pid)
+    if child in ts and parent in ts:
+        pairs += 1
+        # child depth is always parent depth + 1, so a correct bottom-up run
+        # puts the child in an earlier (deeper) wave — it must stamp first.
+        assert ts[child] < ts[parent], (
+            f"{child} ran at or after its parent {parent} "
+            f"({ts[child]} vs {ts[parent]}) — waves did not order by depth"
+        )
+assert pairs >= 1, "no parent/child pair both ran; ordering was never actually exercised"
+print(f"ok: {pairs} parent/child pair(s), every child ran before its parent")
+PY
+then pass "bottom-up dispatched deeper agents ahead of their parents"
+else fail "exec --bottom-up ordering"
+fi
+
 # ── result ───────────────────────────────────────────────
 
 # ── more of the CLI ──────────────────────────────────────
