@@ -202,6 +202,16 @@ message ServerMessage {
   int64 signed_at_unix = 8;
   int64 expires_at_unix = 9;
   bytes signature = 10;
+
+  // NOTE for anyone adding a field here: ServerMessage is what the server
+  // signs, and an agent that does not know a field re-emits it as an unknown
+  // field, which the marshaller appends AFTER the known ones. A oneof member
+  // is itself marshalled last, so a new field can never sort after it: the
+  // bytes an older agent signs over would differ from the bytes a newer
+  // server signed, and every signature would be rejected fleet-wide during a
+  // rollout. Put new per-operation fields on the request messages instead —
+  // relay_path does exactly that, and signutil's
+  // TestRelayPathSurvivesAnOlderAgent pins the property.
 }
 
 // RotateCommand is pushed through the mesh to trigger certificate or key
@@ -357,6 +367,16 @@ message ExecRequest {
   // Broadcast mode: if set, the request is relayed through the tree
   // like a query. Only agents in this list execute; others just relay.
   repeated string target_agent_ids = 15;
+  // relay_path is the chain of agent IDs from the zone leader down to this
+  // request's target. Relays forward only to the next hop rather than to every
+  // downstream peer, so the command, script, stdin or file body is seen by the
+  // agents carrying it and by nobody else. Empty means "no route known" and
+  // the older flood-downstream behaviour applies, which is what lets a
+  // mixed-version fleet keep working in both directions.
+  //
+  // Highest field number in this message, deliberately: see the note on
+  // ServerMessage.
+  repeated string relay_path = 16;
 }
 
 // ExecResponse returns the result of command execution.
@@ -386,6 +406,16 @@ message PutFileRequest {
   string aap_job_id       = 8;
   string aap_job_template = 9;
   string aap_user         = 10;
+  // relay_path is the chain of agent IDs from the zone leader down to this
+  // request's target. Relays forward only to the next hop rather than to every
+  // downstream peer, so the command, script, stdin or file body is seen by the
+  // agents carrying it and by nobody else. Empty means "no route known" and
+  // the older flood-downstream behaviour applies, which is what lets a
+  // mixed-version fleet keep working in both directions.
+  //
+  // Highest field number in this message, deliberately: see the note on
+  // ServerMessage.
+  repeated string relay_path = 11;
 }
 
 // FetchFileRequest asks the agent to read a file from disk and send it back.
@@ -399,6 +429,16 @@ message FetchFileRequest {
   string aap_job_id       = 6;
   string aap_job_template = 7;
   string aap_user         = 8;
+  // relay_path is the chain of agent IDs from the zone leader down to this
+  // request's target. Relays forward only to the next hop rather than to every
+  // downstream peer, so the command, script, stdin or file body is seen by the
+  // agents carrying it and by nobody else. Empty means "no route known" and
+  // the older flood-downstream behaviour applies, which is what lets a
+  // mixed-version fleet keep working in both directions.
+  //
+  // Highest field number in this message, deliberately: see the note on
+  // ServerMessage.
+  repeated string relay_path = 9;
 }
 
 // FetchFileResponse returns file content from the agent.

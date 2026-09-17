@@ -134,6 +134,16 @@ var (
 	// Registration + mesh churn
 	// ─────────────────────────────────────────────────────────
 
+	// metricExecFanout counts single-agent dispatches that could not be
+	// routed to one path and were broadcast to the whole fleet instead. Every
+	// one of those exposes the command, script or file body to every
+	// connected agent, so a rising rate is a topology problem with a
+	// confidentiality cost.
+	metricExecFanout = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "dirq_exec_fanout_total",
+		Help: "Single-agent exec/put_file/fetch_file dispatches broadcast fleet-wide because no route to the target was known.",
+	})
+
 	// metricOriginViolations counts agent messages whose claimed origin did
 	// not match the stream they arrived on. The action label separates
 	// observe-mode accounting from actual drops, so an operator can watch the

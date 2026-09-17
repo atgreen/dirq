@@ -1239,11 +1239,92 @@ func (a *Agent) publishInitialFacts() {
 	a.sendQueryResult("register-initial-"+a.agentID, a.hostname, true, "", data)
 }
 
-// relayToDownstreams sends any ServerMessage to all connected downstream peers.
+// relayToDownstreams forwards a ServerMessage into the subtree.
+//
+// A message addressed to one agent carries the route the server computed for
+// it, and then only the next hop gets a copy: an exec command, its script and
+// its stdin are seen by the agents that carry them and by nobody else
+// (dirq-632.1). A broadcast carries no route and still goes to every child,
+// which is what a broadcast is.
 func (a *Agent) relayToDownstreams(msg *pb.ServerMessage) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
+	if next, routed := a.nextHop(relayPathOf(msg)); routed {
+		if next == "" {
+			// The route ends here, or this agent is not on it. Either way
+			// there is no next hop and nothing to forward — and flooding
+			// "just in case" would undo the whole point.
+			return
+		}
+		ds, ok := a.downstreams[next]
+		if !ok {
+			// The route says this child is ours but it is not connected —
+			// it reattached elsewhere, or has not attached yet. Fall back to
+			// flooding our own subtree rather than dropping the message: the
+			// exposure is bounded to this subtree, where a stale route is
+			// most likely to still find the target.
+			a.log.Warn("relay: next hop on the route is not a connected peer, flooding subtree",
+				"next_hop", next)
+			a.floodDownstreamsLocked(msg)
+			return
+		}
+		select {
+		case ds.send <- msg:
+		default:
+			a.log.Warn("downstream send buffer full", "peer", ds.agentID)
+		}
+		return
+	}
+
+	a.floodDownstreamsLocked(msg)
+}
+
+// relayPathOf returns the route carried by a single-agent request, or nil for
+// a broadcast — which has many targets and therefore no single path.
+func relayPathOf(msg *pb.ServerMessage) []string {
+	switch p := msg.Payload.(type) {
+	case *pb.ServerMessage_ExecRequest:
+		return p.ExecRequest.GetRelayPath()
+	case *pb.ServerMessage_PutFile:
+		return p.PutFile.GetRelayPath()
+	case *pb.ServerMessage_FetchFile:
+		return p.FetchFile.GetRelayPath()
+	default:
+		return nil
+	}
+}
+
+// nextHop reports the peer this agent should forward a routed message to.
+//
+// routed is false when the message carries no route (a broadcast), which means
+// flood. It is true with an empty next hop only when the route ends here,
+// which cannot happen for a message this agent is relaying rather than
+// executing — the target's own branch in handleServerMessage runs first.
+//
+// An agent that does not appear in the route at all does not flood: the server
+// believed it knew the way, and a relay that is not on the path has no
+// business copying the payload into its subtree.
+func (a *Agent) nextHop(path []string) (string, bool) {
+	if len(path) == 0 {
+		return "", false
+	}
+	for i, id := range path {
+		if id != a.agentID {
+			continue
+		}
+		if i+1 < len(path) {
+			return path[i+1], true
+		}
+		return "", true
+	}
+	a.log.Warn("relay: this agent is not on the route for a message it received",
+		"route_head", path[0], "route_tail", path[len(path)-1])
+	return "", true
+}
+
+// floodDownstreamsLocked sends to every connected peer. Caller holds a.mu.
+func (a *Agent) floodDownstreamsLocked(msg *pb.ServerMessage) {
 	for _, ds := range a.downstreams {
 		select {
 		case ds.send <- msg:

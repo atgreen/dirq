@@ -137,28 +137,51 @@ func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.Serve
 		s.execMu.Unlock()
 	}()
 
-	if err := s.signServerMessage(msg); err != nil {
-		return nil, fmt.Errorf("sign control message: %w", err)
-	}
-
-	// Routing: if the agent is directly connected to this server, send to
-	// its stream and we're done. Otherwise fan out the message to every
-	// directly-connected agent — each one relays into its subtree, and the
-	// targeted agent (matched on AgentId in the message) executes while
-	// every other agent just relays. This is the same pattern as
-	// exec_multi and is resilient to a stale parent_id chain in the DB
-	// (which a topology shift between connect events can leave behind).
+	// Routing. This message is addressed to one agent, so it should travel
+	// the one path that reaches it: the payload is a command line, a script,
+	// a file body, and every agent that relays it can read it (dirq-632.1).
+	//
+	// The route is decided before signing, because relay_path rides inside
+	// the signed envelope — a relay can drop or delay a message but it
+	// cannot redirect one.
 	s.mu.RLock()
 	as, directlyConnected := s.streams[agentID]
 	s.mu.RUnlock()
 
-	if directlyConnected {
+	var route *agentStream
+	switch {
+	case directlyConnected:
+		// A zone leader: one hop, no relaying, no path needed.
+		route = as
+	default:
+		if path := s.topology.PathFromZoneLeader(agentID); len(path) > 0 {
+			s.mu.RLock()
+			zl, ok := s.streams[path[0]]
+			s.mu.RUnlock()
+			if ok && setRelayPath(msg, path) {
+				route = zl
+			}
+		}
+	}
+
+	if err := s.signServerMessage(msg); err != nil {
+		return nil, fmt.Errorf("sign control message: %w", err)
+	}
+
+	if route != nil {
 		select {
-		case as.send <- msg:
+		case route.send <- msg:
 		default:
 			return nil, fmt.Errorf("send buffer full for stream handling agent %s", agentID)
 		}
 	} else {
+		// No traceable route: the topology does not know this agent, or the
+		// zone leader that owns it has no live stream. Fall back to the old
+		// behaviour — fan out to every connected agent and let the target
+		// recognize itself — rather than failing an exec because the tree
+		// moved. The payload is exposed fleet-wide while this lasts, so it
+		// is worth knowing how often it happens.
+		metricExecFanout.Inc()
 		sent := 0
 		s.mu.RLock()
 		for _, peer := range s.streams {
@@ -173,7 +196,8 @@ func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.Serve
 		if sent == 0 {
 			return nil, fmt.Errorf("no connected agents to relay exec to %s", agentID)
 		}
-		s.log.Info("fan-out exec routing", "target", agentID, "relays", sent)
+		s.log.Warn("no route to agent — falling back to fleet-wide fan-out",
+			"target", agentID, "relays", sent)
 	}
 
 	// Wait for response.
@@ -188,6 +212,27 @@ func (s *Server) dispatchExec(ctx context.Context, agentID string, msg *pb.Serve
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// setRelayPath records the route on the request inside msg, reporting whether
+// this is a message kind that carries one. Only the single-agent operations do
+// — a broadcast has many targets and no single path — and the field lives on
+// the request rather than the envelope because a oneof member is marshalled
+// last, so nothing added to the envelope can sort after it without breaking
+// signature verification on agents that predate the field (see the note in
+// dirq.proto and signutil's TestRelayPathSurvivesAnOlderAgent).
+func setRelayPath(msg *pb.ServerMessage, path []string) bool {
+	switch p := msg.Payload.(type) {
+	case *pb.ServerMessage_ExecRequest:
+		p.ExecRequest.RelayPath = path
+	case *pb.ServerMessage_PutFile:
+		p.PutFile.RelayPath = path
+	case *pb.ServerMessage_FetchFile:
+		p.FetchFile.RelayPath = path
+	default:
+		return false
+	}
+	return true
 }
 
 // ─────────────────────────────────────────────────────────

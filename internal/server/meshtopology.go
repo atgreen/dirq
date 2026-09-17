@@ -665,6 +665,39 @@ func (t *MeshTopology) FindZoneLeader(id string) (string, bool) {
 	return zl, zl != ""
 }
 
+// PathFromZoneLeader returns the chain of agent IDs from the zone leader at
+// the head of id's parent chain down to id itself, inclusive. It is the route
+// a message addressed to one agent should take, and it is nil when the chain
+// cannot be traced — unknown agent, no zone leader above it, or a cycle —
+// which callers read as "no route known" and fall back to broadcasting.
+func (t *MeshTopology) PathFromZoneLeader(id string) []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	var reversed []string
+	seen := map[string]bool{}
+	for cur := id; cur != ""; {
+		if seen[cur] {
+			return nil // cycle: no usable route
+		}
+		seen[cur] = true
+		n, ok := t.nodes[cur]
+		if !ok {
+			return nil
+		}
+		reversed = append(reversed, cur)
+		if n.role == "zone_leader" {
+			// Reverse in place: the walk collected target-first.
+			for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
+				reversed[i], reversed[j] = reversed[j], reversed[i]
+			}
+			return reversed
+		}
+		cur = n.parentID
+	}
+	return nil // ran out of parents without reaching a zone leader
+}
+
 // FindZoneLeaderAgent is like FindZoneLeader but returns enough fields
 // to satisfy callers that want a db.Agent shape.
 func (t *MeshTopology) FindZoneLeaderAgent(id string) (db.Agent, bool) {
