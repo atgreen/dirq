@@ -788,8 +788,18 @@ while [ "$SECONDS" -lt "$DEADLINE" ]; do
   fi
   sleep 2
 done
-sleep 5
-AFTER="$(answeringCount)"
+# Poll until the fleet is back to full strength rather than sleeping a
+# fixed amount: agents reconnect after reissuing a certificate, and on a
+# loaded runner a fixed wait catches them mid-reconnect and fails as a
+# timing flake. Requiring recovery within a deadline is also the stronger
+# claim — rotation must not cost an agent.
+DEADLINE=$((SECONDS + 90))
+AFTER=ERR
+while [ "$SECONDS" -lt "$DEADLINE" ]; do
+  AFTER="$(answeringCount)"
+  [ "$AFTER" = "$BEFORE" ] && break
+  sleep 2
+done
 if [ "$ROTATED" = yes ] && [ "$AFTER" = "$BEFORE" ] && [ "$AFTER" != ERR ]; then
   pass "certificates rotated and all $AFTER agents still answered"
 else
@@ -899,7 +909,19 @@ if [ -z "$ZL" ]; then
 else
   echo "  killing zone leader $ZL"
   "$RUNTIME" kill "$ZL" >/dev/null 2>&1
-  sleep 10
+  # Wait for the server to notice, rather than sleeping a fixed amount and
+  # hoping. A fixed sleep is exactly what fails on a loaded runner, and it
+  # would fail as a timing flake rather than pointing at anything.
+  DEADLINE=$((SECONDS + 90))
+  while [ "$SECONDS" -lt "$DEADLINE" ]; do
+    NOTICED="$("$BIN" --json hosts list 2>/dev/null \
+      | python3 -c "
+import sys, json
+hosts = json.load(sys.stdin)
+print('yes' if any(h['hostname'] == '$ZL' and not h['online'] for h in hosts) else 'no')" 2>/dev/null || echo no)"
+    [ "$NOTICED" = yes ] && break
+    sleep 2
+  done
   # The surviving fleet must still answer, and promptly. Agents stranded
   # by dirq-zyc are counted offline, so this asserts that whoever the
   # server still believes is online actually responds — no silent partial,
