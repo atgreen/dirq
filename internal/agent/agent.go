@@ -441,6 +441,17 @@ func (a *Agent) connectLoop(ctx context.Context) error {
 
 		a.log.Info("upstream connected", "target", connectedTo)
 
+		// Speak for the children we still have. When an ancestor dies the
+		// server marks its whole subtree offline, which is right at that
+		// instant — the route ran through the closed stream. But the only
+		// things that mark an agent online again are its own direct stream
+		// and a parent reporting PeerConnected, and a child whose own
+		// parent survived never lost its stream, so it never reattaches and
+		// never gets reported. It stays offline forever while running fine
+		// (dirq-zwn). Re-announcing on every attach closes that loop:
+		// whoever reconnects vouches for the children still hanging off it.
+		a.reannounceDownstreams()
+
 		// If the cert was near expiry at load time, renew it now that we have
 		// a live connection.  Failure is non-fatal: the existing cert is still
 		// valid, and the next connect cycle will retry.
@@ -1486,3 +1497,23 @@ func (a *Agent) upstreamSend(msg *pb.AgentMessage) error {
 // attached. Callers log and carry on; the dispatcher's own accounting
 // notices the missing response.
 var errNoUpstream = errors.New("no upstream connection")
+
+// reannounceDownstreams tells the server about every child currently
+// attached to this agent, so a subtree swept offline by an ancestor's
+// death is counted again as soon as the route is restored.
+func (a *Agent) reannounceDownstreams() {
+	a.mu.RLock()
+	ids := make([]string, 0, len(a.downstreams))
+	for id := range a.downstreams {
+		ids = append(ids, id)
+	}
+	a.mu.RUnlock()
+
+	if len(ids) == 0 {
+		return
+	}
+	a.log.Info("re-announcing downstream peers after attaching upstream", "count", len(ids))
+	for _, id := range ids {
+		a.notifyPeerConnected(id)
+	}
+}

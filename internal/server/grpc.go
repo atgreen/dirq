@@ -453,10 +453,30 @@ func (s *Server) handlePeerConnected(ctx context.Context, pc *pb.PeerConnected) 
 		s.log.Warn("PeerConnected: could not record the reported attachment",
 			"agent_id", pc.AgentId, "parent_id", pc.ParentId)
 	}
-	s.topology.MarkOnline(pc.AgentId)
-	if err := s.db.UpdateAgentHeartbeat(ctx, pc.AgentId); err != nil {
-		s.log.Error("PeerConnected: heartbeat update failed",
-			"agent_id", pc.AgentId, "error", err)
+	// Mark the reported child online, and everything hanging off it.
+	//
+	// This is the exact dual of closeAgentStream's MarkSubtreeOffline. That
+	// marks a whole subtree offline because its route died; this marks one
+	// back online because its route has been restored. The descendants
+	// never moved — they kept their streams to this child throughout — so
+	// proof that the child is reachable is proof that they are.
+	//
+	// Not the "ghost online" failure the rebalancer warns about: that came
+	// from assuming an agent had attached to a *new* parent before it had.
+	// Nothing here is speculative about attachment; these agents are where
+	// they always were. An agent that genuinely died meanwhile is corrected
+	// by the reaper.
+	online := append([]string{pc.AgentId}, s.topology.SubtreeIDs(pc.AgentId)...)
+	for _, id := range online {
+		s.topology.MarkOnline(id)
+		if err := s.db.UpdateAgentHeartbeat(ctx, id); err != nil {
+			s.log.Error("PeerConnected: heartbeat update failed",
+				"agent_id", id, "error", err)
+		}
+	}
+	if len(online) > 1 {
+		s.log.Info("peer reattachment restored a subtree",
+			"agent_id", pc.AgentId, "subtree_size", len(online))
 	}
 	metricPeerConnectTotal.Inc()
 	s.log.Info("peer reattached",

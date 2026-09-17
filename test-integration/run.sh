@@ -1017,6 +1017,28 @@ ASSERT
   else
     fail "online but unreachable after the failover settled: $STRANDED"
   fi
+
+  # Bring the killed agents back and time how long the fleet takes to be
+  # whole again. Descendants swept offline by an ancestor's death used to
+  # stay offline forever: nothing marked them online again, because their
+  # own parent survived so they never reattached and were never reported
+  # (dirq-zwn). "How long until it recovers" had no answer.
+  say "chaos: the fleet returns to full strength"
+  "$RUNTIME" start "$ZL" "$LEAF" >/dev/null 2>&1
+  RECOVER_START=$SECONDS
+  DEADLINE=$((SECONDS + 180)); BACKUP=0
+  while [ "$SECONDS" -lt "$DEADLINE" ]; do
+    BACKUP="$("$BIN" --json hosts list 2>/dev/null \
+      | python3 -c 'import sys,json;print(sum(1 for h in json.load(sys.stdin) if h["online"]))' 2>/dev/null || echo 0)"
+    [ "$BACKUP" = "${#AGENTS[@]}" ] && break
+    sleep 3
+  done
+  RECOVER_TOOK=$((SECONDS - RECOVER_START))
+  if [ "$BACKUP" = "${#AGENTS[@]}" ]; then
+    pass "all ${#AGENTS[@]} agents online again ${RECOVER_TOOK}s after restart"
+  else
+    fail "fleet stuck at $BACKUP/${#AGENTS[@]} online after ${RECOVER_TOOK}s"
+  fi
 fi
 
 say "result"
