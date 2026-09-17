@@ -1274,6 +1274,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#connection-plugin-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection plugin environment
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1593,6 +1604,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#connection-plugin-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection plugin environment
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1647,6 +1669,41 @@
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="nt">dirq_tag_env</span><span class="p">:</span><span class="w"> </span><span class="s">"prod"</span>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="nt">dirq_exec_enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </code></pre></div>
+<h2 id="connection-plugin-environment">Connection plugin environment<a class="headerlink" href="#connection-plugin-environment" title="Permanent link">&para;</a></h2>
+<p>The <code>atgreen.dirq.dirq</code> connection plugin talks to the DirQ server over
+the REST API to reach each host, so it needs the same settings the CLI
+does. <code>dirq run</code> forwards all of these to Ansible automatically; set them
+yourself when invoking <code>ansible-playbook</code> directly.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DIRQ_SERVER_URL</code></td>
+<td>Server REST URL</td>
+</tr>
+<tr>
+<td><code>DIRQ_TOKEN</code></td>
+<td>API token</td>
+</tr>
+<tr>
+<td><code>DIRQ_TLS_CA</code></td>
+<td>CA certificate used to verify the server — the same variable the server, agents and CLI read</td>
+</tr>
+<tr>
+<td><code>DIRQ_TLS_INSECURE</code></td>
+<td>Accept any server certificate. Prefer <code>DIRQ_TLS_CA</code>; where both are set the CA wins</td>
+</tr>
+</tbody>
+</table>
+<p>Against a default DirQ deployment — one using a CA from
+<code>dirq cert generate</code> — set <code>DIRQ_TLS_CA</code>. Without it the plugin falls back
+to the system trust store and every task fails with
+<code>CERTIFICATE_VERIFY_FAILED</code>.</p>
 
 
 

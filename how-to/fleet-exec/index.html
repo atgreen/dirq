@@ -726,6 +726,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#shell-syntax-and-quoting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shell syntax and quoting
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1613,6 +1630,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#shell-syntax-and-quoting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shell syntax and quoting
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1686,49 +1720,68 @@
 <p>Exec is disabled by default and must be opted into per agent, and every operation is logged with AAP job attribution and governed by OPA policy. See <a href="../agent-exec-policy/">Agent exec policy</a> for enabling exec on agents, the audit log, and policy configuration.</p>
 </div>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>uptime
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>hostname<span class="w"> </span>-f
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>WHERE<span class="w"> </span>tag.env<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'prod'</span><span class="w"> </span>--<span class="w"> </span>openssl<span class="w"> </span>version
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--become<span class="w"> </span>WHERE<span class="w"> </span>tag.role<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'webserver'</span><span class="w"> </span>--<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>nginx
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>hostname<span class="w"> </span>-f
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--json<span class="w"> </span>--<span class="w"> </span>df<span class="w"> </span>-h<span class="w"> </span>/
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--json<span class="w"> </span>--<span class="w"> </span>df<span class="w"> </span>-h<span class="w"> </span>/
 </code></pre></div>
+<h3 id="shell-syntax-and-quoting">Shell syntax and quoting<a class="headerlink" href="#shell-syntax-and-quoting" title="Permanent link">&para;</a></h3>
+<p>Everything after <code>--</code> reaches the agent as it was written, and the agent
+runs it through a shell. How the arguments are grouped decides what the
+shell sees.</p>
+<p>Pass <strong>one quoted argument</strong> when you want shell syntax — pipes,
+redirects, <code>&amp;&amp;</code>, variable expansion on the remote host:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span><span class="s2">"ls /var/log | wc -l"</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span><span class="s2">"systemctl is-active nginx &amp;&amp; echo up"</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span><span class="s1">'printf "%s\n" "$HOSTNAME" &gt; /tmp/name'</span>
+</code></pre></div>
+<p>Quote it locally so your own shell does not expand <code>$HOSTNAME</code> or apply
+the redirect before dirq ever sees it.</p>
+<p>Pass <strong>separate arguments</strong> for a plain command. Each is kept whole, so a
+value containing spaces stays one argument:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>touch<span class="w"> </span><span class="s2">"/tmp/file with spaces"</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>grep<span class="w"> </span>-e<span class="w"> </span><span class="s2">"needle in haystack"</span><span class="w"> </span>/var/log/messages
+</code></pre></div>
+<p>Spreading shell syntax across separate arguments does not work — escaping
+a pipe as <code>-- ls /tmp \| wc -l</code> passes a literal <code>|</code> to <code>ls</code>. Use the
+single-argument form instead.</p>
 <h2 id="scripts">Scripts<a class="headerlink" href="#scripts" title="Permanent link">&para;</a></h2>
 <p>Upload and execute a local script file with <code>--script</code>. Linux scripts honor their shebang. Windows <code>.ps1</code> files run with PowerShell.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>WHERE<span class="w"> </span>tag.env<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'prod'</span><span class="w"> </span>--script<span class="w"> </span>./health-check.sh
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>WHERE<span class="w"> </span>os_info.os<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'windows'</span><span class="w"> </span>--script<span class="w"> </span>./audit.ps1
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>WHERE<span class="w"> </span>tag.role<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'webserver'</span><span class="w"> </span>--become<span class="w"> </span>--script<span class="w"> </span>./patch.sh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>WHERE<span class="w"> </span>tag.env<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'prod'</span><span class="w"> </span>--script<span class="w"> </span>./health-check.sh
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>WHERE<span class="w"> </span>os_info.os<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'windows'</span><span class="w"> </span>--script<span class="w"> </span>./audit.ps1
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>dirq<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>WHERE<span class="w"> </span>tag.role<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'webserver'</span><span class="w"> </span>--become<span class="w"> </span>--script<span class="w"> </span>./patch.sh
 </code></pre></div>
 <p>With <code>--script</code>, no <code>--</code> separator is needed since the script path is a dirq flag, not a remote command.</p>
 <h2 id="fleet-grep">Fleet grep<a class="headerlink" href="#fleet-grep" title="Permanent link">&para;</a></h2>
 <p>Search log files across the fleet without a centralized logging stack. Uses <code>grep</code> on Linux and <code>Select-String</code> on Windows.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>dirq<span class="w"> </span>grep<span class="w"> </span><span class="s2">"Out of memory"</span><span class="w"> </span>/var/log/messages
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>dirq<span class="w"> </span>grep<span class="w"> </span>-i<span class="w"> </span><span class="s2">"error|timeout"</span><span class="w"> </span>/var/log/nginx/error.log<span class="w"> </span>WHERE<span class="w"> </span>tag.env<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'prod'</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>dirq<span class="w"> </span>grep<span class="w"> </span><span class="s2">"FATAL"</span><span class="w"> </span>/var/log/app.log<span class="w"> </span>--tail<span class="w"> </span><span class="m">1000</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>dirq<span class="w"> </span>grep<span class="w"> </span><span class="s2">"Failed password"</span><span class="w"> </span>/var/log/secure<span class="w"> </span>--become
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>dirq<span class="w"> </span>grep<span class="w"> </span><span class="s2">"Out of memory"</span><span class="w"> </span>/var/log/messages
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>dirq<span class="w"> </span>grep<span class="w"> </span>-i<span class="w"> </span><span class="s2">"error|timeout"</span><span class="w"> </span>/var/log/nginx/error.log<span class="w"> </span>WHERE<span class="w"> </span>tag.env<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'prod'</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>dirq<span class="w"> </span>grep<span class="w"> </span><span class="s2">"FATAL"</span><span class="w"> </span>/var/log/app.log<span class="w"> </span>--tail<span class="w"> </span><span class="m">1000</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>dirq<span class="w"> </span>grep<span class="w"> </span><span class="s2">"Failed password"</span><span class="w"> </span>/var/log/secure<span class="w"> </span>--become
 </code></pre></div>
 <p>Results are formatted as a table with matches grouped by host:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>HOST                 LINE  MATCH
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>web-prod-01          4821  Jan 15 03:22:41 kernel: Out of memory: Killed process 1234 (java)
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>web-prod-01          6103  Jan 15 08:14:02 kernel: Out of memory: Killed process 5678 (python3)
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>db-prod-02          11042  Jan 14 22:01:18 kernel: Out of memory: Killed process 891 (mysqld)
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>3 matches across 2 hosts (15 hosts searched)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>HOST                 LINE  MATCH
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>web-prod-01          4821  Jan 15 03:22:41 kernel: Out of memory: Killed process 1234 (java)
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>web-prod-01          6103  Jan 15 08:14:02 kernel: Out of memory: Killed process 5678 (python3)
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>db-prod-02          11042  Jan 14 22:01:18 kernel: Out of memory: Killed process 891 (mysqld)
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>3 matches across 2 hosts (15 hosts searched)
 </code></pre></div>
 <p>Use <code>--tail N</code> to search only the last N lines of a file (avoids scanning multi-GB logs). Use <code>--become</code> for files that require root access (e.g. <code>/var/log/secure</code>).</p>
 <h2 id="streaming-output">Streaming output<a class="headerlink" href="#streaming-output" title="Permanent link">&para;</a></h2>
 <p>Results stream back as each host responds — fastest hosts appear first:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Targets: 3
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>── web-01  rc=0 ──
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>   14:23:01 up 42 days,  3:17,  0 users,  load average: 0.12, 0.08, 0.05
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>── db-01  rc=0 ──
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>   14:23:01 up 91 days, 12:44,  0 users,  load average: 0.45, 0.38, 0.31
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>── web-02  rc=0 ──
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>   14:23:02 up 13 days,  7:02,  0 users,  load average: 0.03, 0.05, 0.01
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>3/3 completed
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Targets: 3
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>── web-01  rc=0 ──
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>   14:23:01 up 42 days,  3:17,  0 users,  load average: 0.12, 0.08, 0.05
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>── db-01  rc=0 ──
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>   14:23:01 up 91 days, 12:44,  0 users,  load average: 0.45, 0.38, 0.31
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>── web-02  rc=0 ──
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>   14:23:02 up 13 days,  7:02,  0 users,  load average: 0.03, 0.05, 0.01
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>3/3 completed
 </code></pre></div>
 <p>With <code>--json</code>, output is NDJSON (one JSON object per line), suitable for piping.</p>
 <h2 id="how-execution-routing-works">How execution routing works<a class="headerlink" href="#how-execution-routing-works" title="Permanent link">&para;</a></h2>
@@ -1736,18 +1789,18 @@
 automatically sets <code>ansible_connection</code> for exec-enabled hosts, so <strong>existing
 playbooks work without modification</strong> — no need to add <code>connection: dirq</code> or
 <code>gather_facts: false</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># This just works — no connection: dirq needed.</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1"># The inventory plugin handles it.</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">hosts</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tag_env_prod</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">tasks</span><span class="p">:</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">uptime</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">copy</span><span class="p">:</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">        </span><span class="nt">src</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">app.conf</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">        </span><span class="nt">dest</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/myapp/app.conf</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">fetch</span><span class="p">:</span>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="nt">src</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/log/status.log</span>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="nt">dest</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/tmp/status.log</span>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">        </span><span class="nt">flat</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">yes</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># This just works — no connection: dirq needed.</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># The inventory plugin handles it.</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">hosts</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tag_env_prod</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">tasks</span><span class="p">:</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">uptime</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">copy</span><span class="p">:</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">        </span><span class="nt">src</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">app.conf</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">        </span><span class="nt">dest</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/myapp/app.conf</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">fetch</span><span class="p">:</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">        </span><span class="nt">src</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/log/status.log</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="nt">dest</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/tmp/status.log</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">        </span><span class="nt">flat</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">yes</span>
 </code></pre></div>
 <p>The inventory plugin also maps DirQ facts to standard Ansible variables
 (<code>ansible_os_family</code>, <code>ansible_distribution</code>, <code>ansible_architecture</code>,

@@ -639,6 +639,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run playbooks through the mesh
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -655,6 +673,36 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#which-hosts-are-targeted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which hosts are targeted
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -1506,6 +1554,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#which-hosts-are-targeted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which hosts are targeted
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1538,9 +1605,22 @@
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Ansible module</span>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>dirq<span class="w"> </span>run<span class="w"> </span>--module<span class="w"> </span>ping<span class="w"> </span>WHERE<span class="w"> </span>os_info.os<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'linux'</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># All online hosts (no WHERE clause)</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># All exec-enabled hosts (no WHERE clause)</span>
 <a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>dirq<span class="w"> </span>run<span class="w"> </span>deploy.yml
 </code></pre></div>
+<h2 id="which-hosts-are-targeted">Which hosts are targeted<a class="headerlink" href="#which-hosts-are-targeted" title="Permanent link">&para;</a></h2>
+<p>Ansible needs to execute on the target, so <code>dirq run</code> only ever targets
+agents with exec enabled. A query matches on tags and facts and knows
+nothing about capability, so any matching host without exec is skipped
+and named:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Skipping 1 host(s) with exec disabled: locked-01
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Query matched 2 host(s): web-01, web-02
+</code></pre></div>
+<p>Each targeted Linux host also needs Python 3.8 or newer. <code>dirq run</code>
+detects the interpreter across the fleet before handing over to Ansible,
+and stops with the list of hosts that lack one rather than letting the
+play fail partway through. Set an <code>ansible_python_interpreter</code> tag on a
+host to override the detected path.</p>
 
 
 

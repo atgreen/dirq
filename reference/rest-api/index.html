@@ -1118,6 +1118,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    REST API
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -1134,6 +1152,36 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-host-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The host record
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -1506,6 +1554,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-host-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The host record
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1646,6 +1713,38 @@
 </tr>
 </tbody>
 </table>
+<h2 id="the-host-record">The host record<a class="headerlink" href="#the-host-record" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/v1/hosts</code> and <code>/api/v1/hosts/{id}</code> return the stored agent
+record with live mesh state overlaid on top of it, so <code>role</code>, <code>parent_id</code>
+and <code>reachable</code> always reflect the current tree rather than the database's
+last snapshot.</p>
+<p>Two fields answer different questions, and the difference matters when a
+broadcast comes back with agents missing:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>online</code></td>
+<td>The agent has registered and the server has not since concluded it is gone</td>
+</tr>
+<tr>
+<td><code>reachable</code></td>
+<td>A broadcast can get to it right now: the agent is online <strong>and</strong> the zone leader at the head of its path holds a live stream to the server</td>
+</tr>
+</tbody>
+</table>
+<p>An agent can be <code>online</code> but not <code>reachable</code> for a short window after a
+zone leader dies — it is up, but the route to it is being rebuilt. A
+broadcast issued in that window counts it as missing. An agent that is not
+<code>online</code> is never <code>reachable</code>.</p>
+<p><code>exec_enabled</code> is separate again: it reports whether the agent accepts
+commands at all. Query and fact collection work regardless; <code>exec</code>,
+<code>deploy</code> and <code>dirq run</code> skip agents without it.</p>
 
 
 

@@ -1529,8 +1529,14 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a># ~/.config/dirq/client.conf
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>server_url: https://dirq-server:8080
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>token: &lt;your-api-token&gt;
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>tls_insecure: true
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>tls_ca: /etc/dirq/ca.crt
 </code></pre></div>
+<p><code>tls_ca</code> points at the CA that signed the server's certificate — the one
+<code>dirq cert generate</code> produces, or your own. The server writes a
+ready-to-copy <code>client.conf</code> containing the right path. Copy the CA file to
+the client machine alongside it.</p>
+<p>Leave <code>tls_ca</code> out only if the server's certificate is signed by a CA your
+system already trusts.</p>
 <table>
 <thead>
 <tr>
@@ -1554,10 +1560,22 @@
 <td>API token</td>
 </tr>
 <tr>
+<td><code>tls_ca</code></td>
+<td><code>DIRQ_TLS_CA</code> / <code>--tls-ca</code></td>
+<td></td>
+<td>CA certificate used to verify the server. Same variable the server and agents use, so one value works for all three</td>
+</tr>
+<tr>
 <td><code>tls_insecure</code></td>
 <td><code>DIRQ_TLS_INSECURE</code> / <code>--tls-insecure</code></td>
 <td><code>false</code></td>
-<td>Skip TLS verification</td>
+<td>Accept any server certificate. Prefer <code>tls_ca</code>; if both are set the CA wins</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--config</code> / <code>DIRQ_CONFIG_FILE</code></td>
+<td><em>(see above)</em></td>
+<td>Read a specific config file instead of the default locations</td>
 </tr>
 <tr>
 <td><code>llm_url</code></td>

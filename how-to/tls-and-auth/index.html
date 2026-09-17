@@ -852,6 +852,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#let-clients-verify-the-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Let clients verify the server
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rotate-certificates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1638,6 +1649,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#let-clients-verify-the-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Let clients verify the server
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rotate-certificates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1779,11 +1801,32 @@ of <code>ca.crt</code> in the output directory.</p>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># Agent (only needs CA cert — gets its own cert during registration)</span>
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nv">DIRQ_TLS_CA</span><span class="o">=</span>./certs/ca.crt<span class="w"> </span>dirq-agent
 </code></pre></div>
+<h2 id="let-clients-verify-the-server">Let clients verify the server<a class="headerlink" href="#let-clients-verify-the-server" title="Permanent link">&para;</a></h2>
+<p>The CLI and the Ansible connection plugin both talk to the server's REST
+API, and both need to know which CA to trust. With a self-signed
+deployment that CA is the one the server generated, so it is not in any
+system trust store — point clients at it explicitly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a># ~/.config/dirq/client.conf
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>server_url: https://dirq-server:8080
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>token: &lt;your-api-token&gt;
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>tls_ca: /etc/dirq/ca.crt
+</code></pre></div>
+<p>Copy the CA certificate to the client machine and give <code>tls_ca</code> its path.
+The server writes a ready-to-copy <code>client.conf</code> at
+<code>/var/lib/dirq/client.conf</code> with the right path already filled in.</p>
+<p><code>DIRQ_TLS_CA</code> and <code>--tls-ca</code> set the same thing, and <code>dirq run</code> forwards
+the value to Ansible so the connection plugin uses it too.</p>
+<div class="admonition warning">
+<p class="admonition-title"><code>tls_insecure</code> accepts any certificate</p>
+<p><code>tls_insecure: true</code> disables verification entirely, which leaves the
+connection open to interception even though the server is serving TLS.
+It exists for throwaway setups. If both are set, <code>tls_ca</code> wins.</p>
+</div>
 <h2 id="rotate-certificates">Rotate certificates<a class="headerlink" href="#rotate-certificates" title="Permanent link">&para;</a></h2>
 <p>Rotate certificates across the fleet without downtime:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>dirq<span class="w"> </span>cert<span class="w"> </span>rotate<span class="w"> </span>agent_cert<span class="w"> </span>--stagger<span class="w"> </span><span class="m">3600</span><span class="w">   </span><span class="c1"># renew all agent certs over 1 hour</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>dirq<span class="w"> </span>cert<span class="w"> </span>rotate<span class="w"> </span>ca<span class="w"> </span>--stagger<span class="w"> </span><span class="m">3600</span><span class="w">           </span><span class="c1"># distribute a new CA</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>dirq<span class="w"> </span>cert<span class="w"> </span>rotate<span class="w"> </span>signing_key<span class="w">                 </span><span class="c1"># roll the message signing key</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>dirq<span class="w"> </span>cert<span class="w"> </span>rotate<span class="w"> </span>agent_cert<span class="w"> </span>--stagger<span class="w"> </span><span class="m">3600</span><span class="w">   </span><span class="c1"># renew all agent certs over 1 hour</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>dirq<span class="w"> </span>cert<span class="w"> </span>rotate<span class="w"> </span>ca<span class="w"> </span>--stagger<span class="w"> </span><span class="m">3600</span><span class="w">           </span><span class="c1"># distribute a new CA</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>dirq<span class="w"> </span>cert<span class="w"> </span>rotate<span class="w"> </span>signing_key<span class="w">                 </span><span class="c1"># roll the message signing key</span>
 </code></pre></div>
 <p>The <code>--stagger</code> flag spreads renewals over time to avoid overloading the server.
 See <a href="../../explanation/security/">security model</a> for the full rotation procedure including CA and
@@ -1791,9 +1834,9 @@ signing key rotation.</p>
 <h2 id="api-authentication-and-token-creation">API authentication and token creation<a class="headerlink" href="#api-authentication-and-token-creation" title="Permanent link">&para;</a></h2>
 <p>API authentication is <strong>required by default</strong>. On first startup, a bootstrap
 token is auto-generated and printed to the server log. Save it.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>dirq<span class="w"> </span>token<span class="w"> </span>create<span class="w"> </span>ops-team<span class="w"> </span>--scope<span class="w"> </span>admin
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>dirq<span class="w"> </span>token<span class="w"> </span>create<span class="w"> </span>monitoring<span class="w"> </span>--scope<span class="w"> </span><span class="nb">readonly</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DIRQ_TOKEN</span><span class="o">=</span>&lt;token&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>dirq<span class="w"> </span>token<span class="w"> </span>create<span class="w"> </span>ops-team<span class="w"> </span>--scope<span class="w"> </span>admin
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>dirq<span class="w"> </span>token<span class="w"> </span>create<span class="w"> </span>monitoring<span class="w"> </span>--scope<span class="w"> </span><span class="nb">readonly</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DIRQ_TOKEN</span><span class="o">=</span>&lt;token&gt;
 </code></pre></div>
 <p><strong>Token scopes are enforced per-endpoint:</strong></p>
 <ul>
@@ -1806,18 +1849,18 @@ token is auto-generated and printed to the server log. Save it.</p>
 <p>By default, any client that can reach the server's gRPC port can register as an
 agent. For production deployments, set a <strong>registration secret</strong> — a pre-shared
 key that agents must present during registration:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Server</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">DIRQ_REGISTRATION_SECRET</span><span class="o">=</span>my-fleet-secret<span class="w"> </span>dirq-server
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Agent</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="nv">DIRQ_REGISTRATION_SECRET</span><span class="o">=</span>my-fleet-secret<span class="w"> </span>dirq-agent
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Server</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nv">DIRQ_REGISTRATION_SECRET</span><span class="o">=</span>my-fleet-secret<span class="w"> </span>dirq-server
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># Agent</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="nv">DIRQ_REGISTRATION_SECRET</span><span class="o">=</span>my-fleet-secret<span class="w"> </span>dirq-agent
 </code></pre></div>
 <p>Or in config files:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a># /etc/dirq/server.conf
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>registration_secret: my-fleet-secret
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a># /etc/dirq/agent.conf
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>registration_secret: my-fleet-secret
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a># /etc/dirq/server.conf
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>registration_secret: my-fleet-secret
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a># /etc/dirq/agent.conf
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>registration_secret: my-fleet-secret
 </code></pre></div>
 <p>When configured, the server rejects <code>Register</code> calls that don't present the
 matching secret. This prevents unauthorized hosts from joining the mesh.</p>

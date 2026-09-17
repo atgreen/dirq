@@ -1197,10 +1197,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#tls-server-and-agent" class="md-nav__link">
+  <a href="#tls-server-agent-and-cli" class="md-nav__link">
     <span class="md-ellipsis">
       
-        TLS (server and agent)
+        TLS (server, agent and CLI)
       
     </span>
   </a>
@@ -1700,10 +1700,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#tls-server-and-agent" class="md-nav__link">
+  <a href="#tls-server-agent-and-cli" class="md-nav__link">
     <span class="md-ellipsis">
       
-        TLS (server and agent)
+        TLS (server, agent and CLI)
       
     </span>
   </a>
@@ -2043,7 +2043,10 @@ per operation — never raw file content, script bodies, or environment values
 restrictions) ship under <a href="https://github.com/atgreen/dirq/tree/main/examples/policy"><code>examples/policy/</code></a>. With no
 <code>policy_file</code> configured, agent behavior is unchanged. See
 <a href="../../explanation/security/">SECURITY.md</a> for the full model.</p>
-<h4 id="tls-server-and-agent">TLS (server and agent)<a class="headerlink" href="#tls-server-and-agent" title="Permanent link">&para;</a></h4>
+<h4 id="tls-server-agent-and-cli">TLS (server, agent and CLI)<a class="headerlink" href="#tls-server-agent-and-cli" title="Permanent link">&para;</a></h4>
+<p><code>tls_ca</code> is read by all three, so one value works everywhere — the server
+to verify agents, agents to verify the server, and the CLI to verify the
+server's REST endpoint. The Ansible connection plugin reads it too.</p>
 <table>
 <thead>
 <tr>
@@ -2082,7 +2085,7 @@ restrictions) ship under <a href="https://github.com/atgreen/dirq/tree/main/exam
 <td><code>tls_insecure</code></td>
 <td><code>DIRQ_TLS_INSECURE</code></td>
 <td><code>false</code></td>
-<td>Skip cert verification (agent only)</td>
+<td>Accept any certificate. Prefer <code>tls_ca</code>; where both are set the CA wins</td>
 </tr>
 <tr>
 <td><code>tls_disabled</code></td>
