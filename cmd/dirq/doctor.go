@@ -235,15 +235,6 @@ func doctorCmd() *cobra.Command {
 			// ── Config file ──
 
 			check("Client config", func() (string, string) {
-				validKeys := map[string]bool{
-					"server_url":   true,
-					"token":        true,
-					"tls_insecure": true,
-					"llm_url":      true,
-					"llm_api_key":  true,
-					"llm_model":    true,
-				}
-
 				var cfgPath string
 				candidates := []string{}
 				if home, err := os.UserHomeDir(); err == nil {
@@ -269,7 +260,7 @@ func doctorCmd() *cobra.Command {
 
 				var unknown []string
 				for k := range cfg.Values {
-					if !validKeys[k] {
+					if !clientConfigKeys[k] {
 						unknown = append(unknown, k)
 					}
 				}
@@ -297,3 +288,16 @@ func doctorCmd() *cobra.Command {
 // ─────────────────────────────────────────────────────────
 // dirq cve
 // ─────────────────────────────────────────────────────────
+
+// clientConfigKeys is every key the CLI reads from client.conf.
+// doctor warns about anything else, so a key added to the CLI
+// must be added here too (client_config_keys_test.go checks this).
+var clientConfigKeys = map[string]bool{
+	"server_url":   true,
+	"token":        true,
+	"tls_ca":       true,
+	"tls_insecure": true,
+	"llm_url":      true,
+	"llm_api_key":  true,
+	"llm_model":    true,
+}
