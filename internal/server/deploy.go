@@ -278,8 +278,9 @@ func buildDeployMsg(requestID string, targetIDs []string, req *deployRequest, co
 // unauthorized and missing dest_path answers 403, not 400.  Reordering
 // these changes the status callers see.
 func (s *Server) decodeDeployRequest(w http.ResponseWriter, r *http.Request) (req deployRequest, content []byte, timeout int, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFileBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		fileBodyError(w, err)
 		return req, nil, 0, false
 	}
 	if req.Content == "" {
@@ -303,9 +304,8 @@ func (s *Server) decodeDeployRequest(w http.ResponseWriter, r *http.Request) (re
 		return req, nil, 0, false
 	}
 
-	content, err := decodeBase64(req.Content)
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "invalid base64 content: "+err.Error())
+	content, ok = decodeFileContent(w, req.Content)
+	if !ok {
 		return req, nil, 0, false
 	}
 

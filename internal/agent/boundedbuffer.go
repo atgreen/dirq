@@ -6,6 +6,8 @@ package agent
 import (
 	"bytes"
 	"fmt"
+
+	"github.com/atgreen/dirq/internal/wire"
 )
 
 // maxOutputBytes caps how much stdout or stderr the agent keeps from any
@@ -17,8 +19,9 @@ import (
 // refuse to hold everything.
 //
 // 10 MB is far past any output a person reads and far below anything that
-// threatens a modest host.
-const maxOutputBytes = 10 * 1024 * 1024
+// threatens a modest host. The value lives in wire, beside the message limit
+// that has to carry it.
+const maxOutputBytes = wire.MaxOutputBytes
 
 // boundedBuffer is an io.Writer that keeps at most max bytes and counts
 // what it drops.

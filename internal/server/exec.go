@@ -400,9 +400,10 @@ type putFileRequest struct {
 }
 
 func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFileBodyBytes)
 	var req putFileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		fileBodyError(w, err)
 		return
 	}
 
@@ -433,10 +434,8 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 
 	requestID := fmt.Sprintf("put-%d", time.Now().UnixNano())
 
-	// Decode base64 content.
-	content, err := decodeBase64(req.Content)
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "invalid base64 content: "+err.Error())
+	content, ok := decodeFileContent(w, req.Content)
+	if !ok {
 		return
 	}
 

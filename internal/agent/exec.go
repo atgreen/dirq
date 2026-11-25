@@ -21,10 +21,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/atgreen/dirq/internal/agent/policy"
+	"github.com/atgreen/dirq/internal/wire"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
-const maxFileSize = 100 * 1024 * 1024 // 100 MB
+const maxFileSize = wire.MaxFileBytes
 
 // handleExecRequest runs a command on the agent and sends back an ExecResponse.
 func (a *Agent) handleExecRequest(ctx context.Context, req *pb.ExecRequest) {

@@ -34,6 +34,7 @@ import (
 	"github.com/atgreen/dirq/internal/query"
 	"github.com/atgreen/dirq/internal/signutil"
 	"github.com/atgreen/dirq/internal/tlsutil"
+	"github.com/atgreen/dirq/internal/wire"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -147,13 +148,13 @@ var tlsBootstrapMu sync.Mutex
 // When TLS is enabled, fails closed on credential-load errors rather than
 // silently downgrading to plaintext.
 func (a *Agent) grpcDialOpts() ([]grpc.DialOption, error) {
-	opts := []grpc.DialOption{
+	opts := append(wire.DialOptions(),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
 			Timeout:             15 * time.Second,
 			PermitWithoutStream: true,
 		}),
-	}
+	)
 
 	if a.tlsConfig.Enabled() {
 		creds, err := tlsutil.ClientCredentials(a.tlsConfig)
@@ -172,13 +173,13 @@ func (a *Agent) grpcDialOpts() ([]grpc.DialOption, error) {
 // doesn't have a server-issued cert yet. Only the CA is loaded so the agent
 // can verify the server's identity.
 func (a *Agent) registrationDialOpts() ([]grpc.DialOption, error) {
-	opts := []grpc.DialOption{
+	opts := append(wire.DialOptions(),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
 			Timeout:             15 * time.Second,
 			PermitWithoutStream: true,
 		}),
-	}
+	)
 
 	if a.tlsConfig.Enabled() {
 		// Build a config with CA only — no client cert.
@@ -203,13 +204,13 @@ func (a *Agent) registrationDialOpts() ([]grpc.DialOption, error) {
 // Fallback connections pass "" — the server only hands out fallback addresses,
 // not IDs, so those degrade to CA-only verification (the prior behaviour).
 func (a *Agent) peerDialOpts(expectedParentID string) ([]grpc.DialOption, error) {
-	opts := []grpc.DialOption{
+	opts := append(wire.DialOptions(),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                60 * time.Second,
 			Timeout:             15 * time.Second,
 			PermitWithoutStream: true,
 		}),
-	}
+	)
 
 	if a.tlsConfig.Enabled() {
 		peerCfg := a.tlsConfig
@@ -1384,6 +1385,7 @@ func (a *Agent) serveRelay(ctx context.Context, lis net.Listener) error {
 			PermitWithoutStream: true,
 		}),
 	)
+	serverOpts = append(serverOpts, wire.ServerOptions()...)
 	a.grpcSv = grpc.NewServer(serverOpts...)
 	pb.RegisterDirQRelayServer(a.grpcSv, a)
 

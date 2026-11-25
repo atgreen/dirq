@@ -28,6 +28,7 @@ import (
 	"github.com/atgreen/dirq/internal/db"
 	"github.com/atgreen/dirq/internal/signutil"
 	"github.com/atgreen/dirq/internal/tlsutil"
+	"github.com/atgreen/dirq/internal/wire"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 )
 
@@ -380,6 +381,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// and the server's signing public key.
 	s.writeAgentConfig(tlsCfg)
 
+	grpcOpts = append(grpcOpts, wire.ServerOptions()...)
 	s.grpcSv = grpc.NewServer(grpcOpts...)
 	pb.RegisterDirQServerServer(s.grpcSv, s)
 

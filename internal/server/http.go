@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/atgreen/dirq/internal/db"
 	"github.com/atgreen/dirq/internal/query"
+	"github.com/atgreen/dirq/internal/wire"
 	pb "github.com/atgreen/dirq/proto/dirq/v1"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -27,6 +29,39 @@ const tokenCtxKey contextKey = "apiToken"
 // maxQueryBodyBytes bounds the /api/v1/query request body. The DSL is small;
 // this only rejects payloads crafted to exhaust the lexer/parser.
 const maxQueryBodyBytes = 1 << 20 // 1 MiB
+
+// maxFileBodyBytes bounds a put_file or deploy request body: a file of
+// wire.MaxFileBytes after base64, plus room for the JSON around it.
+const maxFileBodyBytes = (wire.MaxFileBytes+2)/3*4 + 1<<20
+
+// fileBodyError reports a put_file or deploy body that failed to decode,
+// telling a body over maxFileBodyBytes apart from malformed JSON.
+func fileBodyError(w http.ResponseWriter, err error) {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		httpError(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("request body is over %d bytes; the file limit is %d", tooBig.Limit, wire.MaxFileBytes))
+		return
+	}
+	httpError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+}
+
+// decodeFileContent decodes a request's base64 file and refuses one too big
+// to cross the mesh in a single message. It writes the error response
+// itself and reports whether the caller may continue.
+func decodeFileContent(w http.ResponseWriter, b64 string) ([]byte, bool) {
+	content, err := decodeBase64(b64)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "invalid base64 content: "+err.Error())
+		return nil, false
+	}
+	if len(content) > wire.MaxFileBytes {
+		httpError(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("file is %d bytes; the limit is %d", len(content), wire.MaxFileBytes))
+		return nil, false
+	}
+	return content, true
+}
 
 func (s *Server) setupHTTPRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
