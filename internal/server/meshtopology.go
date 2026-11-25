@@ -489,8 +489,13 @@ func (t *MeshTopology) Remove(id string) {
 // in-memory pass, O(N) at worst but trivially fast because everything lives
 // in maps.
 //
+// childID is the agent being placed ("" for one the topology doesn't know
+// yet). It and its subtree are never candidates: a re-registering agent is
+// still in the tree, and choosing it or a descendant closes a loop with no
+// path to the server.
+//
 // Returns ok=false if no candidate exists (tree saturated).
-func (t *MeshTopology) FindShallowestParentWithRoom() (id, listenAddr string, ok bool) {
+func (t *MeshTopology) FindShallowestParentWithRoom(childID string) (id, listenAddr string, ok bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -501,7 +506,7 @@ func (t *MeshTopology) FindShallowestParentWithRoom() (id, listenAddr string, ok
 	bestID := ""
 	bestAddr := ""
 	for nodeID, n := range t.nodes {
-		if !n.online || n.listenAddr == "" || n.role == "" {
+		if !n.online || n.listenAddr == "" || n.role == "" || t.inSubtreeLocked(nodeID, childID) {
 			continue
 		}
 		c := len(n.children)
@@ -540,8 +545,9 @@ func (t *MeshTopology) FindShallowestParentWithRoom() (id, listenAddr string, ok
 
 // FindFallbackParents picks up to `count` alternate parents for fault
 // isolation, preferring ones on a different zone-leader branch AND in a
-// different failure domain than primaryID.  Returns (id, listenAddr) pairs.
-func (t *MeshTopology) FindFallbackParents(primaryID string, count int) []db.Agent {
+// different failure domain than primaryID.  Like FindShallowestParentWithRoom,
+// it never offers childID or its subtree.  Returns (id, listenAddr) pairs.
+func (t *MeshTopology) FindFallbackParents(primaryID, childID string, count int) []db.Agent {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -564,7 +570,7 @@ func (t *MeshTopology) FindFallbackParents(primaryID string, count int) []db.Age
 	}
 	var cands []candidate
 	for nodeID, n := range t.nodes {
-		if nodeID == primaryID || !n.online || n.listenAddr == "" || n.role == "" {
+		if nodeID == primaryID || !n.online || n.listenAddr == "" || n.role == "" || t.inSubtreeLocked(nodeID, childID) {
 			continue
 		}
 		if len(n.children) >= t.capacityLocked(n) {
@@ -752,6 +758,27 @@ func (t *MeshTopology) zoneLeaderOfLocked(id string) string {
 		cur = n.parentID
 	}
 	return ""
+}
+
+// inSubtreeLocked reports whether id is root or one of its descendants.
+// It runs once per candidate during parent search, so it bounds the walk by
+// node count instead of allocating a visited set to survive a cycle.
+func (t *MeshTopology) inSubtreeLocked(id, root string) bool {
+	if root == "" {
+		return false
+	}
+	cur := id
+	for steps := 0; cur != "" && steps <= len(t.nodes); steps++ {
+		if cur == root {
+			return true
+		}
+		n, ok := t.nodes[cur]
+		if !ok {
+			return false
+		}
+		cur = n.parentID
+	}
+	return false
 }
 
 // unlinkFromParentLocked removes n from its current parent's children set.

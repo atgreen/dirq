@@ -568,8 +568,8 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 	//   - The periodic reaper      (server-restart / partition cases)
 	// RequestPeers only finds a new parent; it never edits parent state.
 
-	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
-	if !ok || parentID == req.AgentId {
+	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom(req.AgentId)
+	if !ok {
 		// No parent has room (tree saturated under churn) — promote the
 		// requesting agent to zone leader rather than orphaning it.  This
 		// is the escape hatch that keeps the mesh converging when the
@@ -584,7 +584,7 @@ func (s *Server) RequestPeers(ctx context.Context, req *pb.PeerRequest) (*pb.Pee
 
 	var fallbacks []string
 	var fallbackIDs []string
-	for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
+	for _, fb := range s.topology.FindFallbackParents(parentID, req.AgentId, 2) {
 		fallbacks = append(fallbacks, fb.ListenAddr)
 		fallbackIDs = append(fallbackIDs, fb.ID)
 	}

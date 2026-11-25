@@ -127,8 +127,13 @@ func (b *registrationBatcher) assignBatchDiverse(batch []*pendingReg) []assignme
 	cfg := b.s.topoCfg
 	out := make([]assignment, len(batch))
 
-	// How many fresh ZL slots are open?
-	openZL := cfg.MaxZoneLeaders - b.s.topology.CountOnlineZoneLeaders()
+	// A zone leader in this batch is re-registering: its old slot is the
+	// one it is asking for, so it must not count as taken, nor make its
+	// own IP look like it already hosts a leader.
+	inBatch := make(map[string]bool, len(batch))
+	for _, p := range batch {
+		inBatch[p.agentID] = true
+	}
 
 	// Group batch indices by source IP.  Within each IP group we'll only
 	// promote one agent to ZL; the rest go through relay assignment.
@@ -154,10 +159,12 @@ func (b *registrationBatcher) assignBatchDiverse(batch []*pendingReg) []assignme
 	// ZL on top of an existing one in the same source.  Track failure
 	// domains too, so we can prefer spreading ZLs across racks/subnets and
 	// not just distinct IPs within one rack.
+	openZL := cfg.MaxZoneLeaders
 	ipHasZL := make(map[string]bool)
 	domainHasZL := make(map[string]bool)
 	for _, zlID := range b.s.topology.ZoneLeaderIDs() {
-		if n, ok := b.s.topology.Get(zlID); ok && n.Online {
+		if n, ok := b.s.topology.Get(zlID); ok && n.Online && !inBatch[zlID] {
+			openZL--
 			ipHasZL[ipOfListen(n.ListenAddr)] = true
 			if n.Domain != "" {
 				domainHasZL[n.Domain] = true
@@ -264,14 +271,14 @@ func (b *registrationBatcher) assignBatchDiverse(batch []*pendingReg) []assignme
 // saturated), this falls back to promotion as the orphan-protection
 // escape hatch.
 func (s *Server) applyRelayAssignment(p *pendingReg) assignment {
-	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
+	parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom(p.agentID)
 	if !ok {
 		s.log.Warn("topology: no parent with room during batch relay fill, promoting",
 			"agent_id", p.agentID)
 		s.topology.AssignZoneLeader(p.agentID)
 		return assignment{Role: pb.AgentRole_AGENT_ROLE_ZONE_LEADER}
 	}
-	fbAgents := s.topology.FindFallbackParents(parentID, 2)
+	fbAgents := s.topology.FindFallbackParents(parentID, p.agentID, 2)
 	fallbacks := make([]string, 0, len(fbAgents))
 	fallbackIDs := make([]string, 0, len(fbAgents))
 	for _, fb := range fbAgents {

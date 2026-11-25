@@ -70,8 +70,8 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 	}
 
 	for _, child := range children {
-		parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom()
-		if !ok || parentID == child.ID {
+		parentID, parentAddr, ok := s.topology.FindShallowestParentWithRoom(child.ID)
+		if !ok {
 			// Tree has no room to absorb this orphan — promote it to zone
 			// leader rather than leaving it dangling with no parent.
 			s.log.Info("reassignOrphans: no parent available, promoting orphan to zone_leader",
@@ -109,7 +109,7 @@ func (s *Server) reassignOrphans(_ context.Context, deadParentID string) {
 		// Hint only — topology is updated when PeerConnected arrives.
 		var fallbacks []string
 		var fallbackIDs []string
-		for _, fb := range s.topology.FindFallbackParents(parentID, 2) {
+		for _, fb := range s.topology.FindFallbackParents(parentID, child.ID, 2) {
 			fallbacks = append(fallbacks, fb.ListenAddr)
 			fallbackIDs = append(fallbackIDs, fb.ID)
 		}

@@ -151,3 +151,33 @@ func TestBatcherSkipsFlakyZoneLeader(t *testing.T) {
 		t.Errorf("stable host should have taken the ZL slot: %v", out[1])
 	}
 }
+
+// A zone leader whose stream dropped re-registers before the server has
+// marked it offline, so the topology still lists it as an online ZL with
+// its children attached. In the lab (2026-11-24) the batcher saw that ZL
+// occupying the agent's own IP, sent it to relay fill, and the BFS handed
+// back the agent itself as its parent: it dialed its own listener and the
+// whole tree lost its path to the server. The agent must come back as a
+// zone leader, never as its own child or its child's child.
+func TestBatcherReregisteringZoneLeaderIsNotItsOwnParent(t *testing.T) {
+	cfg := DefaultTopologyConfig()
+	srv := batcherTestServer(cfg)
+	b := newRegistrationBatcher(srv)
+
+	srv.topology.AddAgent("h3", "h3", "192.168.1.10:50052")
+	srv.topology.AssignZoneLeader("h3")
+	srv.topology.AddAgent("fedora", "fedora", "10.77.77.10:50052")
+	srv.topology.AssignChild("fedora", "h3")
+
+	srv.topology.AddAgent("h3", "h3", "192.168.1.10:50052")
+	out := b.assignBatchDiverse([]*pendingReg{
+		{agentID: "h3", hostname: "h3", listenAddr: "192.168.1.10:50052", sourceIP: "192.168.1.10"},
+	})
+
+	if out[0].ParentID == "h3" || out[0].ParentID == "fedora" {
+		t.Fatalf("h3 was assigned under its own subtree: parent %q", out[0].ParentID)
+	}
+	if out[0].Role != pb.AgentRole_AGENT_ROLE_ZONE_LEADER {
+		t.Errorf("re-registering zone leader should keep its ZL slot, got %v", out[0])
+	}
+}

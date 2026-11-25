@@ -78,7 +78,7 @@ func TestInvariant_ChronicFlapperStaysLeaf(t *testing.T) {
 	// "chronic" is a relay we keep flapping every iteration so its decayed
 	// score never falls below threshold.
 	topo.AddAgent("chronic", "chronic", "10.0.5.5:9000")
-	if pid, _, ok := topo.FindShallowestParentWithRoom(); ok {
+	if pid, _, ok := topo.FindShallowestParentWithRoom(""); ok {
 		topo.AssignChild("chronic", pid)
 	}
 
@@ -87,7 +87,7 @@ func TestInvariant_ChronicFlapperStaysLeaf(t *testing.T) {
 		// A fresh agent arrives and is placed.
 		id := fmt.Sprintf("n%d", i)
 		topo.AddAgent(id, id, fmt.Sprintf("10.%d.%d.%d:9000", rng.Intn(4), i/256, i%256))
-		if pid, _, ok := topo.FindShallowestParentWithRoom(); ok {
+		if pid, _, ok := topo.FindShallowestParentWithRoom(""); ok {
 			topo.AssignChild(id, pid)
 		} else {
 			topo.AssignZoneLeader(id)
@@ -99,7 +99,7 @@ func TestInvariant_ChronicFlapperStaysLeaf(t *testing.T) {
 		clock = clock.Add(30 * time.Second)
 
 		// Placement must never select chronic, and it must hold no children.
-		if pid, _, ok := topo.FindShallowestParentWithRoom(); ok && pid == "chronic" {
+		if pid, _, ok := topo.FindShallowestParentWithRoom(""); ok && pid == "chronic" {
 			t.Fatalf("iter %d: probationary node 'chronic' was selected as a parent", i)
 		}
 		if got := topo.CountChildren("chronic"); got != 0 {
@@ -218,7 +218,7 @@ func (r *simRun) arrive(id string) {
 		r.zlCount++
 		return
 	}
-	if pid, _, ok := r.topo.FindShallowestParentWithRoom(); ok {
+	if pid, _, ok := r.topo.FindShallowestParentWithRoom(""); ok {
 		r.topo.AssignChild(id, pid)
 	} else {
 		r.topo.AssignZoneLeader(id)

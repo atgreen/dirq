@@ -93,7 +93,7 @@ func TestFindParentPrefersStableOverFlaky(t *testing.T) {
 		t.Fatal("flapper should be on probation")
 	}
 
-	id, _, ok := topo.FindShallowestParentWithRoom()
+	id, _, ok := topo.FindShallowestParentWithRoom("")
 	if !ok {
 		t.Fatal("expected a parent with room")
 	}
@@ -178,7 +178,7 @@ func TestCorrelatedDomainDeprioritizesQuietNeighbor(t *testing.T) {
 
 	// a3 is personally stable but in the hot domain; b1 is stable in a cool
 	// domain. Selection must prefer b1 even though a3 is equally shallow.
-	id, _, ok := topo.FindShallowestParentWithRoom()
+	id, _, ok := topo.FindShallowestParentWithRoom("")
 	if !ok {
 		t.Fatal("expected a parent")
 	}
@@ -204,7 +204,7 @@ func TestHotDomainDoesNotStarveSelection(t *testing.T) {
 		flap(topo, id)
 	}
 
-	if _, _, ok := topo.FindShallowestParentWithRoom(); !ok {
+	if _, _, ok := topo.FindShallowestParentWithRoom(""); !ok {
 		t.Fatal("hot domain must not starve selection when it's the only option")
 	}
 }
@@ -225,5 +225,29 @@ func TestProbationDoesNotEvictExistingChildren(t *testing.T) {
 
 	if got := topo.CountChildren("p"); got != 1 {
 		t.Fatalf("existing child should be retained across reboot, got %d children", got)
+	}
+}
+
+// Parent search for an agent must skip the agent and everything under it:
+// either choice wires the agent into a loop with no path to the server.
+func TestFindParentSkipsTheChildsOwnSubtree(t *testing.T) {
+	topo := NewMeshTopology(DefaultTopologyConfig())
+	topo.AddAgent("zl", "zl", "10.0.0.1:9000")
+	topo.AssignZoneLeader("zl")
+	topo.AddAgent("mover", "mover", "10.0.0.2:9000")
+	topo.AssignChild("mover", "zl")
+	topo.AddAgent("kid", "kid", "10.0.0.3:9000")
+	topo.AssignChild("kid", "mover")
+
+	for i := 0; i < 50; i++ {
+		id, _, ok := topo.FindShallowestParentWithRoom("mover")
+		if !ok || id != "zl" {
+			t.Fatalf("parent for mover = %q (ok=%v), want zl", id, ok)
+		}
+		for _, fb := range topo.FindFallbackParents("zl", "mover", 2) {
+			if fb.ID == "mover" || fb.ID == "kid" {
+				t.Fatalf("fallback for mover is in its own subtree: %q", fb.ID)
+			}
+		}
 	}
 }
